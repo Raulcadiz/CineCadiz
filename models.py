@@ -4,6 +4,23 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 
+class Proxy(db.Model):
+    """Proxy HTTP opcional para descargar listas M3U cuyo proveedor bloquea IPs."""
+    __tablename__ = 'proxies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    url = db.Column(db.String(200), nullable=False, unique=True)  # host:port
+    activo = db.Column(db.Boolean, default=True)
+    fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'url': self.url,
+            'activo': self.activo,
+        }
+
+
 class Lista(db.Model):
     """Lista M3U importada por el admin."""
     __tablename__ = 'listas'
@@ -12,6 +29,8 @@ class Lista(db.Model):
     nombre = db.Column(db.String(200), nullable=False)
     url = db.Column(db.Text, nullable=False)
     filtrar_español = db.Column(db.Boolean, default=False)
+    incluir_live = db.Column(db.Boolean, default=False)   # importar canales en directo
+    usar_proxy = db.Column(db.Boolean, default=False)     # usar proxy HTTP aleatorio
     activa = db.Column(db.Boolean, default=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     ultima_actualizacion = db.Column(db.DateTime)
@@ -31,6 +50,8 @@ class Lista(db.Model):
             'nombre': self.nombre,
             'url': self.url,
             'filtrar_español': self.filtrar_español,
+            'incluir_live': self.incluir_live,
+            'usar_proxy': self.usar_proxy,
             'activa': self.activa,
             'fecha_creacion': self.fecha_creacion.isoformat() if self.fecha_creacion else None,
             'ultima_actualizacion': (
@@ -112,10 +133,11 @@ class Contenido(db.Model):
     fuente_rss_id = db.Column(db.Integer, db.ForeignKey('fuentes_rss.id'), nullable=True)
 
     def to_dict(self):
+        _type_map = {'pelicula': 'movie', 'serie': 'series', 'live': 'live'}
         return {
             'id': self.id,
             'title': self.titulo,
-            'type': 'movie' if self.tipo == 'pelicula' else 'series',
+            'type': _type_map.get(self.tipo, self.tipo),
             'streamUrl': self.url_stream,
             'source': self.fuente,          # 'm3u' | 'rss' → frontend decide cómo reproducir
             'server': self.servidor,

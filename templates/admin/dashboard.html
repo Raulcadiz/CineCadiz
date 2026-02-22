@@ -29,32 +29,46 @@
 
 <!-- Stats -->
 <div class="row g-3 mb-4">
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
         <div class="stat-card">
             <div class="stat-icon" style="background:#1a1a3a"><i class="bi bi-film text-primary"></i></div>
             <div class="stat-value">{{ stats.peliculas }}</div>
-            <div class="stat-label">Películas activas</div>
+            <div class="stat-label">Películas</div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
         <div class="stat-card">
             <div class="stat-icon" style="background:#1a3a1a"><i class="bi bi-tv text-success"></i></div>
             <div class="stat-value">{{ stats.series }}</div>
-            <div class="stat-label">Series activas</div>
+            <div class="stat-label">Series</div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#0a2a3a"><i class="bi bi-broadcast text-info"></i></div>
+            <div class="stat-value">{{ stats.live }}</div>
+            <div class="stat-label">En Directo</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
         <div class="stat-card">
             <div class="stat-icon" style="background:#3a1a1a"><i class="bi bi-wifi-off text-danger"></i></div>
             <div class="stat-value">{{ stats.inactivos }}</div>
             <div class="stat-label">Links caídos</div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
         <div class="stat-card">
-            <div class="stat-icon" style="background:#1a2a3a"><i class="bi bi-hdd-stack text-info"></i></div>
-            <div class="stat-value">{{ stats.total_m3u + stats.total_rss }}</div>
-            <div class="stat-label">Total contenido</div>
+            <div class="stat-icon" style="background:#1a2a3a"><i class="bi bi-hdd-stack text-warning"></i></div>
+            <div class="stat-value">{{ stats.total_m3u }}</div>
+            <div class="stat-label">Total M3U</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#2a1a1a"><i class="bi bi-rss text-danger"></i></div>
+            <div class="stat-value">{{ stats.total_rss }}</div>
+            <div class="stat-label">Total RSS</div>
         </div>
     </div>
 </div>

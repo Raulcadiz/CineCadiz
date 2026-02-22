@@ -10,7 +10,9 @@ from flask import (
     url_for, session, flash, jsonify, current_app,
 )
 
-from models import db, Lista, FuenteRSS, Contenido
+import random
+
+from models import db, Lista, FuenteRSS, Contenido, Proxy
 from m3u_parser import fetch_and_parse
 from link_checker import scan_dead_links
 from rss_importer import import_rss_source, DEFAULT_RSS_SOURCES
@@ -65,6 +67,7 @@ def dashboard():
     stats = {
         'peliculas':   Contenido.query.filter_by(tipo='pelicula', activo=True).count(),
         'series':      Contenido.query.filter_by(tipo='serie', activo=True).count(),
+        'live':        Contenido.query.filter_by(tipo='live', activo=True).count(),
         'inactivos':   Contenido.query.filter_by(activo=False).count(),
         'listas_m3u':  Lista.query.count(),
         'fuentes_rss': FuenteRSS.query.count(),
@@ -92,8 +95,10 @@ def listas():
 def agregar_lista():
     nombre = request.form.get('nombre', '').strip()
     url = request.form.get('url', '').strip()
-    # checkbox desmarcado no envía nada → in request.form es la forma correcta
-    filtrar = 'filtrar_español' in request.form
+    # checkboxes desmarcados no envían nada → 'in request.form' es la forma correcta
+    filtrar       = 'filtrar_español' in request.form
+    incluir_live  = 'incluir_live'    in request.form
+    usar_proxy    = 'usar_proxy'      in request.form
 
     if not nombre or not url:
         flash('Nombre y URL son obligatorios', 'danger')
@@ -102,7 +107,8 @@ def agregar_lista():
         flash('La URL debe comenzar con http:// o https://', 'danger')
         return redirect(url_for('admin.listas'))
 
-    lista = Lista(nombre=nombre, url=url, filtrar_español=filtrar)
+    lista = Lista(nombre=nombre, url=url, filtrar_español=filtrar,
+                  incluir_live=incluir_live, usar_proxy=usar_proxy)
     db.session.add(lista)
     db.session.commit()
     _import_lista_async(current_app._get_current_object(), lista.id)
@@ -298,6 +304,57 @@ def rss_status(fuente_id):
     return jsonify(FuenteRSS.query.get_or_404(fuente_id).to_dict())
 
 
+# ── Gestión de proxies HTTP ────────────────────────────────
+
+@admin_bp.get('/proxies')
+@login_required
+def proxies():
+    all_proxies = Proxy.query.order_by(Proxy.fecha_creacion.desc()).all()
+    return render_template('admin/proxies.html', proxies=all_proxies)
+
+
+@admin_bp.post('/proxies/agregar')
+@login_required
+def agregar_proxy():
+    url = request.form.get('url', '').strip()
+    if not url:
+        flash('La dirección del proxy es obligatoria', 'danger')
+        return redirect(url_for('admin.proxies'))
+    # Normalizar: quitar esquema si el usuario lo puso
+    url = url.replace('http://', '').replace('https://', '').rstrip('/')
+    if not url:
+        flash('Dirección de proxy inválida', 'danger')
+        return redirect(url_for('admin.proxies'))
+    if Proxy.query.filter_by(url=url).first():
+        flash(f'El proxy {url} ya existe', 'warning')
+        return redirect(url_for('admin.proxies'))
+    db.session.add(Proxy(url=url))
+    db.session.commit()
+    flash(f'Proxy {url} agregado.', 'success')
+    return redirect(url_for('admin.proxies'))
+
+
+@admin_bp.post('/proxies/<int:proxy_id>/toggle')
+@login_required
+def toggle_proxy(proxy_id):
+    proxy = Proxy.query.get_or_404(proxy_id)
+    proxy.activo = not proxy.activo
+    db.session.commit()
+    flash(f'Proxy {proxy.url} {"activado" if proxy.activo else "desactivado"}.', 'info')
+    return redirect(url_for('admin.proxies'))
+
+
+@admin_bp.post('/proxies/<int:proxy_id>/eliminar')
+@login_required
+def eliminar_proxy(proxy_id):
+    proxy = Proxy.query.get_or_404(proxy_id)
+    url = proxy.url
+    db.session.delete(proxy)
+    db.session.commit()
+    flash(f'Proxy {url} eliminado.', 'success')
+    return redirect(url_for('admin.proxies'))
+
+
 # ── Importador M3U (interno) ───────────────────────────────────
 
 def _import_lista_async(app, lista_id: int):
@@ -312,11 +369,23 @@ def _import_lista(app, lista_id: int):
             if not lista:
                 return
 
-            app.logger.info(f'[Import M3U] Iniciando: {lista.nombre}')
+            # Seleccionar proxy si la lista lo requiere
+            proxy_url = None
+            if lista.usar_proxy:
+                active_proxies = Proxy.query.filter_by(activo=True).all()
+                if active_proxies:
+                    proxy_url = random.choice(active_proxies).url
+
+            app.logger.info(
+                f'[Import M3U] Iniciando: {lista.nombre}'
+                + (f' (proxy: {proxy_url})' if proxy_url else '')
+            )
             items, error = fetch_and_parse(
                 lista.url,
                 app.config,
                 filter_spanish=lista.filtrar_español,
+                include_live=lista.incluir_live,
+                proxy=proxy_url,
             )
 
             if error:

@@ -43,7 +43,7 @@ def get_contenido():
 
     query = Contenido.query.filter_by(activo=True)
 
-    if tipo in ('pelicula', 'serie'):
+    if tipo in ('pelicula', 'serie', 'live'):
         query = query.filter_by(tipo=tipo)
 
     if genero:
@@ -81,6 +81,12 @@ def get_peliculas():
 def get_series():
     """Shortcut: solo series."""
     return get_contenido_by_type('serie')
+
+
+@api_bp.get('/live')
+def get_live():
+    """Shortcut: solo canales en directo."""
+    return get_contenido_by_type('live')
 
 
 def get_contenido_by_type(tipo):
@@ -167,13 +173,15 @@ def get_stats():
     """Estadísticas básicas (usadas en el frontend y admin)."""
     total_peliculas = Contenido.query.filter_by(tipo='pelicula', activo=True).count()
     total_series = Contenido.query.filter_by(tipo='serie', activo=True).count()
+    total_live = Contenido.query.filter_by(tipo='live', activo=True).count()
     total_inactivos = Contenido.query.filter_by(activo=False).count()
     total_listas = Lista.query.filter_by(activa=True).count()
 
     return jsonify({
         'peliculas': total_peliculas,
         'series': total_series,
+        'live': total_live,
         'inactivos': total_inactivos,
         'listas': total_listas,
-        'total': total_peliculas + total_series,
+        'total': total_peliculas + total_series + total_live,
     })

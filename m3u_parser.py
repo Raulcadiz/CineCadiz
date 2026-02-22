@@ -347,20 +347,36 @@ HEADERS = {
 }
 
 
-def fetch_and_parse(url: str, config, filter_spanish: bool = False) -> tuple[list, str | None]:
+def fetch_and_parse(
+    url: str,
+    config,
+    filter_spanish: bool = False,
+    include_live: bool = False,
+    proxy: str | None = None,
+) -> tuple[list, str | None]:
     """
     Descarga una lista M3U con TIMEOUT TOTAL, la parsea y aplica filtros:
 
-      1. Siempre: excluye canales en vivo (FILTER_LIVE_CHANNELS)
+      1. Siempre: clasifica canales en vivo (tipo='live')
+         - Si include_live=False → excluye los canales en vivo
+         - Si include_live=True  → los incluye con tipo='live'
       2. Siempre: excluye ítems con tvg-language explícito NO español
       3. Si filter_spanish=True: aplica filtro estricto de español
 
-    Timeout total configurable (DOWNLOAD_TIMEOUT segundos, default 90).
+    proxy: "host:port" (sin esquema) del proxy HTTP a usar, o None para directo.
+    Timeout total configurable (DOWNLOAD_TIMEOUT segundos, default 300).
     Usa streaming para detectar si el servidor es muy lento y abortar.
 
     Devuelve (items, error_msg). Si error_msg es None, fue exitoso.
     """
-    max_secs = _cfg(config, 'DOWNLOAD_TIMEOUT', 90)
+    max_secs = _cfg(config, 'DOWNLOAD_TIMEOUT', 300)
+
+    req_proxies = None
+    if proxy:
+        req_proxies = {
+            'http':  f'http://{proxy}',
+            'https': f'http://{proxy}',
+        }
 
     try:
         start = time.monotonic()
@@ -369,6 +385,7 @@ def fetch_and_parse(url: str, config, filter_spanish: bool = False) -> tuple[lis
             timeout=(10, 30),   # (connect_timeout, read_per_chunk_timeout)
             headers=HEADERS,
             stream=True,
+            proxies=req_proxies,
         )
         resp.raise_for_status()
 
@@ -407,10 +424,19 @@ def fetch_and_parse(url: str, config, filter_spanish: bool = False) -> tuple[lis
         content = raw_bytes.decode('utf-8', errors='replace')
 
     all_items = parse_m3u_content(content)
-    total = len(all_items)
 
-    # Filtro 1: excluir canales en vivo
-    items = [it for it in all_items if is_vod_content(it, config)]
+    # Clasificar items: VOD (pelicula/serie) o LIVE
+    vod_items  = []
+    live_items = []
+    for it in all_items:
+        if is_vod_content(it, config):
+            vod_items.append(it)
+        else:
+            it['tipo'] = 'live'
+            live_items.append(it)
+
+    # Filtro 1: canales en vivo — incluir o no según el flag
+    items = vod_items + (live_items if include_live else [])
 
     # Filtro 2: excluir ítems EXPLICITAMENTE marcados como no español
     #           (nunca bloquea ítems sin etiqueta de idioma)

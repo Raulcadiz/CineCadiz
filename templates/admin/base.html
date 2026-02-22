@@ -136,6 +136,10 @@
            class="{% if 'contenido' in request.endpoint %}active{% endif %}">
             <i class="bi bi-film"></i> Contenido
         </a>
+        <a href="{{ url_for('admin.proxies') }}"
+           class="{% if 'proxies' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-shield-lock-fill"></i> Proxies HTTP
+        </a>
         <a href="{{ url_for('index') }}" target="_blank">
             <i class="bi bi-box-arrow-up-right"></i> Ver web
         </a>

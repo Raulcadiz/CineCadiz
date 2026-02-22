@@ -43,6 +43,9 @@
         <a href="#series" class="nav-item" data-type="serie">
             <i class="bi bi-tv"></i><span>Series</span>
         </a>
+        <a href="#live" class="nav-item" data-type="live">
+            <i class="bi bi-broadcast"></i><span>Directo</span>
+        </a>
         <a href="#search" class="nav-item">
             <i class="bi bi-search"></i><span>Buscar</span>
         </a>
@@ -59,6 +62,7 @@
                 <a href="#home" class="active">Inicio</a>
                 <a href="#movies" data-type="pelicula">Películas</a>
                 <a href="#series" data-type="serie">Series</a>
+                <a href="#live" data-type="live">En Directo</a>
                 <a href="#genres">Géneros</a>
                 <a href="#novedades">Novedades</a>
             </nav>
@@ -115,6 +119,15 @@
             <div class="carousel" id="seriesCarousel"></div>
         </section>
 
+        <!-- En Directo -->
+        <section class="content-section" id="live">
+            <div class="section-header">
+                <h2 class="section-title">📡 En Directo</h2>
+                <a href="#movies" data-type="live" class="ver-todas">Ver todos →</a>
+            </div>
+            <div class="carousel" id="liveCarousel"></div>
+        </section>
+
         <!-- Grid completo -->
         <section class="content-section" id="movies">
             <div class="section-header">
@@ -124,6 +137,7 @@
                         <option value="">Todo</option>
                         <option value="pelicula">Películas</option>
                         <option value="serie">Series</option>
+                        <option value="live">En Directo</option>
                     </select>
                     <select id="yearFilter" class="filter-select">
                         <option value="">Todos los años</option>
@@ -171,6 +185,7 @@
                 <a href="#home">Inicio</a>
                 <a href="#movies">Películas</a>
                 <a href="#series">Series</a>
+                <a href="#live">En Directo</a>
             </div>
             <div class="footer-section">
                 <h4>Legal</h4>

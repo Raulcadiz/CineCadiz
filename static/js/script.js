@@ -23,6 +23,7 @@ const el = {
     novedades:         document.getElementById('novedades'),
     peliculasCarousel: document.getElementById('peliculasCarousel'),
     seriesCarousel:    document.getElementById('seriesCarousel'),
+    liveCarousel:      document.getElementById('liveCarousel'),
     moviesGrid:        document.getElementById('moviesGrid'),
     loadMore:          document.getElementById('loadMore'),
     searchInput:       document.getElementById('searchInput'),
@@ -53,6 +54,7 @@ const api = {
     trending: () => api.get('trending', { limit: 20 }),
     peliculas: (page = 1) => api.get('contenido', { tipo: 'pelicula', page, limit: 12 }),
     series:    (page = 1) => api.get('contenido', { tipo: 'serie',    page, limit: 12 }),
+    live:      (page = 1) => api.get('contenido', { tipo: 'live',     page, limit: 12 }),
     generos:   ()         => api.get('generos'),
     años:      ()         => api.get('anos'),   // endpoint sin tilde
     stats:     ()         => api.get('stats'),
@@ -84,7 +86,7 @@ function isFav(id) {
 
 function renderCard(item) {
     const fav = isFav(item.id);
-    const typeIcon = item.type === 'movie' ? '🎬' : '📺';
+    const typeIcon = item.type === 'movie' ? '🎬' : item.type === 'live' ? '📡' : '📺';
     const epBadge = item.season
         ? `<span class="badge-ep">S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}</span>`
         : '';
@@ -186,7 +188,7 @@ async function showDetails(id) {
                 <div class="modal-info">
                     <h2>${item.title} ${item.year ? '(' + item.year + ')' : ''}</h2>
                     <div class="modal-meta">
-                        <span class="type">${item.type === 'movie' ? '🎬 Película' : '📺 Serie'}</span>
+                        <span class="type">${item.type === 'movie' ? '🎬 Película' : item.type === 'live' ? '📡 En Directo' : '📺 Serie'}</span>
                         ${item.season ? `<span>S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}</span>` : ''}
                     </div>
                     <div class="modal-genres">
@@ -339,6 +341,7 @@ async function loadGrid(append = false) {
             const titles = {
                 pelicula: '🎬 Películas',
                 serie:    '📺 Series',
+                live:     '📡 En Directo',
             };
             el.gridTitle.textContent = titles[state.currentType] || '🎬 Todo el contenido';
         }
@@ -383,7 +386,7 @@ async function performSearch(q) {
                         <strong>${item.title}</strong>
                         <div class="search-result-meta">
                             <span>${item.year || ''}</span>
-                            <span>${item.type === 'movie' ? '🎬' : '📺'}</span>
+                            <span>${item.type === 'movie' ? '🎬' : item.type === 'live' ? '📡' : '📺'}</span>
                         </div>
                     </div>
                 </div>`;
@@ -572,16 +575,18 @@ async function init() {
 
     try {
         // Cargar secciones en paralelo
-        const [trending, peliculas, series] = await Promise.all([
+        const [trending, peliculas, series, live] = await Promise.all([
             api.trending(),
             api.peliculas(1),
             api.series(1),
+            api.live(1),
         ]);
 
         renderHero(trending);
         renderCarousel(trending, el.novedades);
         renderCarousel(peliculas.items, el.peliculasCarousel);
         renderCarousel(series.items, el.seriesCarousel);
+        renderCarousel(live.items, el.liveCarousel);
 
         // Grid principal y filtros
         await Promise.all([loadGrid(), loadFilters()]);
