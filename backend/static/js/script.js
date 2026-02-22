@@ -69,12 +69,19 @@ const api = {
 // ── Proxy de imágenes RSS (bypass hotlinking/VPN) ──────────
 /**
  * Devuelve la URL de imagen correcta:
- *  - RSS: usa /api/proxy-image para evitar bloqueos de cinemacity.cc
+ *  - RSS con imagen: usa /api/proxy-image para evitar bloqueos de cinemacity.cc
+ *  - RSS sin imagen: usa /api/og-image para extraer og:image de la página
  *  - M3U: usa la URL directa (CDN externo sin restricciones)
  */
 function getImageUrl(item) {
-    if (item.source === 'rss' && item.image) {
-        return `/api/proxy-image?url=${encodeURIComponent(item.image)}`;
+    if (item.source === 'rss') {
+        if (item.image) {
+            return `/api/proxy-image?url=${encodeURIComponent(item.image)}`;
+        }
+        // Sin imagen en el feed → intentar og:image de la página
+        if (item.streamUrl) {
+            return `/api/og-image?url=${encodeURIComponent(item.streamUrl)}`;
+        }
     }
     return item.image || PLACEHOLDER;
 }
@@ -229,6 +236,42 @@ function _destroyHls() {
         _hls = null;
     }
     el.videoPlayer.removeAttribute('src');
+    el.videoPlayer.onerror = null;
+    el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
+}
+
+/** Muestra overlay de error dentro del reproductor (no reemplaza el <video>). */
+function _showPlayerError(msg) {
+    el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
+    const errDiv = document.createElement('div');
+    errDiv.className = 'player-error';
+    errDiv.innerHTML = `
+        <div style="font-size:2.5rem;margin-bottom:.7rem">⚠️</div>
+        <p style="margin:.3rem 0;font-size:1rem">${msg}</p>
+        <p style="color:#999;font-size:.8rem;margin-top:.5rem">
+          El stream puede haber expirado o el servidor no está disponible
+        </p>`;
+    el.player?.querySelector('.player-body')?.appendChild(errDiv);
+}
+
+/** Carga un stream HLS con HLS.js. */
+function _loadHls(url) {
+    _hls = new Hls({
+        maxBufferLength:   30,
+        maxBufferSize:     60 * 1000 * 1000,
+        xhrSetup: (xhr) => { xhr.withCredentials = false; },
+    });
+    _hls.loadSource(url);
+    _hls.attachMedia(el.videoPlayer);
+    _hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        el.videoPlayer.play().catch(() => {});
+    });
+    _hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (data.fatal) {
+            _destroyHls();
+            _showPlayerError('Stream HLS no disponible — puede ser un problema de CORS o el stream expiró');
+        }
+    });
 }
 
 /**
@@ -257,39 +300,35 @@ function playStream(streamUrl, title, source) {
     const titleEl = document.getElementById('playerTitle');
     if (titleEl) titleEl.textContent = title;
 
-    // Intentar HLS.js (soporta .m3u8 en Chrome/Firefox)
-    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-        _hls = new Hls({
-            maxBufferLength: 30,
-            maxBufferSize:   60 * 1000 * 1000,
-            xhrSetup: (xhr) => {
-                // algunos streams necesitan credenciales; intentar sin ellas primero
-                xhr.withCredentials = false;
-            },
-        });
-        _hls.loadSource(url);
-        _hls.attachMedia(el.videoPlayer);
-        _hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            el.videoPlayer.play().catch(() => {});
-        });
-        _hls.on(Hls.Events.ERROR, (_e, data) => {
-            if (data.fatal) {
-                // HLS falló → intentar reproducción directa
-                _destroyHls();
-                el.videoPlayer.src = url;
-                el.videoPlayer.load();
-                el.videoPlayer.play().catch(() => {});
-            }
-        });
-    } else if (el.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari soporta HLS nativo
+    // ── Detección de formato por URL ────────────────────────
+    // HLS.js usa XHR internamente → los proveedores IPTV no envían CORS headers
+    // → solo usar HLS.js para .m3u8 reales; el resto con <video src> nativo
+    const isHls         = /\.m3u8(\?.*)?$/i.test(url) || /\/m3u8\//i.test(url);
+    const isDirectVideo = /\.(mp4|mkv|avi|mov|webm|flv|wmv|ts)(\?.*)?$/i.test(url);
+
+    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+        // Stream HLS real → HLS.js
+        _loadHls(url);
+    } else if (isHls && el.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari — HLS nativo
         el.videoPlayer.src = url;
         el.videoPlayer.play().catch(() => {});
     } else {
-        // Fallback directo (MP4, TS, etc.)
+        // MP4, MKV, TS, Xtream Codes sin extensión → <video src> directo
+        // El elemento <video> no usa XHR → no hay problema de CORS
         el.videoPlayer.src = url;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
+        el.videoPlayer.onerror = () => {
+            // Si falla el nativo y no es HLS conocido, intentar HLS.js como último recurso
+            if (!isDirectVideo && typeof Hls !== 'undefined' && Hls.isSupported()) {
+                el.videoPlayer.onerror = null;
+                _destroyHls();
+                _loadHls(url);
+            } else {
+                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            }
+        };
     }
 }
 
@@ -463,11 +502,20 @@ function setupEvents() {
         }
     });
 
-    // Cerrar reproductor
+    // Cerrar reproductor — botón ×
     document.querySelector('.btn-close-player')?.addEventListener('click', () => {
         el.videoPlayer.pause();
         _destroyHls();
         el.player.style.display = 'none';
+    });
+
+    // Cerrar reproductor — click en la zona negra fuera del vídeo
+    el.player?.addEventListener('click', e => {
+        if (e.target === el.player || e.target.classList.contains('player-body')) {
+            el.videoPlayer.pause();
+            _destroyHls();
+            el.player.style.display = 'none';
+        }
     });
 
     // Búsqueda
@@ -630,10 +678,23 @@ _style.textContent = `
     .movie-card { position:relative }
     .modal { display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:1000;align-items:center;justify-content:center }
     .player { display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column }
-    .player-body { flex:1;display:flex;align-items:center;justify-content:center }
-    .player-body video { max-width:100%;max-height:100%;width:100% }
-    .player-header { display:flex;justify-content:flex-end;padding:.5rem }
-    .btn-close-player { background:none;border:none;color:#fff;font-size:2rem;cursor:pointer;line-height:1 }
+    .player-body { flex:1;display:flex;align-items:center;justify-content:center;position:relative }
+    .player-body video { max-width:100%;max-height:100%;width:100%;z-index:1 }
+    .player-header { display:flex;align-items:center;justify-content:space-between;padding:.4rem .7rem;background:rgba(0,0,0,.6) }
+    .btn-close-player {
+        background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);
+        color:#fff;font-size:1.3rem;cursor:pointer;
+        padding:.2rem .85rem;border-radius:6px;line-height:1.5;
+        transition:background .2s;flex-shrink:0;
+    }
+    .btn-close-player:hover { background:rgba(255,255,255,.3); }
+    .player-esc-hint { color:rgba(255,255,255,.4);font-size:.75rem;margin-right:.5rem }
+    /* Overlay de error dentro del reproductor */
+    .player-error {
+        position:absolute;inset:0;z-index:5;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        background:rgba(0,0,0,.8);color:#fff;text-align:center;padding:2rem;
+    }
 `;
 document.head.appendChild(_style);
 

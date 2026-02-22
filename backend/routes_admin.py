@@ -356,25 +356,36 @@ def test_proxy(proxy_id):
         'http':  f'http://{proxy.url}',
         'https': f'http://{proxy.url}',
     }
-    try:
-        resp = _requests.get(
-            'http://httpbin.org/ip',
-            proxies=req_proxies,
-            timeout=8,
-            headers={'User-Agent': 'Mozilla/5.0'},
-        )
-        ip = resp.json().get('origin', '?')
-        return jsonify({'ok': True, 'ip': ip})
-    except Exception as e:
-        msg = str(e)
-        # Simplificar mensajes largos de urllib3
-        if 'Connection refused' in msg:
-            msg = 'Conexión rechazada — proxy caído'
-        elif 'timed out' in msg.lower() or 'timeout' in msg.lower():
-            msg = 'Timeout — proxy no responde'
-        elif 'Failed to establish' in msg:
-            msg = 'No se pudo conectar al proxy'
-        return jsonify({'ok': False, 'error': msg[:120]})
+    # Usar varios endpoints de fallback para obtener la IP saliente
+    _TEST_URLS = [
+        ('http://api.ipify.org?format=json', lambda r: r.json().get('ip', '?')),
+        ('http://api64.ipify.org?format=json', lambda r: r.json().get('ip', '?')),
+        ('http://checkip.amazonaws.com',      lambda r: r.text.strip()),
+    ]
+    last_err = 'Sin respuesta'
+    for test_url, extract_ip in _TEST_URLS:
+        try:
+            resp = _requests.get(
+                test_url,
+                proxies=req_proxies,
+                timeout=8,
+                headers={'User-Agent': 'Mozilla/5.0'},
+            )
+            ip = extract_ip(resp)
+            return jsonify({'ok': True, 'ip': ip})
+        except Exception as e:
+            msg = str(e)
+            if 'Connection refused' in msg:
+                last_err = 'Conexión rechazada — proxy caído'
+            elif 'timed out' in msg.lower() or 'timeout' in msg.lower():
+                last_err = 'Timeout — proxy no responde'
+            elif 'Failed to establish' in msg or 'Max retries' in msg:
+                last_err = 'No se pudo conectar al proxy'
+            elif '407' in msg:
+                last_err = 'Proxy requiere autenticación (407)'
+            else:
+                last_err = msg[:100]
+    return jsonify({'ok': False, 'error': last_err})
 
 
 @admin_bp.post('/proxies/<int:proxy_id>/toggle')

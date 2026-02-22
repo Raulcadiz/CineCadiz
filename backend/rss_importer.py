@@ -76,17 +76,33 @@ def _extract_image(node, desc: str) -> str:
         if url:
             return url
 
-    # 4. <img src="..."> en la descripción HTML
-    m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc, re.IGNORECASE)
+    # 4. <img src="..."> o data-src / data-lazy-src en la descripción HTML
+    _IMG_RE = re.compile(
+        r'<img[^>]+(?:src|data-src|data-lazy-src)=["\']([^"\']+)["\']',
+        re.IGNORECASE,
+    )
+    m = _IMG_RE.search(desc)
     if m:
         return m.group(1)
 
-    # 5. content:encoded (WordPress suele poner el contenido completo aquí)
+    # 5. content:encoded (WordPress pone el contenido completo del post aquí)
     ce = node.find('content:encoded', _NS)
     if ce is not None and ce.text:
-        m2 = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', ce.text, re.IGNORECASE)
+        # Primero buscar img con src normal; luego data-src para lazy-load
+        m2 = re.search(
+            r'<img[^>]+(?:src|data-src|data-lazy-src)=["\']([^"\']+)["\']',
+            ce.text, re.IGNORECASE,
+        )
         if m2:
             return m2.group(1)
+
+    # 6. og:image en el HTML de la descripción (algunos feeds lo incluyen)
+    m3 = re.search(
+        r'<meta[^>]+(?:property=["\']og:image["\'][^>]+content|content=[^>]+property=["\']og:image["\'])[^>]*=["\']([^"\']+)["\']',
+        desc, re.IGNORECASE,
+    )
+    if m3:
+        return m3.group(1)
 
     return ''
 

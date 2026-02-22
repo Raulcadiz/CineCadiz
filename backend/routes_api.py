@@ -2,6 +2,7 @@
 API REST pública — /api/
 Consumida por el frontend JavaScript.
 """
+import re as _re
 from flask import Blueprint, jsonify, request, current_app, Response
 from models import db, Contenido, Lista
 from sqlalchemy import or_
@@ -166,6 +167,64 @@ def proxy_image():
         )
     except Exception:
         return '', 404
+
+
+@api_bp.get('/og-image')
+def og_image():
+    """
+    Extrae og:image de una página web y la sirve como proxy.
+    Útil para ítems RSS que no tienen imagen en el feed pero sí en la página.
+    """
+    url = request.args.get('url', '').strip()
+    if not url or not url.lower().startswith('http'):
+        return '', 400
+    _HEADERS = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        ),
+    }
+    try:
+        resp = requests.get(url, timeout=10, headers=_HEADERS, stream=False)
+        html = resp.text[:50000]  # solo los primeros 50 KB para no descargar todo
+
+        # Buscar og:image (dos órdenes de atributos posibles)
+        m = _re.search(
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            html, _re.IGNORECASE,
+        )
+        if not m:
+            m = _re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+                html, _re.IGNORECASE,
+            )
+        if not m:
+            # Fallback: primera imagen grande del HTML
+            m = _re.search(
+                r'<img[^>]+src=["\']([^"\']*(?:poster|cover|thumb|banner|image)[^"\']*)["\']',
+                html, _re.IGNORECASE,
+            )
+
+        if m:
+            img_url = m.group(1).strip()
+            if img_url.startswith('//'):
+                img_url = 'https:' + img_url
+            elif img_url.startswith('/'):
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                img_url = f'{parsed.scheme}://{parsed.netloc}{img_url}'
+
+            img_resp = requests.get(img_url, timeout=8, headers={**_HEADERS, 'Referer': url})
+            ct = img_resp.headers.get('content-type', 'image/jpeg')
+            return Response(
+                img_resp.content,
+                mimetype=ct,
+                headers={'Cache-Control': 'public, max-age=86400'},
+            )
+    except Exception:
+        pass
+    return '', 404
 
 
 @api_bp.get('/stats')

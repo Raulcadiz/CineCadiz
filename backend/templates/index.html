@@ -162,11 +162,12 @@
         <!-- Reproductor -->
         <div class="player" id="player">
             <div class="player-header">
-                <span id="playerTitle" style="color:#fff;font-size:.95rem;flex:1;padding:.2rem .5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-                <button class="btn-close-player">&times;</button>
+                <span id="playerTitle" style="color:#fff;font-size:.95rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                <span class="player-esc-hint">ESC o click fuera para cerrar</span>
+                <button class="btn-close-player" title="Cerrar (ESC)">&times; Cerrar</button>
             </div>
             <div class="player-body">
-                <video id="videoPlayer" controls>
+                <video id="videoPlayer" controls playsinline>
                     Tu navegador no soporta video HTML5.
                 </video>
             </div>
