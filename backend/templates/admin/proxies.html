@@ -4,94 +4,158 @@
 {% block content %}
 <div class="topbar">
     <h1><i class="bi bi-shield-lock-fill me-2 text-warning"></i>Proxies HTTP</h1>
+    {% if proxies %}
+    <button class="btn btn-outline-info btn-sm" id="btnTestAll">
+        <i class="bi bi-lightning-charge-fill"></i> Probar todos
+    </button>
+    {% endif %}
 </div>
 
 <div class="alert alert-secondary small mb-4">
     <i class="bi bi-info-circle me-1"></i>
-    Los proxies se usan para descargar listas M3U cuyos proveedores bloquean la IP del servidor.
-    Formato: <code>host:puerto</code> — por ejemplo <code>200.103.21.6:8080</code>.
-    Cuando una lista tiene «Usar proxy» activado, se elige uno aleatorio de los proxies activos.
+    Proxies HTTP para descargar listas M3U cuyo proveedor bloquea la IP del servidor.
+    Formato: <code>host:puerto</code> — uno por línea. Cuando una lista tiene «Usar proxy», se elige uno activo al azar.
+    Usa <b>Probar</b> para verificar cuáles funcionan antes de activarlos.
 </div>
 
-<!-- Formulario agregar proxy -->
-<div class="form-card mb-4">
-    <h5 class="mb-3"><i class="bi bi-plus-circle me-2 text-success"></i>Agregar proxy</h5>
-    <form action="{{ url_for('admin.agregar_proxy') }}" method="post">
-        <div class="row g-3 align-items-end">
-            <div class="col-md-8">
-                <label class="form-label text-secondary small">Dirección del proxy (host:puerto)</label>
-                <input type="text" name="url" class="form-control"
-                       placeholder="Ej: 200.103.21.6:8080" required>
-            </div>
-            <div class="col-md-4">
+<div class="row g-4">
+    <!-- Formulario agregar -->
+    <div class="col-md-4">
+        <div class="form-card">
+            <h5 class="mb-3"><i class="bi bi-plus-circle me-2 text-success"></i>Agregar proxies</h5>
+            <form action="{{ url_for('admin.agregar_proxy') }}" method="post">
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">
+                        Uno o varios proxies — un proxy por línea
+                    </label>
+                    <textarea name="urls" class="form-control font-monospace" rows="8"
+                              placeholder="200.103.21.6:8080&#10;195.95.129.3:8080&#10;103.149.130.38:80"
+                              required></textarea>
+                    <div class="form-text">Formato: <code>host:puerto</code> (sin http://)</div>
+                </div>
                 <button type="submit" class="btn btn-danger w-100">
-                    <i class="bi bi-plus-lg me-1"></i>Agregar proxy
+                    <i class="bi bi-plus-lg me-1"></i>Agregar
                 </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabla de proxies -->
+    <div class="col-md-8">
+        {% if proxies %}
+        <div class="form-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Registrados ({{ proxies|length }})</h5>
+                <span class="text-muted small" id="testSummary"></span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-dark table-hover align-middle mb-0" style="font-size:.85rem">
+                    <thead>
+                        <tr>
+                            <th>Dirección</th>
+                            <th class="text-center">Estado</th>
+                            <th class="text-center" style="min-width:140px">Test</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for proxy in proxies %}
+                    <tr id="proxy-row-{{ proxy.id }}">
+                        <td><code>{{ proxy.url }}</code></td>
+                        <td class="text-center">
+                            {% if proxy.activo %}
+                                <span class="badge badge-status-ok">Activo</span>
+                            {% else %}
+                                <span class="badge badge-status-err">Inactivo</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <span id="test-result-{{ proxy.id }}" class="text-muted small">—</span>
+                            <button class="btn btn-outline-info btn-sm ms-1 btn-test"
+                                    data-id="{{ proxy.id }}"
+                                    title="Probar proxy">
+                                <i class="bi bi-wifi"></i>
+                            </button>
+                        </td>
+                        <td>
+                            <div class="d-flex gap-1">
+                                <form action="{{ url_for('admin.toggle_proxy', proxy_id=proxy.id) }}"
+                                      method="post" class="d-inline">
+                                    <button type="submit"
+                                            class="btn btn-sm {% if proxy.activo %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                                            title="{% if proxy.activo %}Desactivar{% else %}Activar{% endif %}">
+                                        <i class="bi {% if proxy.activo %}bi-pause-fill{% else %}bi-play-fill{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form action="{{ url_for('admin.eliminar_proxy', proxy_id=proxy.id) }}"
+                                      method="post" class="d-inline"
+                                      onsubmit="return confirm('¿Eliminar {{ proxy.url }}?')">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm"
+                                            title="Eliminar">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
-    </form>
-</div>
-
-<!-- Tabla de proxies -->
-{% if proxies %}
-<div class="form-card">
-    <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Proxies registrados ({{ proxies|length }})</h5>
-    <div class="table-responsive">
-        <table class="table table-dark table-hover align-middle mb-0">
-            <thead>
-                <tr>
-                    <th>Dirección</th>
-                    <th class="text-center">Estado</th>
-                    <th>Agregado</th>
-                    <th>Acciones</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for proxy in proxies %}
-            <tr>
-                <td><code>{{ proxy.url }}</code></td>
-                <td class="text-center">
-                    {% if proxy.activo %}
-                        <span class="badge badge-status-ok">Activo</span>
-                    {% else %}
-                        <span class="badge badge-status-err">Inactivo</span>
-                    {% endif %}
-                </td>
-                <td class="small text-muted">
-                    {{ proxy.fecha_creacion.strftime('%d/%m/%Y %H:%M') if proxy.fecha_creacion else '—' }}
-                </td>
-                <td>
-                    <div class="d-flex gap-1">
-                        <form action="{{ url_for('admin.toggle_proxy', proxy_id=proxy.id) }}"
-                              method="post" class="d-inline">
-                            <button type="submit"
-                                    class="btn btn-sm {% if proxy.activo %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
-                                    title="{% if proxy.activo %}Desactivar{% else %}Activar{% endif %}">
-                                <i class="bi {% if proxy.activo %}bi-pause-fill{% else %}bi-play-fill{% endif %}"></i>
-                            </button>
-                        </form>
-                        <form action="{{ url_for('admin.eliminar_proxy', proxy_id=proxy.id) }}"
-                              method="post" class="d-inline"
-                              onsubmit="return confirm('¿Eliminar proxy {{ proxy.url }}?')">
-                            <button type="submit" class="btn btn-outline-danger btn-sm"
-                                    title="Eliminar">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
+        {% else %}
+        <div class="form-card text-center py-5 text-muted">
+            <i class="bi bi-shield-x display-3 d-block mb-3"></i>
+            <p class="mb-0">No hay proxies. Agrega algunos a la izquierda.</p>
+        </div>
+        {% endif %}
     </div>
 </div>
+{% endblock %}
 
-{% else %}
-<div class="form-card text-center py-5 text-muted">
-    <i class="bi bi-shield-x display-3 d-block mb-3"></i>
-    <p class="mb-0">No hay proxies configurados. Agrega uno arriba.</p>
-</div>
-{% endif %}
+{% block scripts %}
+<script>
+async function testProxy(proxyId) {
+    const resultEl = document.getElementById(`test-result-${proxyId}`);
+    const btn = document.querySelector(`.btn-test[data-id="${proxyId}"]`);
 
+    resultEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await fetch(`/admin/proxies/${proxyId}/test`);
+        const data = await res.json();
+        if (data.ok) {
+            resultEl.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> OK — ${data.ip}</span>`;
+        } else {
+            resultEl.innerHTML = `<span class="text-danger" title="${data.error}"><i class="bi bi-x-circle-fill"></i> Caído</span>`;
+        }
+    } catch {
+        resultEl.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle-fill"></i> Error</span>`;
+    }
+
+    if (btn) btn.disabled = false;
+    return resultEl.innerHTML.includes('OK');
+}
+
+// Botones individuales
+document.querySelectorAll('.btn-test').forEach(btn => {
+    btn.addEventListener('click', () => testProxy(btn.dataset.id));
+});
+
+// Probar todos secuencialmente
+document.getElementById('btnTestAll')?.addEventListener('click', async function () {
+    this.disabled = true;
+    this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Probando...';
+    const ids = [...document.querySelectorAll('.btn-test')].map(b => b.dataset.id);
+    let ok = 0;
+    for (const id of ids) {
+        const alive = await testProxy(id);
+        if (alive) ok++;
+    }
+    document.getElementById('testSummary').textContent = `${ok}/${ids.length} activos`;
+    this.disabled = false;
+    this.innerHTML = '<i class="bi bi-lightning-charge-fill"></i> Probar todos';
+});
+</script>
 {% endblock %}

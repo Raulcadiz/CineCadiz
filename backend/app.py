@@ -26,7 +26,7 @@ def create_app(config_class=Config):
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
 
-    # ── BD: crear tablas si no existen ─────────────────────────
+    # ── BD: crear tablas + migraciones seguras ─────────────────
     with app.app_context():
         os.makedirs(
             os.path.join(app.root_path, 'instance'),
@@ -34,21 +34,6 @@ def create_app(config_class=Config):
         )
         db.create_all()
         _migrate_db()
-
-
-def _migrate_db():
-    """Agrega columnas nuevas a tablas existentes sin perder datos (SQLite safe)."""
-    from sqlalchemy import text
-    with db.engine.connect() as conn:
-        for stmt in (
-            'ALTER TABLE listas ADD COLUMN incluir_live BOOLEAN NOT NULL DEFAULT 0',
-            'ALTER TABLE listas ADD COLUMN usar_proxy   BOOLEAN NOT NULL DEFAULT 0',
-        ):
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass   # columna ya existe → ignorar
 
     # ── Scheduler (solo si no estamos en testing y AUTO_SCAN=1) ─
     # Poner AUTO_SCAN=0 en .env para deshabilitar el escaneo automático.
@@ -81,6 +66,21 @@ def _migrate_db():
         return {'error': 'Error interno del servidor'}, 500
 
     return app
+
+
+def _migrate_db():
+    """Agrega columnas nuevas a tablas existentes sin perder datos (SQLite safe)."""
+    from sqlalchemy import text
+    with db.engine.connect() as conn:
+        for stmt in (
+            'ALTER TABLE listas ADD COLUMN incluir_live BOOLEAN NOT NULL DEFAULT 0',
+            'ALTER TABLE listas ADD COLUMN usar_proxy   BOOLEAN NOT NULL DEFAULT 0',
+        ):
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass   # columna ya existe → ignorar
 
 
 # ── Punto de entrada para desarrollo local ─────────────────────

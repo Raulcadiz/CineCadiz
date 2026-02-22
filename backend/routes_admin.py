@@ -11,6 +11,7 @@ from flask import (
 )
 
 import random
+import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
 from models import db, Lista, FuenteRSS, Contenido, Proxy
 from m3u_parser import fetch_and_parse
@@ -316,22 +317,64 @@ def proxies():
 @admin_bp.post('/proxies/agregar')
 @login_required
 def agregar_proxy():
-    url = request.form.get('url', '').strip()
-    if not url:
-        flash('La dirección del proxy es obligatoria', 'danger')
+    # Acepta textarea con múltiples proxies (uno por línea) o campo 'url' simple
+    raw = request.form.get('urls', '') or request.form.get('url', '')
+    lineas = [l.strip() for l in raw.splitlines() if l.strip()]
+    if not lineas:
+        flash('Introduce al menos una dirección de proxy.', 'danger')
         return redirect(url_for('admin.proxies'))
-    # Normalizar: quitar esquema si el usuario lo puso
-    url = url.replace('http://', '').replace('https://', '').rstrip('/')
-    if not url:
-        flash('Dirección de proxy inválida', 'danger')
-        return redirect(url_for('admin.proxies'))
-    if Proxy.query.filter_by(url=url).first():
-        flash(f'El proxy {url} ya existe', 'warning')
-        return redirect(url_for('admin.proxies'))
-    db.session.add(Proxy(url=url))
+
+    agregados, duplicados, invalidos = 0, 0, 0
+    for linea in lineas:
+        # Quitar esquema si el usuario lo puso
+        url = linea.replace('http://', '').replace('https://', '').rstrip('/')
+        # Validar formato host:puerto básico
+        if not url or ':' not in url:
+            invalidos += 1
+            continue
+        if Proxy.query.filter_by(url=url).first():
+            duplicados += 1
+            continue
+        db.session.add(Proxy(url=url))
+        agregados += 1
+
     db.session.commit()
-    flash(f'Proxy {url} agregado.', 'success')
+    msgs = []
+    if agregados:   msgs.append(f'{agregados} proxy(s) agregado(s)')
+    if duplicados:  msgs.append(f'{duplicados} ya existían')
+    if invalidos:   msgs.append(f'{invalidos} inválidos (formato esperado host:puerto)')
+    flash('. '.join(msgs) + '.', 'success' if agregados else 'warning')
     return redirect(url_for('admin.proxies'))
+
+
+@admin_bp.get('/proxies/<int:proxy_id>/test')
+@login_required
+def test_proxy(proxy_id):
+    """Comprueba si el proxy está vivo. Devuelve JSON {ok, ip?, error?}."""
+    proxy = Proxy.query.get_or_404(proxy_id)
+    req_proxies = {
+        'http':  f'http://{proxy.url}',
+        'https': f'http://{proxy.url}',
+    }
+    try:
+        resp = _requests.get(
+            'http://httpbin.org/ip',
+            proxies=req_proxies,
+            timeout=8,
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        ip = resp.json().get('origin', '?')
+        return jsonify({'ok': True, 'ip': ip})
+    except Exception as e:
+        msg = str(e)
+        # Simplificar mensajes largos de urllib3
+        if 'Connection refused' in msg:
+            msg = 'Conexión rechazada — proxy caído'
+        elif 'timed out' in msg.lower() or 'timeout' in msg.lower():
+            msg = 'Timeout — proxy no responde'
+        elif 'Failed to establish' in msg:
+            msg = 'No se pudo conectar al proxy'
+        return jsonify({'ok': False, 'error': msg[:120]})
 
 
 @admin_bp.post('/proxies/<int:proxy_id>/toggle')

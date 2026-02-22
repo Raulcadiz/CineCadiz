@@ -43,7 +43,7 @@ Plataforma de streaming personal de código abierto para organizar y reproducir 
 
 ```bash
 # Clonar el repositorio
-git clone https://github.com/Raulcadiz/cinemacity-web.git
+git clone https://github.com/tu-usuario/cinemacity-web.git
 cd cinemacity-web/backend
 
 # Instalar dependencias
