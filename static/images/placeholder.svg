@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
+  <rect width="300" height="450" fill="#1a1a1a"/>
+  <rect x="20" y="20" width="260" height="410" rx="8" fill="#242424"/>
+  <!-- Film strip top -->
+  <rect x="40" y="40" width="220" height="30" rx="4" fill="#2a2a2a"/>
+  <rect x="50" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="78" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="106" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="134" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="162" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="190" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="218" y="45" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <!-- Main image area -->
+  <rect x="40" y="85" width="220" height="200" rx="4" fill="#2e2e2e"/>
+  <!-- Play icon circle -->
+  <circle cx="150" cy="185" r="38" fill="#333" stroke="#444" stroke-width="2"/>
+  <polygon points="140,167 140,203 172,185" fill="#555"/>
+  <!-- Film strip bottom -->
+  <rect x="40" y="298" width="220" height="30" rx="4" fill="#2a2a2a"/>
+  <rect x="50" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="78" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="106" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="134" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="162" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="190" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <rect x="218" y="303" width="18" height="20" rx="2" fill="#1a1a1a"/>
+  <!-- Text area -->
+  <rect x="40" y="345" width="220" height="12" rx="6" fill="#2a2a2a"/>
+  <rect x="70" y="368" width="160" height="10" rx="5" fill="#252525"/>
+  <rect x="90" y="390" width="120" height="8" rx="4" fill="#222"/>
+</svg>

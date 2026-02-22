@@ -1,0 +1,135 @@
+{% extends "admin/base.html" %}
+{% block title %}Fuentes RSS{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-rss-fill me-2 text-danger"></i>Fuentes RSS</h1>
+</div>
+
+<!-- Importar defaults cinemacity.cc -->
+<div class="alert alert-dark border-secondary mb-4 d-flex align-items-center justify-content-between">
+    <div>
+        <i class="bi bi-lightning-fill text-warning me-2"></i>
+        <strong>Acceso rápido:</strong> importa películas y series desde <em>cinemacity.cc</em> de un click.
+        El contenido RSS abre en una nueva pestaña al hacer click en "Ver".
+    </div>
+    <form action="{{ url_for('admin.importar_defaults_rss') }}" method="post" class="ms-3">
+        <button type="submit" class="btn btn-danger btn-sm text-nowrap">
+            <i class="bi bi-cloud-download"></i> Importar cinemacity.cc
+        </button>
+    </form>
+</div>
+
+<!-- Formulario agregar fuente -->
+<div class="form-card mb-4">
+    <h5 class="mb-3"><i class="bi bi-plus-circle me-2 text-success"></i>Agregar fuente RSS personalizada</h5>
+    <form action="{{ url_for('admin.agregar_rss') }}" method="post">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label text-secondary small">Nombre</label>
+                <input type="text" name="nombre" class="form-control"
+                       placeholder="Ej: Mi sitio de pelis" required>
+            </div>
+            <div class="col-md-7">
+                <label class="form-label text-secondary small">URL del RSS</label>
+                <input type="url" name="url" class="form-control"
+                       placeholder="https://misitio.com/rss.xml" required>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-danger w-100" title="Agregar">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Tabla fuentes -->
+{% if fuentes %}
+<div class="form-card">
+    <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Fuentes registradas ({{ fuentes|length }})</h5>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Nombre</th>
+                    <th>URL</th>
+                    <th class="text-center">Items</th>
+                    <th>Actualización</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for fuente in fuentes %}
+            <tr>
+                <td><strong>{{ fuente.nombre }}</strong></td>
+                <td>
+                    <span class="text-muted small" title="{{ fuente.url }}">
+                        {{ fuente.url[:55] }}{% if fuente.url|length > 55 %}…{% endif %}
+                    </span>
+                </td>
+                <td class="text-center fw-bold">{{ fuente.total_items or 0 }}</td>
+                <td class="small text-muted">
+                    {% if fuente.ultima_actualizacion %}
+                        {{ fuente.ultima_actualizacion.strftime('%d/%m/%Y %H:%M') }}
+                    {% else %}
+                        <span class="text-warning"><i class="bi bi-hourglass-split"></i> Importando...</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if fuente.error %}
+                        <span class="badge badge-status-err" title="{{ fuente.error }}">
+                            <i class="bi bi-exclamation-triangle"></i> Error
+                        </span>
+                    {% elif not fuente.ultima_actualizacion %}
+                        <span class="badge badge-status-warn">Pendiente</span>
+                    {% else %}
+                        <span class="badge badge-status-ok">OK</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="d-flex gap-1">
+                        <form action="{{ url_for('admin.refresh_rss', fuente_id=fuente.id) }}"
+                              method="post" class="d-inline">
+                            <button type="submit" class="btn btn-outline-info btn-sm" title="Re-importar">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </button>
+                        </form>
+                        <form action="{{ url_for('admin.eliminar_rss', fuente_id=fuente.id) }}"
+                              method="post" class="d-inline"
+                              onsubmit="return confirm('¿Eliminar fuente RSS y todo su contenido?')">
+                            <button type="submit" class="btn btn-outline-danger btn-sm" title="Eliminar">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% if fuente.error %}
+            <tr class="bg-danger bg-opacity-10">
+                <td colspan="6" class="small text-danger py-1 px-3">
+                    <i class="bi bi-exclamation-triangle me-1"></i>{{ fuente.error }}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="form-card text-center py-5 text-muted">
+    <i class="bi bi-rss display-3 d-block mb-3"></i>
+    <p class="mb-2">Sin fuentes RSS todavía.</p>
+    <p class="small">Usa el botón de arriba para importar <strong>cinemacity.cc</strong> de un click.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const hasPending = document.querySelector('.badge-status-warn');
+if (hasPending) setTimeout(() => location.reload(), 8000);
+</script>
+{% endblock %}

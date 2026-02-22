@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineCadiz - Películas y Series</title>
+    <meta name="description" content="Plataforma streaming con las mejores películas y series">
+    <meta name="theme-color" content="#141414">
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" href="/static/images/icon-192.png">
+    <link rel="apple-touch-icon" href="/static/images/icon-192.png">
+
+    <!-- Fuentes -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="CineCadiz - Streaming">
+    <meta property="og:description" content="Mira películas y series online">
+</head>
+<body>
+    <!-- Preloader -->
+    <div id="preloader">
+        <div class="spinner"></div>
+        <div class="logo">🎬 CINECADIZ</div>
+    </div>
+
+    <!-- Navegación Móvil -->
+    <nav class="mobile-nav">
+        <a href="#home" class="nav-item active">
+            <i class="bi bi-house"></i><span>Inicio</span>
+        </a>
+        <a href="#movies" class="nav-item" data-type="pelicula">
+            <i class="bi bi-film"></i><span>Películas</span>
+        </a>
+        <a href="#series" class="nav-item" data-type="serie">
+            <i class="bi bi-tv"></i><span>Series</span>
+        </a>
+        <a href="#search" class="nav-item">
+            <i class="bi bi-search"></i><span>Buscar</span>
+        </a>
+        <a href="#favorites" class="nav-item">
+            <i class="bi bi-heart"></i><span>Favoritos</span>
+        </a>
+    </nav>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">🎬 CINECADIZ</div>
+            <nav class="desktop-nav">
+                <a href="#home" class="active">Inicio</a>
+                <a href="#movies" data-type="pelicula">Películas</a>
+                <a href="#series" data-type="serie">Series</a>
+                <a href="#genres">Géneros</a>
+                <a href="#novedades">Novedades</a>
+            </nav>
+        </div>
+
+        <div class="header-right">
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Buscar películas o series...">
+                <button id="searchBtn"><i class="bi bi-search"></i></button>
+                <div class="search-results" id="searchResults"></div>
+            </div>
+            <div class="user-menu">
+                <button class="btn-notification">
+                    <i class="bi bi-bell"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Contenido Principal -->
+    <main class="main-content">
+        <!-- Hero -->
+        <section class="hero" id="home">
+            <div class="hero-slider" id="heroSlider">
+                <div class="slide active">
+                    <div class="hero-content">
+                        <h1 class="hero-title">Cargando...</h1>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Novedades -->
+        <section class="content-section">
+            <h2 class="section-title">🔥 Novedades</h2>
+            <div class="carousel" id="novedades"></div>
+        </section>
+
+        <!-- Películas -->
+        <section class="content-section" id="peliculas">
+            <div class="section-header">
+                <h2 class="section-title">🎬 Películas</h2>
+                <a href="#movies" data-type="pelicula" class="ver-todas">Ver todas →</a>
+            </div>
+            <div class="carousel" id="peliculasCarousel"></div>
+        </section>
+
+        <!-- Series -->
+        <section class="content-section" id="series">
+            <div class="section-header">
+                <h2 class="section-title">📺 Series</h2>
+                <a href="#movies" data-type="serie" class="ver-todas">Ver todas →</a>
+            </div>
+            <div class="carousel" id="seriesCarousel"></div>
+        </section>
+
+        <!-- Grid completo -->
+        <section class="content-section" id="movies">
+            <div class="section-header">
+                <h2 class="section-title" id="gridTitle">🎬 Todo el contenido</h2>
+                <div class="filters">
+                    <select id="typeFilter" class="filter-select">
+                        <option value="">Todo</option>
+                        <option value="pelicula">Películas</option>
+                        <option value="serie">Series</option>
+                    </select>
+                    <select id="yearFilter" class="filter-select">
+                        <option value="">Todos los años</option>
+                    </select>
+                    <select id="genreFilter" class="filter-select">
+                        <option value="">Todos los géneros</option>
+                    </select>
+                </div>
+            </div>
+            <div class="movies-grid" id="moviesGrid"></div>
+            <button class="btn-load-more" id="loadMore" style="display:none">Cargar más</button>
+        </section>
+
+        <!-- Modal detalles -->
+        <div class="modal" id="detailsModal">
+            <div class="modal-content">
+                <span class="close-modal">&times;</span>
+                <div id="modalBody"></div>
+            </div>
+        </div>
+
+        <!-- Reproductor -->
+        <div class="player" id="player">
+            <div class="player-header">
+                <span id="playerTitle" style="color:#fff;font-size:.95rem;flex:1;padding:.2rem .5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                <button class="btn-close-player">&times;</button>
+            </div>
+            <div class="player-body">
+                <video id="videoPlayer" controls>
+                    Tu navegador no soporta video HTML5.
+                </video>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>🎬 CineCadiz</h3>
+                <p>La mejor plataforma para ver películas y series online.</p>
+            </div>
+            <div class="footer-section">
+                <h4>Navegación</h4>
+                <a href="#home">Inicio</a>
+                <a href="#movies">Películas</a>
+                <a href="#series">Series</a>
+            </div>
+            <div class="footer-section">
+                <h4>Legal</h4>
+                <a href="#">Términos</a>
+                <a href="#">Privacidad</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 CineCadiz. Solo para uso privado.</p>
+        </div>
+    </footer>
+
+    <!-- HLS.js: reproducción de streams .m3u8 en Chrome/Firefox -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="/static/js/script.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js')
+                .catch(err => console.warn('SW error:', err));
+        }
+    </script>
+</body>
+</html>

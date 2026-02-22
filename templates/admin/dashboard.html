@@ -1,0 +1,177 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-grid-1x2-fill me-2 text-danger"></i>Dashboard</h1>
+    <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#scanModal">
+        <i class="bi bi-radar"></i> Escanear links
+        {% if scan_state.running %}<span class="spinner-border spinner-border-sm ms-1"></span>{% endif %}
+    </button>
+</div>
+
+<!-- Resultado último scan -->
+{% if scan_state.last_result and not scan_state.running %}
+<div class="alert alert-secondary mb-3 py-2 small">
+    <i class="bi bi-check-circle me-1"></i>
+    <strong>Último scan:</strong>
+    {{ scan_state.last_result.checked }} revisados —
+    <span class="text-success">{{ scan_state.last_result.alive }} vivos</span> /
+    <span class="text-danger">{{ scan_state.last_result.dead }} caídos</span>
+    <span class="text-muted ms-2">{{ scan_state.last_result.timestamp[:16].replace('T',' ') }}</span>
+</div>
+{% elif scan_state.running %}
+<div class="alert alert-warning mb-3 py-2 small">
+    <span class="spinner-border spinner-border-sm me-2"></span>
+    Escaneo en curso... Refresca en unos minutos.
+</div>
+{% endif %}
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#1a1a3a"><i class="bi bi-film text-primary"></i></div>
+            <div class="stat-value">{{ stats.peliculas }}</div>
+            <div class="stat-label">Películas activas</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#1a3a1a"><i class="bi bi-tv text-success"></i></div>
+            <div class="stat-value">{{ stats.series }}</div>
+            <div class="stat-label">Series activas</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#3a1a1a"><i class="bi bi-wifi-off text-danger"></i></div>
+            <div class="stat-value">{{ stats.inactivos }}</div>
+            <div class="stat-label">Links caídos</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#1a2a3a"><i class="bi bi-hdd-stack text-info"></i></div>
+            <div class="stat-value">{{ stats.total_m3u + stats.total_rss }}</div>
+            <div class="stat-label">Total contenido</div>
+        </div>
+    </div>
+</div>
+
+<!-- Listas M3U + Fuentes RSS -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="form-card h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <h5 class="mb-0"><i class="bi bi-collection-play me-2 text-warning"></i>Listas M3U</h5>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary">{{ stats.total_m3u }} streams</span>
+                    <a href="{{ url_for('admin.listas') }}" class="btn btn-sm btn-outline-danger">Gestionar</a>
+                </div>
+            </div>
+            {% if listas %}
+            <table class="table table-dark table-hover mb-0" style="font-size:.83rem">
+                <thead><tr><th>Nombre</th><th>Activos/Total</th><th>Estado</th></tr></thead>
+                <tbody>
+                {% for l in listas[:6] %}
+                <tr>
+                    <td>{{ l.nombre }}</td>
+                    <td>{{ l.items_activos or 0 }}/{{ l.total_items or 0 }}</td>
+                    <td>{% if l.error %}<span class="badge badge-status-err">Error</span>
+                        {% elif not l.ultima_actualizacion %}<span class="badge badge-status-warn">Importando</span>
+                        {% else %}<span class="badge badge-status-ok">OK</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted small mb-0">Sin listas. <a href="{{ url_for('admin.listas') }}" class="text-warning">Agregar lista M3U</a></p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="form-card h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <h5 class="mb-0"><i class="bi bi-rss-fill me-2 text-danger"></i>Fuentes RSS</h5>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary">{{ stats.total_rss }} items</span>
+                    <a href="{{ url_for('admin.rss') }}" class="btn btn-sm btn-outline-danger">Gestionar</a>
+                </div>
+            </div>
+            {% if fuentes %}
+            <table class="table table-dark table-hover mb-0" style="font-size:.83rem">
+                <thead><tr><th>Nombre</th><th>Items</th><th>Estado</th></tr></thead>
+                <tbody>
+                {% for f in fuentes %}
+                <tr>
+                    <td>{{ f.nombre }}</td>
+                    <td>{{ f.total_items or 0 }}</td>
+                    <td>{% if f.error %}<span class="badge badge-status-err">Error</span>
+                        {% elif not f.ultima_actualizacion %}<span class="badge badge-status-warn">Importando</span>
+                        {% else %}<span class="badge badge-status-ok">OK</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted small mb-0">
+                Sin fuentes RSS.
+                <a href="{{ url_for('admin.rss') }}" class="text-danger">Importar cinemacity.cc</a>
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal scan -->
+<div class="modal fade" id="scanModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-radar me-2"></i>Configurar escaneo de links</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="{{ url_for('admin.manual_scan') }}" method="post">
+                <div class="modal-body">
+                    <div class="alert alert-secondary small">
+                        Solo se verifican links M3U. Con <strong>40 hilos</strong> y timeout de 5s
+                        se procesan ~500 links/minuto. Para 7000 links → batch 7000, esperar ~15 min.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Links a verificar</label>
+                        <input type="number" name="batch" class="form-control" value="500" min="50" max="10000">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Hilos paralelos: <output id="workersVal">40</output></label>
+                        <input type="range" name="workers" class="form-range" min="5" max="80" value="40"
+                               oninput="document.getElementById('workersVal').textContent=this.value">
+                        <div class="form-text">Más hilos = más rápido. Máx 80 recomendado.</div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-play-fill"></i> Iniciar escaneo
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if scan_state.running %}
+// Polling mientras hay scan en curso
+(function poll() {
+    fetch('/admin/api/scan-status')
+        .then(r => r.json())
+        .then(d => { if (d.running) setTimeout(poll, 5000); else location.reload(); })
+        .catch(() => setTimeout(poll, 8000));
+})();
+{% endif %}
+</script>
+{% endblock %}

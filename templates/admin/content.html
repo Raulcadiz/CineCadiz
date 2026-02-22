@@ -1,0 +1,156 @@
+{% extends "admin/base.html" %}
+{% block title %}Contenido{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-film me-2 text-danger"></i>Contenido</h1>
+    <span class="text-muted small">Total: {{ pagination.total }} items</span>
+</div>
+
+<!-- Filtros -->
+<div class="form-card mb-4">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-5">
+            <input type="text" name="q" value="{{ q }}" class="form-control"
+                   placeholder="Buscar por título...">
+        </div>
+        <div class="col-md-3">
+            <select name="tipo" class="form-select">
+                <option value="">Todos</option>
+                <option value="pelicula" {% if tipo == 'pelicula' %}selected{% endif %}>Películas</option>
+                <option value="serie" {% if tipo == 'serie' %}selected{% endif %}>Series</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-danger w-100">
+                <i class="bi bi-search"></i> Buscar
+            </button>
+        </div>
+        <div class="col-md-2">
+            <a href="{{ url_for('admin.contenido') }}" class="btn btn-outline-secondary w-100">
+                <i class="bi bi-x"></i> Limpiar
+            </a>
+        </div>
+    </form>
+</div>
+
+<!-- Tabla -->
+<div class="form-card">
+    <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0" style="font-size:.88rem">
+            <thead>
+                <tr>
+                    <th>Título</th>
+                    <th>Tipo</th>
+                    <th>Año</th>
+                    <th>Género</th>
+                    <th>Servidor</th>
+                    <th>Verificado</th>
+                    <th class="text-center">Estado</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in pagination.items %}
+            <tr>
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        {% if item.imagen %}
+                        <img src="{{ item.imagen }}" alt="" width="36" height="50"
+                             style="object-fit:cover;border-radius:4px;"
+                             onerror="this.style.display='none'">
+                        {% endif %}
+                        <div>
+                            <strong>{{ item.titulo }}</strong>
+                            {% if item.temporada %}
+                            <span class="badge bg-secondary ms-1">S{{ '%02d'|format(item.temporada) }}E{{ '%02d'|format(item.episodio or 0) }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    {% if item.tipo == 'pelicula' %}
+                        <i class="bi bi-camera-film text-primary"></i>
+                    {% else %}
+                        <i class="bi bi-tv text-success"></i>
+                    {% endif %}
+                </td>
+                <td class="text-muted">{{ item.año or '—' }}</td>
+                <td class="text-muted small">{{ (item.genero or '—')[:30] }}</td>
+                <td class="text-muted small">{{ (item.servidor or '—')[:30] }}</td>
+                <td class="text-muted small">
+                    {% if item.ultima_verificacion %}
+                        {{ item.ultima_verificacion.strftime('%d/%m %H:%M') }}
+                    {% else %}
+                        <span class="text-secondary">—</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    <button class="btn btn-sm toggle-btn
+                                   {% if item.activo %}btn-outline-success{% else %}btn-outline-secondary{% endif %}"
+                            data-id="{{ item.id }}"
+                            title="{% if item.activo %}Activo — click para desactivar{% else %}Inactivo — click para activar{% endif %}">
+                        <i class="bi {% if item.activo %}bi-check-circle-fill{% else %}bi-x-circle{% endif %}"></i>
+                    </button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" class="text-center text-muted py-4">
+                    No se encontraron resultados.
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Paginación -->
+    {% if pagination.pages > 1 %}
+    <nav class="mt-3">
+        <ul class="pagination pagination-sm justify-content-center mb-0">
+            <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ pagination.prev_num }}&tipo={{ tipo }}&q={{ q }}">
+                    &laquo;
+                </a>
+            </li>
+            {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+                {% if p %}
+                    <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                        <a class="page-link" href="?page={{ p }}&tipo={{ tipo }}&q={{ q }}">{{ p }}</a>
+                    </li>
+                {% else %}
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                {% endif %}
+            {% endfor %}
+            <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ pagination.next_num }}&tipo={{ tipo }}&q={{ q }}">
+                    &raquo;
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Toggle activo/inactivo sin recargar
+document.querySelectorAll('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const res = await fetch(`/admin/contenido/${id}/toggle`, { method: 'POST' });
+        const data = await res.json();
+        if (data.activo) {
+            btn.className = 'btn btn-sm btn-outline-success toggle-btn';
+            btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+            btn.title = 'Activo — click para desactivar';
+        } else {
+            btn.className = 'btn btn-sm btn-outline-secondary toggle-btn';
+            btn.innerHTML = '<i class="bi bi-x-circle"></i>';
+            btn.title = 'Inactivo — click para activar';
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,174 @@
+{% extends "admin/base.html" %}
+{% block title %}Listas M3U{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-collection-play-fill me-2 text-danger"></i>Listas M3U</h1>
+</div>
+
+<!-- Formulario agregar lista -->
+<div class="form-card mb-4">
+    <h5 class="mb-3"><i class="bi bi-plus-circle me-2 text-success"></i>Agregar nueva lista</h5>
+    <form action="{{ url_for('admin.agregar_lista') }}" method="post">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label text-secondary small">Nombre</label>
+                <input type="text" name="nombre" class="form-control"
+                       placeholder="Ej: Lista ES principal" required>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label text-secondary small">URL de la lista M3U</label>
+                <input type="url" name="url" class="form-control"
+                       placeholder="http://proveedor.com/lista.m3u" required>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="filtrar_español"
+                           id="filtrarSwitch">
+                    <label class="form-check-label text-secondary" for="filtrarSwitch">
+                        Solo español
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-danger w-100">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div class="text-muted small mt-2">
+            <i class="bi bi-info-circle me-1"></i>
+            La lista se importará en segundo plano. Refresca la página para ver el progreso.
+        </div>
+    </form>
+</div>
+
+<!-- Tabla de listas -->
+{% if listas %}
+<div class="form-card">
+    <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Listas registradas ({{ listas|length }})</h5>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Nombre</th>
+                    <th>URL</th>
+                    <th class="text-center">Solo ES</th>
+                    <th class="text-center">Activos</th>
+                    <th class="text-center">Total</th>
+                    <th>Actualización</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for lista in listas %}
+            <tr id="lista-row-{{ lista.id }}">
+                <td>
+                    <strong>{{ lista.nombre }}</strong>
+                </td>
+                <td>
+                    <span class="text-muted small"
+                          title="{{ lista.url }}">
+                        {{ lista.url[:45] }}{% if lista.url|length > 45 %}…{% endif %}
+                    </span>
+                </td>
+                <td class="text-center">
+                    {% if lista.filtrar_español %}
+                        <i class="bi bi-check-circle text-success"></i>
+                    {% else %}
+                        <i class="bi bi-x-circle text-secondary"></i>
+                    {% endif %}
+                </td>
+                <td class="text-center fw-bold text-success">
+                    {{ lista.items_activos or 0 }}
+                </td>
+                <td class="text-center text-secondary">
+                    {{ lista.total_items or 0 }}
+                </td>
+                <td class="small text-muted">
+                    {% if lista.ultima_actualizacion %}
+                        {{ lista.ultima_actualizacion.strftime('%d/%m/%Y %H:%M') }}
+                    {% else %}
+                        <span class="text-warning">
+                            <i class="bi bi-hourglass-split me-1"></i>Importando...
+                        </span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if lista.error %}
+                        <span class="badge badge-status-err" title="{{ lista.error }}">
+                            <i class="bi bi-exclamation-triangle"></i> Error
+                        </span>
+                    {% elif not lista.ultima_actualizacion %}
+                        <span class="badge badge-status-warn">Pendiente</span>
+                    {% elif lista.activa %}
+                        <span class="badge badge-status-ok">Activa</span>
+                    {% else %}
+                        <span class="badge badge-status-err">Inactiva</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="d-flex gap-1 flex-wrap">
+                        <!-- Refresh -->
+                        <form action="{{ url_for('admin.refresh_lista', lista_id=lista.id) }}"
+                              method="post" class="d-inline">
+                            <button type="submit" class="btn btn-outline-info btn-sm"
+                                    title="Re-importar lista">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </button>
+                        </form>
+
+                        <!-- Toggle activa -->
+                        <form action="{{ url_for('admin.toggle_lista', lista_id=lista.id) }}"
+                              method="post" class="d-inline">
+                            <button type="submit"
+                                    class="btn btn-sm {% if lista.activa %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+                                    title="{% if lista.activa %}Desactivar{% else %}Activar{% endif %}">
+                                <i class="bi {% if lista.activa %}bi-pause-fill{% else %}bi-play-fill{% endif %}"></i>
+                            </button>
+                        </form>
+
+                        <!-- Eliminar -->
+                        <form action="{{ url_for('admin.eliminar_lista', lista_id=lista.id) }}"
+                              method="post" class="d-inline"
+                              onsubmit="return confirm('¿Eliminar lista y TODO su contenido? Esta acción no se puede deshacer.')">
+                            <button type="submit" class="btn btn-outline-danger btn-sm"
+                                    title="Eliminar lista y contenido">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% if lista.error %}
+            <tr class="bg-danger bg-opacity-10">
+                <td colspan="8" class="small text-danger py-1 px-3">
+                    <i class="bi bi-exclamation-triangle me-1"></i>{{ lista.error }}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% else %}
+<div class="form-card text-center py-5 text-muted">
+    <i class="bi bi-inbox display-3 d-block mb-3"></i>
+    <p class="mb-0">No hay listas M3U todavía. Agrega la primera arriba.</p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Auto-refrescar la página si hay listas pendientes de importar
+const hasPending = document.querySelector('.badge-status-warn');
+if (hasPending) {
+    setTimeout(() => location.reload(), 8000);
+}
+</script>
+{% endblock %}
