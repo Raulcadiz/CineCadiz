@@ -169,7 +169,8 @@ def parse_rss_feed(content: bytes) -> list[dict]:
 def fetch_rss(url: str) -> tuple[list, str | None]:
     """Descarga y parsea un RSS. Devuelve (items, error)."""
     try:
-        resp = requests.get(url, timeout=20, headers=_HEADERS)
+        # proxies={} ignora HTTPS_PROXY del sistema (PythonAnywhere lo inyecta y bloquea sitios)
+        resp = requests.get(url, timeout=20, headers=_HEADERS, proxies={})
         resp.raise_for_status()
     except requests.exceptions.Timeout:
         return [], 'Timeout al descargar RSS'

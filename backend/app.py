@@ -34,6 +34,7 @@ def create_app(config_class=Config):
         )
         db.create_all()
         _migrate_db()
+        _fix_sqlite_pragmas()
 
     # ── Scheduler (solo si no estamos en testing y AUTO_SCAN=1) ─
     # Poner AUTO_SCAN=0 en .env para deshabilitar el escaneo automático.
@@ -66,6 +67,22 @@ def create_app(config_class=Config):
         return {'error': 'Error interno del servidor'}, 500
 
     return app
+
+
+def _fix_sqlite_pragmas():
+    """
+    PythonAnywhere usa NFS para el home directory.
+    SQLite en modo WAL (default en versiones modernas) no funciona bien en NFS
+    y produce 'disk I/O error'. Forzamos journal_mode=DELETE que es seguro en NFS.
+    """
+    try:
+        from sqlalchemy import text
+        with db.engine.connect() as conn:
+            conn.execute(text('PRAGMA journal_mode=DELETE'))
+            conn.execute(text('PRAGMA synchronous=NORMAL'))
+            conn.commit()
+    except Exception:
+        pass   # Si no es SQLite o ya está bien, ignorar
 
 
 def _migrate_db():

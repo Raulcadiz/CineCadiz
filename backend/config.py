@@ -31,6 +31,10 @@ class Config:
     # AUTO_SCAN=1 → habilitar escaneo automático cada SCAN_INTERVAL_HOURS horas
     AUTO_SCAN = int(os.environ.get('AUTO_SCAN', 0))
 
+    # ── Subida de archivos ────────────────────────────────────
+    # Límite máximo de tamaño para archivos M3U subidos (50 MB)
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024
+
     # ── Paginación API ─────────────────────────────────────────
     ITEMS_PER_PAGE = 24
 

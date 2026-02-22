@@ -398,12 +398,12 @@ def fetch_and_parse(
     """
     max_secs = _cfg(config, 'DOWNLOAD_TIMEOUT', 300)
 
-    req_proxies = None
-    if proxy:
-        req_proxies = {
-            'http':  f'http://{proxy}',
-            'https': f'http://{proxy}',
-        }
+    # {} → sin proxy (ignora HTTPS_PROXY del sistema; PythonAnywhere lo inyecta)
+    # {http/https: url} → proxy explícito configurado por el admin
+    req_proxies = {
+        'http':  f'http://{proxy}',
+        'https': f'http://{proxy}',
+    } if proxy else {}
 
     try:
         start = time.monotonic()
