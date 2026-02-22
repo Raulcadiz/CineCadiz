@@ -14,7 +14,7 @@ import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
 from models import db, Lista, FuenteRSS, Contenido, Proxy
-from m3u_parser import fetch_and_parse
+from m3u_parser import fetch_and_parse, parse_and_filter
 from link_checker import scan_dead_links
 from rss_importer import import_rss_source, DEFAULT_RSS_SOURCES
 
@@ -398,6 +398,97 @@ def eliminar_proxy(proxy_id):
     return redirect(url_for('admin.proxies'))
 
 
+# ── Subida directa de archivo M3U ──────────────────────────────
+
+@admin_bp.post('/listas/subir')
+@login_required
+def subir_lista():
+    """Importa un archivo .m3u subido por el admin (bypass de bloqueo IP)."""
+    nombre      = request.form.get('nombre', '').strip()
+    filtrar     = 'filtrar_español' in request.form
+    incluir_live = 'incluir_live'  in request.form
+    archivo     = request.files.get('archivo')
+
+    if not nombre:
+        flash('El nombre es obligatorio.', 'danger')
+        return redirect(url_for('admin.listas'))
+    if not archivo or not archivo.filename:
+        flash('Selecciona un archivo .m3u o .m3u8.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    try:
+        raw_bytes = archivo.read()
+    except Exception as e:
+        flash(f'Error al leer el archivo: {e}', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    if not raw_bytes:
+        flash('El archivo está vacío.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    lista = Lista(
+        nombre=nombre,
+        url='[archivo subido]',
+        filtrar_español=filtrar,
+        incluir_live=incluir_live,
+        usar_proxy=False,
+    )
+    db.session.add(lista)
+    db.session.flush()   # necesario para obtener lista.id antes del commit
+
+    app = current_app._get_current_object()
+    t = threading.Thread(
+        target=_import_from_bytes, args=(app, lista.id, raw_bytes),
+        daemon=True,
+    )
+    t.start()
+
+    db.session.commit()
+    flash(
+        f'Lista "{nombre}" creada. Procesando archivo ({len(raw_bytes)//1024} KB)…',
+        'info',
+    )
+    return redirect(url_for('admin.listas'))
+
+
+@admin_bp.post('/listas/<int:lista_id>/resubir')
+@login_required
+def resubir_lista(lista_id):
+    """Actualiza el contenido de una lista subida con un nuevo archivo."""
+    lista   = Lista.query.get_or_404(lista_id)
+    archivo = request.files.get('archivo')
+
+    if not archivo or not archivo.filename:
+        flash('Selecciona un archivo .m3u o .m3u8.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    try:
+        raw_bytes = archivo.read()
+    except Exception as e:
+        flash(f'Error al leer el archivo: {e}', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    if not raw_bytes:
+        flash('El archivo está vacío.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    # Borrar contenido antiguo de esta lista antes de re-importar
+    Contenido.query.filter_by(lista_id=lista_id).delete()
+    lista.ultima_actualizacion = None
+    lista.error = None
+    db.session.commit()
+
+    app = current_app._get_current_object()
+    t = threading.Thread(
+        target=_import_from_bytes, args=(app, lista_id, raw_bytes),
+        daemon=True,
+    )
+    t.start()
+
+    flash(f'Re-importando "{lista.nombre}" desde nuevo archivo…', 'info')
+    return redirect(url_for('admin.listas'))
+
+
 # ── Importador M3U (interno) ───────────────────────────────────
 
 def _import_lista_async(app, lista_id: int):
@@ -494,6 +585,93 @@ def _import_lista(app, lista_id: int):
 
         except Exception as exc:
             app.logger.exception(f'[Import M3U] Excepción inesperada en lista {lista_id}: {exc}')
+            try:
+                lista = Lista.query.get(lista_id)
+                if lista:
+                    lista.error = f'Error interno: {exc}'
+                    lista.ultima_actualizacion = datetime.utcnow()
+                    db.session.commit()
+            except Exception:
+                pass
+
+
+def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
+    """Importa contenido M3U desde bytes ya cargados (archivo subido por el admin)."""
+    with app.app_context():
+        try:
+            lista = Lista.query.get(lista_id)
+            if not lista:
+                return
+
+            app.logger.info(f'[Import M3U] Procesando archivo: {lista.nombre} ({len(raw_bytes)//1024} KB)')
+
+            # Decodificar con fallback de encoding
+            content = None
+            for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'windows-1252'):
+                try:
+                    content = raw_bytes.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if content is None:
+                content = raw_bytes.decode('utf-8', errors='replace')
+
+            # Parsear + filtrar usando la misma lógica que fetch_and_parse
+            items = parse_and_filter(
+                content, app.config,
+                filter_spanish=lista.filtrar_español,
+                include_live=lista.incluir_live,
+            )
+
+            app.logger.info(f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros')
+
+            # ── Deduplicación en 1 query (chunked para SQLite) ──────────
+            candidate_hashes = {it['url_hash'] for it in items}
+            existing_hashes: set[str] = set()
+            chunk_list = list(candidate_hashes)
+            for i in range(0, len(chunk_list), 900):
+                chunk = chunk_list[i:i + 900]
+                rows = db.session.query(Contenido.url_hash)\
+                    .filter(Contenido.url_hash.in_(chunk)).all()
+                existing_hashes.update(r[0] for r in rows)
+
+            nuevos = 0
+            for it in items:
+                if it['url_hash'] in existing_hashes:
+                    continue
+                c = Contenido(
+                    titulo=it['titulo'] or 'Sin título',
+                    tipo=it['tipo'],
+                    url_stream=it['url_stream'],
+                    url_hash=it['url_hash'],
+                    servidor=it.get('servidor', ''),
+                    imagen=it.get('imagen', ''),
+                    año=it.get('año'),
+                    genero=it.get('genero', ''),
+                    group_title=it.get('group_title', ''),
+                    idioma=it.get('idioma', ''),
+                    pais=it.get('pais', ''),
+                    temporada=it.get('temporada'),
+                    episodio=it.get('episodio'),
+                    fuente='m3u',
+                    lista_id=lista_id,
+                )
+                db.session.add(c)
+                nuevos += 1
+                if nuevos % 500 == 0:
+                    db.session.commit()
+
+            db.session.commit()
+            lista.error = None
+            lista.total_items   = Contenido.query.filter_by(lista_id=lista_id).count()
+            lista.items_activos = Contenido.query.filter_by(lista_id=lista_id, activo=True).count()
+            lista.ultima_actualizacion = datetime.utcnow()
+            db.session.commit()
+
+            app.logger.info(f'[Import M3U] {lista.nombre}: {nuevos} nuevos / {lista.total_items} total')
+
+        except Exception as exc:
+            app.logger.exception(f'[Import M3U] Excepción en archivo lista {lista_id}: {exc}')
             try:
                 lista = Lista.query.get(lista_id)
                 if lista:

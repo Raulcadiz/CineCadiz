@@ -338,6 +338,33 @@ def is_vod_content(item: dict, config) -> bool:
 # Descarga y parseo completo
 # ──────────────────────────────────────────────────────────────
 
+def parse_and_filter(
+    content: str,
+    config,
+    filter_spanish: bool = False,
+    include_live: bool = False,
+) -> list:
+    """
+    Parsea un string M3U ya decodificado y aplica los filtros de idioma/live.
+    Útil cuando el contenido ya está disponible localmente (archivo subido por el admin).
+    """
+    all_items = parse_m3u_content(content)
+
+    vod_items, live_items = [], []
+    for it in all_items:
+        if is_vod_content(it, config):
+            vod_items.append(it)
+        else:
+            it['tipo'] = 'live'
+            live_items.append(it)
+
+    items = vod_items + (live_items if include_live else [])
+    items = [it for it in items if not is_explicitly_non_spanish(it, config)]
+    if filter_spanish:
+        items = [it for it in items if is_spanish(it, config)]
+    return items
+
+
 HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -423,27 +450,4 @@ def fetch_and_parse(
     if content is None:
         content = raw_bytes.decode('utf-8', errors='replace')
 
-    all_items = parse_m3u_content(content)
-
-    # Clasificar items: VOD (pelicula/serie) o LIVE
-    vod_items  = []
-    live_items = []
-    for it in all_items:
-        if is_vod_content(it, config):
-            vod_items.append(it)
-        else:
-            it['tipo'] = 'live'
-            live_items.append(it)
-
-    # Filtro 1: canales en vivo — incluir o no según el flag
-    items = vod_items + (live_items if include_live else [])
-
-    # Filtro 2: excluir ítems EXPLICITAMENTE marcados como no español
-    #           (nunca bloquea ítems sin etiqueta de idioma)
-    items = [it for it in items if not is_explicitly_non_spanish(it, config)]
-
-    # Filtro 3: solo español estricto (si el admin lo activó)
-    if filter_spanish:
-        items = [it for it in items if is_spanish(it, config)]
-
-    return items, None
+    return parse_and_filter(content, config, filter_spanish, include_live), None
