@@ -107,17 +107,18 @@ function renderCard(item) {
 
     return `
     <div class="movie-card" data-id="${item.id}">
-        <img src="${imgSrc}"
-             alt="${item.title}"
-             loading="lazy"
-             onerror="this.src='${PLACEHOLDER}'">
-        ${isRss ? '<span class="rss-badge">WEB</span>' : ''}
+        <div class="card-img-wrap">
+            <img src="${imgSrc}"
+                 alt="${item.title}"
+                 loading="lazy"
+                 onerror="this.src='${PLACEHOLDER}'">
+            ${isRss ? '<span class="rss-badge">WEB</span>' : ''}
+        </div>
         <div class="movie-info">
             <h3 class="movie-title">${item.title}</h3>
             <div class="movie-meta">
                 <span>${item.year || ''}</span>
-                <span>${typeIcon}</span>
-                ${epBadge}
+                <span>${typeIcon} ${epBadge}</span>
             </div>
         </div>
         <div class="movie-overlay">
@@ -161,7 +162,7 @@ function renderHero(items) {
     el.heroSlider.innerHTML = `
         <div class="slide active">
             <img src="${heroImg}" alt="${item.title}"
-                 style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.4"
+                 style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"
                  onerror="this.style.display='none'">
             <div class="hero-content">
                 <h1 class="hero-title">${item.title}</h1>
@@ -230,6 +231,17 @@ async function showDetails(id) {
 // ── Reproductor ────────────────────────────────────────────
 let _hls = null;   // instancia HLS.js activa
 
+/** Muestra/oculta el spinner de carga dentro del reproductor. */
+function _setPlayerLoading(on) {
+    el.player?.querySelectorAll('.player-loading').forEach(e => e.remove());
+    if (on) {
+        const div = document.createElement('div');
+        div.className = 'player-loading';
+        div.innerHTML = '<div class="spinner"></div><span>Cargando stream…</span>';
+        el.player?.querySelector('.player-body')?.appendChild(div);
+    }
+}
+
 /**
  * Destruye la instancia HLS anterior antes de cargar un nuevo stream.
  */
@@ -241,6 +253,7 @@ function _destroyHls() {
     el.videoPlayer.removeAttribute('src');
     el.videoPlayer.onerror = null;
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
+    _setPlayerLoading(false);
 }
 
 /** Muestra overlay de error dentro del reproductor con opciones de acción. */
@@ -350,6 +363,16 @@ function playStream(streamUrl, title, source, itemId = '') {
     document.getElementById('playerTitle').textContent = title || '';
     el.player.dataset.streamUrl = url;
     el.player.dataset.itemId    = itemId;
+
+    // Mostrar spinner de carga
+    _setPlayerLoading(true);
+
+    // Ocultar spinner cuando el vídeo empiece a reproducirse
+    const _onPlaying = () => {
+        _setPlayerLoading(false);
+        el.videoPlayer.removeEventListener('playing', _onPlaying);
+    };
+    el.videoPlayer.addEventListener('playing', _onPlaying);
 
     // Restaurar volumen guardado
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
@@ -873,67 +896,13 @@ async function init() {
     }, 800);
 }
 
-// Estilos de notificación (inline para no depender de CSS adicional)
+// Animación slideIn para notificaciones (no se puede poner en CSS estático fácilmente)
 const _style = document.createElement('style');
 _style.textContent = `
-    @keyframes slideIn { from { transform:translateX(120%);opacity:0 } to { transform:translateX(0);opacity:1 } }
-    .no-content { text-align:center;padding:2rem;color:#666;font-style:italic }
-    .badge-ep { background:#333;color:#aaa;font-size:.7rem;padding:.15rem .4rem;border-radius:4px }
-    /* Badge RSS en tarjetas */
-    .rss-badge {
-        position:absolute;top:8px;left:8px;
-        background:rgba(229,9,20,.85);color:#fff;
-        font-size:.65rem;font-weight:700;padding:.1rem .4rem;
-        border-radius:4px;letter-spacing:.04em;z-index:2;
+    @keyframes slideIn {
+        from { transform:translateX(110%); opacity:0; }
+        to   { transform:translateX(0);    opacity:1; }
     }
-    .movie-card { position:relative }
-    .modal { display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:1000;align-items:center;justify-content:center }
-    /* ── Player ── */
-    .player { display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column }
-    .player-header {
-        display:flex;align-items:center;gap:.5rem;
-        padding:.35rem .7rem;background:rgba(0,0,0,.7);flex-shrink:0;
-    }
-    #playerTitle { color:#fff;font-size:.9rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
-    .player-esc-hint { color:rgba(255,255,255,.35);font-size:.72rem;white-space:nowrap }
-    .btn-close-player {
-        background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);
-        color:#fff;font-size:1.1rem;cursor:pointer;
-        padding:.2rem .75rem;border-radius:6px;line-height:1.5;
-        transition:background .2s;flex-shrink:0;
-    }
-    .btn-close-player:hover { background:rgba(255,255,255,.28); }
-    .player-body { flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden }
-    .player-body video { max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain;z-index:1 }
-    /* Barra inferior del player */
-    .player-footer { background:rgba(0,0,0,.7);padding:.35rem .7rem .4rem;flex-shrink:0 }
-    .player-actions { display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-bottom:.25rem }
-    .btn-pa {
-        background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);
-        color:#fff;cursor:pointer;padding:.18rem .65rem;border-radius:5px;
-        font-size:.78rem;line-height:1.5;transition:background .15s;
-    }
-    .btn-pa:hover { background:rgba(255,255,255,.22); }
-    select.btn-pa option { background:#1a1a1a;color:#fff }
-    .player-keys { color:rgba(255,255,255,.28);font-size:.66rem;margin:0 }
-    .player-keys kbd {
-        background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);
-        padding:.02rem .28rem;border-radius:3px;font-size:.65rem;
-    }
-    /* Overlay de error dentro del reproductor */
-    .player-error {
-        position:absolute;inset:0;z-index:5;
-        display:flex;flex-direction:column;align-items:center;justify-content:center;
-        background:rgba(0,0,0,.82);color:#fff;text-align:center;padding:2rem;
-    }
-    .err-btn {
-        background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);
-        color:#fff;cursor:pointer;padding:.42rem 1.1rem;border-radius:7px;
-        font-size:.88rem;transition:background .2s;
-    }
-    .err-btn:hover { background:rgba(255,255,255,.26); }
-    .err-btn-primary { background:#e50914;border-color:#e50914; }
-    .err-btn-primary:hover { background:#c0070f; }
 `;
 document.head.appendChild(_style);
 
