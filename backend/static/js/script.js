@@ -320,10 +320,20 @@ function _loadHls(url) {
  * @param {string} source     'rss' | 'm3u'
  * @param {string|number} itemId  ID de BD del contenido (para playlist .m3u)
  */
+/**
+ * Lanza la reproducción.
+ *
+ * Flujo (idéntico al original que funcionaba + capas de proxy como fallback):
+ *   1. HLS.js directo   → carga el stream; si es HLS lo parsea, si no HLS falla
+ *   2. Error de red/CORS → reintenta a través de /api/hls-proxy (VPS como relay)
+ *   3. Error de parseo   → no es HLS → intenta <video src> nativo (MP4, MKV…)
+ *   4. Nativo falla      → reintenta a través de /api/stream-proxy
+ *   5. Todo falla        → overlay con botones VLC / copiar / intentar HLS
+ */
 function playStream(streamUrl, title, source, itemId = '') {
     const url = decodeURIComponent(streamUrl);
 
-    // Historial
+    // Historial local
     let hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
     hist = hist.filter(h => h.url !== url).slice(0, 49);
     hist.unshift({ url, title, source, ts: Date.now() });
@@ -338,8 +348,6 @@ function playStream(streamUrl, title, source, itemId = '') {
     _destroyHls();
     el.player.style.display = 'flex';
     document.getElementById('playerTitle').textContent = title || '';
-
-    // Metadatos en el dataset del player (para botones externos)
     el.player.dataset.streamUrl = url;
     el.player.dataset.itemId    = itemId;
 
@@ -347,48 +355,71 @@ function playStream(streamUrl, title, source, itemId = '') {
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
     if (!isNaN(vol)) el.videoPlayer.volume = Math.max(0, Math.min(1, vol));
 
-    // Detectar tipo de stream por URL
-    const isHls = /\.m3u8(\?.*)?$/i.test(url) || /\/m3u8\//i.test(url);
-
-    if (isHls) {
-        // HLS real → proxy del servidor (añade CORS + reescribe segmentos)
-        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(url)}`);
+    // ── Paso 1: HLS.js directo (igual que la versión original que funcionaba) ──
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        _loadHlsDirect(url);
+    } else if (el.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari: HLS nativo
+        el.videoPlayer.src = url;
+        el.videoPlayer.play().catch(() => {});
     } else {
-        // Directo / MP4 / MKV / Xtream Codes → cascada de intentos
-        _tryPlay(url);
+        // Navegador sin soporte HLS → ir directo a nativo
+        _tryNative(url);
     }
 }
 
 /**
- * Cascada de reproducción para streams no-HLS:
- *  1. Intento directo   (<video src> sin CORS)
- *  2. A través del proxy del servidor (bypass de CORS y bloqueos de IP)
- *  3. Mensaje de error con botones VLC / copiar / intentar HLS
+ * Paso 1 — HLS.js directo (reproducción original que funcionaba).
+ * Detecta si el stream es HLS inspeccionando el contenido (no la URL).
+ * Si falla por red/CORS → pasa por hls-proxy del VPS.
+ * Si falla por parseo   → no es HLS, prueba como vídeo nativo.
  */
-function _tryPlay(url) {
-    const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
-    let step = 0;
-
-    const tryStep = () => {
-        step++;
-        el.videoPlayer.onerror = null;
-        if (step === 1) {
-            // Intento 1: directo
-            el.videoPlayer.src = url;
-        } else if (step === 2) {
-            // Intento 2: a través del proxy del VPS
-            el.videoPlayer.src = proxyUrl;
+function _loadHlsDirect(url) {
+    _hls = new Hls({
+        maxBufferLength: 30,
+        maxBufferSize:   60 * 1000 * 1000,
+        xhrSetup: xhr => { xhr.withCredentials = false; },
+    });
+    _hls.loadSource(url);
+    _hls.attachMedia(el.videoPlayer);
+    _hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        el.videoPlayer.play().catch(() => {});
+    });
+    _hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        _destroyHls();
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            // CORS u otro error de red → intentar a través del proxy del VPS
+            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(url)}`);
         } else {
-            // Fallido: mostrar error con opciones
-            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-            return;
+            // Error de parseo: el stream no es HLS → probar como vídeo nativo
+            _tryNative(url);
         }
+    });
+}
+
+/**
+ * Paso 3 — Reproducción nativa (<video src>).
+ * Funciona para MP4, MKV con H.264/AAC, WebM, etc.
+ * Si el navegador no puede reproducirlo → intenta a través del stream-proxy.
+ */
+function _tryNative(url) {
+    el.videoPlayer.onerror = null;
+    el.videoPlayer.src = url;
+    el.videoPlayer.load();
+    el.videoPlayer.play().catch(() => {});
+    el.videoPlayer.onerror = () => {
+        el.videoPlayer.onerror = null;
+        // Paso 4: a través del stream-proxy del VPS
+        el.videoPlayer.src = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
-        el.videoPlayer.onerror = tryStep;
+        el.videoPlayer.onerror = () => {
+            el.videoPlayer.onerror = null;
+            // Paso 5: todo falló
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+        };
     };
-
-    tryStep();
 }
 
 // ── Favoritos ──────────────────────────────────────────────
