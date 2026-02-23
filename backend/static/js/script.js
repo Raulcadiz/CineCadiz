@@ -124,7 +124,8 @@ function renderCard(item) {
             <button class="btn-watch"
                     data-stream="${encodeURIComponent(item.streamUrl)}"
                     data-source="${item.source || 'm3u'}"
-                    data-title="${item.title}">
+                    data-title="${item.title}"
+                    data-id="${item.id}">
                 ${playLabel}
             </button>
             <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
@@ -168,7 +169,8 @@ function renderHero(items) {
                 <div class="hero-buttons">
                     <button class="btn-play" data-stream="${encodeURIComponent(item.streamUrl)}"
                             data-source="${item.source || 'm3u'}"
-                            data-title="${item.title}">
+                            data-title="${item.title}"
+                            data-id="${item.id}">
                         <i class="bi bi-play-fill"></i> Reproducir
                     </button>
                     <button class="btn-info" data-id="${item.id}">
@@ -206,7 +208,8 @@ async function showDetails(id) {
                         <button class="btn-play"
                                 data-stream="${encodeURIComponent(item.streamUrl)}"
                                 data-source="${item.source || 'm3u'}"
-                                data-title="${item.title}">
+                                data-title="${item.title}"
+                                data-id="${item.id}">
                             ${item.source === 'rss'
                                 ? '<i class="bi bi-box-arrow-up-right"></i> Abrir en web'
                                 : '<i class="bi bi-play-fill"></i> Reproducir'}
@@ -240,17 +243,50 @@ function _destroyHls() {
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
 }
 
-/** Muestra overlay de error dentro del reproductor (no reemplaza el <video>). */
+/** Muestra overlay de error dentro del reproductor con opciones de acción. */
 function _showPlayerError(msg) {
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
-    const errDiv = document.createElement('div');
+    const itemId  = el.player?.dataset.itemId  || '';
+    const rawUrl  = el.player?.dataset.streamUrl || '';
+    const errDiv  = document.createElement('div');
     errDiv.className = 'player-error';
     errDiv.innerHTML = `
         <div style="font-size:2.5rem;margin-bottom:.7rem">⚠️</div>
         <p style="margin:.3rem 0;font-size:1rem">${msg}</p>
-        <p style="color:#999;font-size:.8rem;margin-top:.5rem">
-          El stream puede haber expirado o el servidor no está disponible
-        </p>`;
+        <p style="color:#999;font-size:.8rem;margin-top:.3rem;margin-bottom:1.2rem">
+          El stream puede haber expirado o el formato no es compatible con el navegador.
+        </p>
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">
+            ${itemId ? `
+            <button class="err-btn err-btn-primary" data-action="open-vlc" data-id="${itemId}">
+                📺 Abrir en VLC / Kodi
+            </button>` : ''}
+            <button class="err-btn" data-action="copy-url">
+                📋 Copiar enlace
+            </button>
+            <button class="err-btn" data-action="try-hls">
+                🔄 Intentar HLS
+            </button>
+        </div>`;
+
+    // Listeners de los botones de error
+    errDiv.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            if (action === 'open-vlc') {
+                window.open(`/api/playlist/${btn.dataset.id}.m3u`, '_blank');
+            } else if (action === 'copy-url') {
+                navigator.clipboard?.writeText(rawUrl)
+                    .then(() => showNotification('Enlace copiado'))
+                    .catch(() => showNotification('No se pudo copiar', 'error'));
+            } else if (action === 'try-hls') {
+                _destroyHls();
+                _loadHls(`/api/hls-proxy?url=${encodeURIComponent(rawUrl)}`);
+            }
+        });
+    });
+
     el.player?.querySelector('.player-body')?.appendChild(errDiv);
 }
 
@@ -276,60 +312,83 @@ function _loadHls(url) {
 
 /**
  * Lanza la reproducción según la fuente:
- *  - 'rss' → abre en nueva pestaña (sitio externo, no embebible)
- *  - 'm3u' → player embebido con HLS.js (m3u8) o HTML5 nativo
+ *  - 'rss' → abre en nueva pestaña
+ *  - 'm3u' → player embebido con cascada: directo → proxy → error+VLC
+ *
+ * @param {string} streamUrl  URL codificada con encodeURIComponent
+ * @param {string} title      Título del contenido
+ * @param {string} source     'rss' | 'm3u'
+ * @param {string|number} itemId  ID de BD del contenido (para playlist .m3u)
  */
-function playStream(streamUrl, title, source) {
+function playStream(streamUrl, title, source, itemId = '') {
     const url = decodeURIComponent(streamUrl);
 
-    // Guardar en historial
+    // Historial
     let hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
     hist = hist.filter(h => h.url !== url).slice(0, 49);
     hist.unshift({ url, title, source, ts: Date.now() });
     localStorage.setItem('cc_history', JSON.stringify(hist));
 
-    // RSS → abre en nueva pestaña
+    // RSS → nueva pestaña (cinemacity.cc bloquea iframe)
     if (source === 'rss') {
         window.open(url, '_blank', 'noopener,noreferrer');
         return;
     }
 
-    // Mostrar player y poner título
     _destroyHls();
     el.player.style.display = 'flex';
-    const titleEl = document.getElementById('playerTitle');
-    if (titleEl) titleEl.textContent = title;
+    document.getElementById('playerTitle').textContent = title || '';
 
-    // ── Detección de formato por URL ────────────────────────
-    // HLS.js usa XHR internamente → los proveedores IPTV no envían CORS headers
-    // → solo usar HLS.js para .m3u8 reales; el resto con <video src> nativo
-    const isHls         = /\.m3u8(\?.*)?$/i.test(url) || /\/m3u8\//i.test(url);
-    const isDirectVideo = /\.(mp4|mkv|avi|mov|webm|flv|wmv|ts)(\?.*)?$/i.test(url);
+    // Metadatos en el dataset del player (para botones externos)
+    el.player.dataset.streamUrl = url;
+    el.player.dataset.itemId    = itemId;
 
-    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
-        // Stream HLS real → HLS.js
-        _loadHls(url);
-    } else if (isHls && el.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari — HLS nativo
-        el.videoPlayer.src = url;
-        el.videoPlayer.play().catch(() => {});
+    // Restaurar volumen guardado
+    const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
+    if (!isNaN(vol)) el.videoPlayer.volume = Math.max(0, Math.min(1, vol));
+
+    // Detectar tipo de stream por URL
+    const isHls = /\.m3u8(\?.*)?$/i.test(url) || /\/m3u8\//i.test(url);
+
+    if (isHls) {
+        // HLS real → proxy del servidor (añade CORS + reescribe segmentos)
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(url)}`);
     } else {
-        // MP4, MKV, TS, Xtream Codes sin extensión → <video src> directo
-        // El elemento <video> no usa XHR → no hay problema de CORS
-        el.videoPlayer.src = url;
+        // Directo / MP4 / MKV / Xtream Codes → cascada de intentos
+        _tryPlay(url);
+    }
+}
+
+/**
+ * Cascada de reproducción para streams no-HLS:
+ *  1. Intento directo   (<video src> sin CORS)
+ *  2. A través del proxy del servidor (bypass de CORS y bloqueos de IP)
+ *  3. Mensaje de error con botones VLC / copiar / intentar HLS
+ */
+function _tryPlay(url) {
+    const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
+    let step = 0;
+
+    const tryStep = () => {
+        step++;
+        el.videoPlayer.onerror = null;
+        if (step === 1) {
+            // Intento 1: directo
+            el.videoPlayer.src = url;
+        } else if (step === 2) {
+            // Intento 2: a través del proxy del VPS
+            el.videoPlayer.src = proxyUrl;
+        } else {
+            // Fallido: mostrar error con opciones
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            return;
+        }
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
-        el.videoPlayer.onerror = () => {
-            // Si falla el nativo y no es HLS conocido, intentar HLS.js como último recurso
-            if (!isDirectVideo && typeof Hls !== 'undefined' && Hls.isSupported()) {
-                el.videoPlayer.onerror = null;
-                _destroyHls();
-                _loadHls(url);
-            } else {
-                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-            }
-        };
-    }
+        el.videoPlayer.onerror = tryStep;
+    };
+
+    tryStep();
 }
 
 // ── Favoritos ──────────────────────────────────────────────
@@ -469,7 +528,12 @@ function setupEvents() {
         const playBtn = e.target.closest('[data-stream]');
         if (playBtn) {
             e.stopPropagation();
-            playStream(playBtn.dataset.stream, playBtn.dataset.title, playBtn.dataset.source || 'm3u');
+            playStream(
+                playBtn.dataset.stream,
+                playBtn.dataset.title,
+                playBtn.dataset.source || 'm3u',
+                playBtn.dataset.id || '',
+            );
             return;
         }
 
@@ -557,14 +621,130 @@ function setupEvents() {
         document.querySelector('.header')?.classList.toggle('scrolled', window.scrollY > 80);
     });
 
-    // Teclado
+    // ── Atajos de teclado ────────────────────────────────────
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') {
+        const playerOpen = el.player.style.display === 'flex';
+        const tag = document.activeElement?.tagName;
+        const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+        if (playerOpen && !typing) {
+            switch (e.key) {
+                case ' ': case 'k':
+                    e.preventDefault();
+                    el.videoPlayer.paused ? el.videoPlayer.play().catch(()=>{}) : el.videoPlayer.pause();
+                    break;
+                case 'ArrowRight': case 'l':
+                    e.preventDefault();
+                    el.videoPlayer.currentTime = Math.min(
+                        el.videoPlayer.duration || Infinity,
+                        el.videoPlayer.currentTime + 10
+                    );
+                    break;
+                case 'ArrowLeft': case 'j':
+                    e.preventDefault();
+                    el.videoPlayer.currentTime = Math.max(0, el.videoPlayer.currentTime - 10);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    el.videoPlayer.volume = Math.min(1, el.videoPlayer.volume + 0.1);
+                    localStorage.setItem('cc_volume', el.videoPlayer.volume);
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    el.videoPlayer.volume = Math.max(0, el.videoPlayer.volume - 0.1);
+                    localStorage.setItem('cc_volume', el.videoPlayer.volume);
+                    break;
+                case 'm': case 'M':
+                    e.preventDefault();
+                    el.videoPlayer.muted = !el.videoPlayer.muted;
+                    break;
+                case 'f': case 'F':
+                    e.preventDefault();
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen().catch(()=>{});
+                    } else {
+                        el.player.requestFullscreen().catch(()=>{});
+                    }
+                    break;
+                case 'p': case 'P':
+                    e.preventDefault();
+                    if (document.pictureInPictureEnabled) {
+                        if (document.pictureInPictureElement) {
+                            document.exitPictureInPicture().catch(()=>{});
+                        } else if (el.videoPlayer.readyState > 0) {
+                            el.videoPlayer.requestPictureInPicture()
+                                .then(() => { el.player.style.display = 'none'; })
+                                .catch(()=>{});
+                        }
+                    }
+                    break;
+                case 'Escape':
+                    el.videoPlayer.pause();
+                    _destroyHls();
+                    el.player.style.display = 'none';
+                    break;
+            }
+        } else if (!playerOpen && e.key === 'Escape') {
             el.detailsModal.style.display = 'none';
-            el.videoPlayer.pause();
-            _destroyHls();
-            el.player.style.display = 'none';
         }
+    });
+
+    // Guardar volumen al cambiar
+    el.videoPlayer?.addEventListener('volumechange', () => {
+        localStorage.setItem('cc_volume', el.videoPlayer.volume);
+        localStorage.setItem('cc_muted',  el.videoPlayer.muted);
+    });
+
+    // ── Controles adicionales del player ─────────────────────
+    // PiP
+    document.getElementById('btnPip')?.addEventListener('click', () => {
+        if (!document.pictureInPictureEnabled) {
+            showNotification('Tu navegador no soporta PiP', 'error'); return;
+        }
+        if (document.pictureInPictureElement) {
+            document.exitPictureInPicture().catch(()=>{});
+        } else if (el.videoPlayer.readyState > 0) {
+            el.videoPlayer.requestPictureInPicture()
+                .then(() => { el.player.style.display = 'none'; })
+                .catch(() => showNotification('No se pudo activar PiP', 'error'));
+        } else {
+            showNotification('El vídeo aún no está listo', 'error');
+        }
+    });
+
+    // Abrir en app (descarga .m3u → VLC/Kodi lo abre automáticamente)
+    document.getElementById('btnOpenApp')?.addEventListener('click', () => {
+        const id  = el.player.dataset.itemId || '';
+        const url = el.player.dataset.streamUrl || '';
+        if (id) {
+            window.open(`/api/playlist/${id}.m3u`, '_blank');
+        } else if (url) {
+            // Fallback: crear .m3u en memoria y descargar
+            const blob = new Blob([`#EXTM3U\n#EXTINF:-1,Stream\n${url}\n`], { type: 'audio/x-mpegurl' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'stream.m3u';
+            a.click();
+        }
+    });
+
+    // Copiar enlace
+    document.getElementById('btnCopyUrl')?.addEventListener('click', () => {
+        const url = el.player.dataset.streamUrl || '';
+        navigator.clipboard?.writeText(url)
+            .then(() => showNotification('Enlace copiado al portapapeles'))
+            .catch(() => {
+                const inp = document.createElement('input');
+                inp.value = url;
+                document.body.appendChild(inp);
+                inp.select(); document.execCommand('copy'); inp.remove();
+                showNotification('Enlace copiado');
+            });
+    });
+
+    // Velocidad de reproducción
+    document.getElementById('speedControl')?.addEventListener('change', e => {
+        el.videoPlayer.playbackRate = parseFloat(e.target.value) || 1;
     });
 
     // ── Navegación con filtro de tipo (Películas / Series) ──
@@ -677,24 +857,52 @@ _style.textContent = `
     }
     .movie-card { position:relative }
     .modal { display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:1000;align-items:center;justify-content:center }
+    /* ── Player ── */
     .player { display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column }
-    .player-body { flex:1;display:flex;align-items:center;justify-content:center;position:relative }
-    .player-body video { max-width:100%;max-height:100%;width:100%;z-index:1 }
-    .player-header { display:flex;align-items:center;justify-content:space-between;padding:.4rem .7rem;background:rgba(0,0,0,.6) }
+    .player-header {
+        display:flex;align-items:center;gap:.5rem;
+        padding:.35rem .7rem;background:rgba(0,0,0,.7);flex-shrink:0;
+    }
+    #playerTitle { color:#fff;font-size:.9rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+    .player-esc-hint { color:rgba(255,255,255,.35);font-size:.72rem;white-space:nowrap }
     .btn-close-player {
-        background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);
-        color:#fff;font-size:1.3rem;cursor:pointer;
-        padding:.2rem .85rem;border-radius:6px;line-height:1.5;
+        background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);
+        color:#fff;font-size:1.1rem;cursor:pointer;
+        padding:.2rem .75rem;border-radius:6px;line-height:1.5;
         transition:background .2s;flex-shrink:0;
     }
-    .btn-close-player:hover { background:rgba(255,255,255,.3); }
-    .player-esc-hint { color:rgba(255,255,255,.4);font-size:.75rem;margin-right:.5rem }
+    .btn-close-player:hover { background:rgba(255,255,255,.28); }
+    .player-body { flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden }
+    .player-body video { max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain;z-index:1 }
+    /* Barra inferior del player */
+    .player-footer { background:rgba(0,0,0,.7);padding:.35rem .7rem .4rem;flex-shrink:0 }
+    .player-actions { display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-bottom:.25rem }
+    .btn-pa {
+        background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);
+        color:#fff;cursor:pointer;padding:.18rem .65rem;border-radius:5px;
+        font-size:.78rem;line-height:1.5;transition:background .15s;
+    }
+    .btn-pa:hover { background:rgba(255,255,255,.22); }
+    select.btn-pa option { background:#1a1a1a;color:#fff }
+    .player-keys { color:rgba(255,255,255,.28);font-size:.66rem;margin:0 }
+    .player-keys kbd {
+        background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);
+        padding:.02rem .28rem;border-radius:3px;font-size:.65rem;
+    }
     /* Overlay de error dentro del reproductor */
     .player-error {
         position:absolute;inset:0;z-index:5;
         display:flex;flex-direction:column;align-items:center;justify-content:center;
-        background:rgba(0,0,0,.8);color:#fff;text-align:center;padding:2rem;
+        background:rgba(0,0,0,.82);color:#fff;text-align:center;padding:2rem;
     }
+    .err-btn {
+        background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);
+        color:#fff;cursor:pointer;padding:.42rem 1.1rem;border-radius:7px;
+        font-size:.88rem;transition:background .2s;
+    }
+    .err-btn:hover { background:rgba(255,255,255,.26); }
+    .err-btn-primary { background:#e50914;border-color:#e50914; }
+    .err-btn-primary:hover { background:#c0070f; }
 `;
 document.head.appendChild(_style);
 

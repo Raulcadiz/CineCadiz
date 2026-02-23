@@ -3,10 +3,36 @@ API REST pública — /api/
 Consumida por el frontend JavaScript.
 """
 import re as _re
+import socket as _socket
+from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from models import db, Contenido, Lista
 from sqlalchemy import or_
 import requests
+
+# ── Helpers de seguridad para proxies ───────────────────────────
+
+def _is_private(url: str) -> bool:
+    """Bloquea URLs que apunten a IPs privadas/locales (prevención de SSRF)."""
+    try:
+        h = _urlparse(url).hostname or ''
+        if h in ('localhost', '127.0.0.1', '::1', '0.0.0.0', ''):
+            return True
+        ip = _socket.gethostbyname(h)
+        p = list(map(int, ip.split('.')))
+        return (p[0] == 127 or p[0] == 10
+                or (p[0] == 172 and 16 <= p[1] <= 31)
+                or (p[0] == 192 and p[1] == 168)
+                or (p[0] == 169 and p[1] == 254))
+    except Exception:
+        return True   # fail-safe: si no se puede resolver, bloquear
+
+_PROXY_UA = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ),
+}
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -167,6 +193,136 @@ def proxy_image():
         )
     except Exception:
         return '', 404
+
+
+@api_bp.get('/stream-proxy')
+def stream_proxy():
+    """
+    Relay de stream con CORS.
+    El VPS descarga el stream y lo retransmite al navegador con
+    Access-Control-Allow-Origin: * para que HLS.js / <video> puedan cargarlo.
+    También sirve para esquivar bloqueos de IP a nivel de navegador.
+    """
+    url = request.args.get('url', '').strip()
+    if not url or not url.lower().startswith('http'):
+        return '', 400
+    if _is_private(url):
+        return '', 403
+
+    hdrs = {**_PROXY_UA}
+    if request.headers.get('Range'):          # soporte parcial de contenido (seeking)
+        hdrs['Range'] = request.headers['Range']
+
+    try:
+        up = requests.get(url, stream=True, headers=hdrs, timeout=20,
+                          proxies={}, allow_redirects=True)
+        ct = up.headers.get('Content-Type', 'video/mp2t')
+
+        out_hdrs = {
+            'Access-Control-Allow-Origin':  '*',
+            'Access-Control-Allow-Headers': 'Range',
+            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+            'Cache-Control': 'no-cache',
+        }
+        for h in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
+            if h in up.headers:
+                out_hdrs[h] = up.headers[h]
+
+        def _gen():
+            try:
+                for chunk in up.iter_content(chunk_size=65536):
+                    if chunk:
+                        yield chunk
+            except Exception:
+                pass
+
+        return Response(_gen(), status=up.status_code,
+                        content_type=ct, headers=out_hdrs)
+    except requests.exceptions.Timeout:
+        return '', 504
+    except Exception:
+        return '', 502
+
+
+@api_bp.get('/hls-proxy')
+def hls_proxy():
+    """
+    Proxy de manifests HLS (.m3u8).
+    Descarga el manifest y reescribe todas las URIs (segmentos, claves,
+    sub-playlists) para que también pasen por /api/stream-proxy.
+    Permite que HLS.js cargue cualquier stream sin restricciones de CORS.
+    """
+    url = request.args.get('url', '').strip()
+    if not url or not url.lower().startswith('http'):
+        return '', 400
+    if _is_private(url):
+        return '', 403
+
+    try:
+        resp = requests.get(url, headers=_PROXY_UA, timeout=15,
+                            proxies={}, allow_redirects=True)
+        resp.raise_for_status()
+
+        parsed   = _urlparse(url)
+        base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
+        ps = request.host_url.rstrip('/') + '/api/stream-proxy'
+        ph = request.host_url.rstrip('/') + '/api/hls-proxy'
+
+        lines = []
+        for line in resp.text.splitlines():
+            s = line.strip()
+            if not s:
+                lines.append('')
+                continue
+            if s.startswith('#'):
+                # Reescribir URI="..." en directivas (ej: EXT-X-KEY)
+                if 'URI="' in s:
+                    def _make_rep(_ps):
+                        def _rep(m):
+                            u = m.group(1)
+                            if not u.startswith('http'):
+                                u = _urljoin(base_url, u)
+                            return f'URI="{_ps}?url={_quote(u, safe="")}"'
+                        return _rep
+                    s = _re.sub(r'URI="([^"]+)"', _make_rep(ps), s)
+                lines.append(s)
+            else:
+                # Líneas de URI (segmentos .ts, sub-playlists .m3u8, etc.)
+                full = s if s.startswith('http') else _urljoin(base_url, s)
+                enc  = _quote(full, safe='')
+                target = ph if '.m3u8' in s.lower() else ps
+                lines.append(f'{target}?url={enc}')
+
+        return Response(
+            '\n'.join(lines),
+            content_type='application/vnd.apple.mpegurl',
+            headers={'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache'},
+        )
+    except Exception:
+        return '', 502
+
+
+@api_bp.get('/playlist/<int:item_id>.m3u')
+def item_playlist(item_id):
+    """
+    Descarga un .m3u de un ítem concreto.
+    El sistema operativo lo abre en el reproductor registrado (VLC, Kodi, MPV…)
+    que puede reproducir cualquier formato: MKV, TS, IPTV, etc.
+    """
+    item = Contenido.query.filter_by(id=item_id, activo=True).first_or_404()
+    m3u = (
+        '#EXTM3U\n'
+        f'#EXTINF:-1 tvg-logo="{item.imagen or ""}",{item.titulo}\n'
+        f'{item.url_stream}\n'
+    )
+    return Response(
+        m3u,
+        content_type='audio/x-mpegurl',
+        headers={
+            'Content-Disposition': f'attachment; filename="stream_{item_id}.m3u"',
+            'Cache-Control': 'no-store',
+        },
+    )
 
 
 @api_bp.get('/og-image')

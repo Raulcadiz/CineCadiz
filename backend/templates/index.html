@@ -162,14 +162,44 @@
         <!-- Reproductor -->
         <div class="player" id="player">
             <div class="player-header">
-                <span id="playerTitle" style="color:#fff;font-size:.95rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-                <span class="player-esc-hint">ESC o click fuera para cerrar</span>
+                <span id="playerTitle"></span>
+                <span class="player-esc-hint">ESC para cerrar</span>
                 <button class="btn-close-player" title="Cerrar (ESC)">&times; Cerrar</button>
             </div>
             <div class="player-body">
                 <video id="videoPlayer" controls playsinline>
                     Tu navegador no soporta video HTML5.
                 </video>
+            </div>
+            <!-- Barra de acciones -->
+            <div class="player-footer">
+                <div class="player-actions">
+                    <button class="btn-pa" id="btnPip" title="Picture in Picture (P)">
+                        <i class="bi bi-pip"></i> PiP
+                    </button>
+                    <button class="btn-pa" id="btnOpenApp" title="Abrir en VLC / Kodi / MPV">
+                        <i class="bi bi-collection-play"></i> Abrir en app
+                    </button>
+                    <button class="btn-pa" id="btnCopyUrl" title="Copiar enlace del stream (C)">
+                        <i class="bi bi-clipboard"></i> Copiar enlace
+                    </button>
+                    <select class="btn-pa" id="speedControl" title="Velocidad">
+                        <option value="0.5">0.5×</option>
+                        <option value="0.75">0.75×</option>
+                        <option value="1" selected>1× Normal</option>
+                        <option value="1.25">1.25×</option>
+                        <option value="1.5">1.5×</option>
+                        <option value="2">2×</option>
+                    </select>
+                </div>
+                <p class="player-keys">
+                    <kbd>Espacio</kbd> pausa &nbsp;·&nbsp;
+                    <kbd>← →</kbd> ±10s &nbsp;·&nbsp;
+                    <kbd>↑ ↓</kbd> volumen &nbsp;·&nbsp;
+                    <kbd>F</kbd> pantalla completa &nbsp;·&nbsp;
+                    <kbd>M</kbd> mute &nbsp;·&nbsp;
+                    <kbd>P</kbd> PiP
+                </p>
             </div>
         </div>
     </main>
