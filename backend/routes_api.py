@@ -129,12 +129,12 @@ def get_contenido_by_type(tipo):
 
 @api_bp.get('/trending')
 def get_trending():
-    """Contenido más reciente (últimas 24h o los N más nuevos)."""
+    """Novedades: primero los de año más reciente (2026 > 2025 …), luego los más añadidos."""
     limit = min(request.args.get('limit', 20, type=int), 50)
     items = (
         Contenido.query
         .filter_by(activo=True)
-        .order_by(Contenido.fecha_agregado.desc())
+        .order_by(Contenido.año.desc(), Contenido.fecha_agregado.desc())
         .limit(limit)
         .all()
     )
@@ -217,6 +217,13 @@ def stream_proxy():
         up = requests.get(url, stream=True, headers=hdrs, timeout=20,
                           proxies={}, allow_redirects=True)
         ct = up.headers.get('Content-Type', 'video/mp2t')
+        # Para streams MPEG-TS, forzar content-type correcto aunque el CDN
+        # devuelva 'application/octet-stream' (el navegador no lo reproduciría)
+        url_path_lower = url.lower().split('?')[0]
+        if url_path_lower.endswith('.ts') or ct in (
+            'application/octet-stream', 'binary/octet-stream', 'application/download', ''
+        ):
+            ct = 'video/mp2t'
 
         out_hdrs = {
             'Access-Control-Allow-Origin':  '*',
@@ -259,7 +266,7 @@ def hls_proxy():
         return '', 403
 
     try:
-        resp = requests.get(url, headers=_PROXY_UA, timeout=15,
+        resp = requests.get(url, headers=_PROXY_UA, timeout=5,
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
 

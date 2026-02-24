@@ -590,6 +590,18 @@ body {
 
 .modal-actions { display:flex; gap:.7rem; flex-wrap:wrap; margin-top:auto; }
 
+/* Botón Trailer (YouTube) en el modal de detalles */
+.btn-trailer {
+    display: inline-flex; align-items:center; gap:.4rem;
+    background: #ff0000;
+    border: none; color: #fff;
+    padding: .55rem 1.1rem; border-radius: var(--radius);
+    font-size: .88rem; font-weight: 500; cursor: pointer;
+    text-decoration: none;
+    transition: background var(--transition);
+}
+.btn-trailer:hover { background: #cc0000; color: #fff; }
+
 /* ─────────────────────────────────────────────────────────
    REPRODUCTOR — layout fijo
    ───────────────────────────────────────────────────────── */

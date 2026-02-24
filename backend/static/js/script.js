@@ -215,6 +215,12 @@ async function showDetails(id) {
                                 ? '<i class="bi bi-box-arrow-up-right"></i> Abrir en web'
                                 : '<i class="bi bi-play-fill"></i> Reproducir'}
                         </button>
+                        <a class="btn-trailer"
+                           href="https://www.youtube.com/results?search_query=${encodeURIComponent((item.title || '') + (item.year ? ' ' + item.year : '') + ' trailer')}"
+                           target="_blank" rel="noopener noreferrer"
+                           title="Buscar trailer en YouTube">
+                            <i class="bi bi-youtube"></i> Trailer
+                        </a>
                         <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
                             <i class="bi ${fav ? 'bi-heart-fill' : 'bi-heart'}"></i>
                             ${fav ? 'En favoritos' : 'Agregar'}
@@ -243,14 +249,16 @@ function _setPlayerLoading(on) {
 }
 
 /**
- * Destruye la instancia HLS anterior antes de cargar un nuevo stream.
+ * Destruye la instancia HLS y cancela cualquier descarga activa del video.
  */
 function _destroyHls() {
     if (_hls) {
         _hls.destroy();
         _hls = null;
     }
+    el.videoPlayer.pause();
     el.videoPlayer.removeAttribute('src');
+    el.videoPlayer.load();   // cancela la descarga HTTP en curso
     el.videoPlayer.onerror = null;
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
     _setPlayerLoading(false);
@@ -303,7 +311,7 @@ function _showPlayerError(msg) {
     el.player?.querySelector('.player-body')?.appendChild(errDiv);
 }
 
-/** Carga un stream HLS con HLS.js. */
+/** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native. */
 function _loadHls(url) {
     _hls = new Hls({
         maxBufferLength:   30,
@@ -318,7 +326,13 @@ function _loadHls(url) {
     _hls.on(Hls.Events.ERROR, (_e, data) => {
         if (data.fatal) {
             _destroyHls();
-            _showPlayerError('Stream HLS no disponible — puede ser un problema de CORS o el stream expiró');
+            // El proxy también falló → último recurso: reproducción nativa HTML5
+            const originalUrl = el.player.dataset.streamUrl;
+            if (originalUrl) {
+                _tryNative(originalUrl);
+            } else {
+                _showPlayerError('Stream HLS no disponible — puede ser un problema de CORS o el stream expiró');
+            }
         }
     });
 }
@@ -359,6 +373,8 @@ function playStream(streamUrl, title, source, itemId = '') {
     }
 
     _destroyHls();
+    // Cerrar el modal de detalles si está abierto para que no quede atrapado detrás
+    el.detailsModal.style.display = 'none';
     el.player.style.display = 'flex';
     document.getElementById('playerTitle').textContent = title || '';
     el.player.dataset.streamUrl = url;
@@ -378,32 +394,56 @@ function playStream(streamUrl, title, source, itemId = '') {
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
     if (!isNaN(vol)) el.videoPlayer.volume = Math.max(0, Math.min(1, vol));
 
-    // ── Paso 1: HLS.js directo (igual que la versión original que funcionaba) ──
-    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    // ── Paso 1: decidir si usar HLS.js o ir directo a nativo ──
+    if (typeof Hls !== 'undefined' && Hls.isSupported() && _isLikelyHls(url)) {
+        // URL parece HLS (m3u8 o sin extensión clara) → intentar HLS.js
         _loadHlsDirect(url);
-    } else if (el.videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari: HLS nativo
+    } else if (el.videoPlayer.canPlayType('application/vnd.apple.mpegurl') && _isLikelyHls(url)) {
+        // Safari con URL HLS → HLS nativo
         el.videoPlayer.src = url;
         el.videoPlayer.play().catch(() => {});
     } else {
-        // Navegador sin soporte HLS → ir directo a nativo
+        // URL es .mkv/.mp4/etc. o navegador sin soporte HLS → nativo directo
         _tryNative(url);
     }
 }
 
 /**
- * Paso 1 — HLS.js directo (reproducción original que funcionaba).
- * Detecta si el stream es HLS inspeccionando el contenido (no la URL).
- * Si falla por red/CORS → pasa por hls-proxy del VPS.
- * Si falla por parseo   → no es HLS, prueba como vídeo nativo.
+ * Detecta si una URL probablemente contiene un stream HLS (.m3u8).
+ * Las URLs con extensión de video conocida (.mkv, .mp4, etc.) NO son HLS
+ * y se saltan HLS.js + proxy para ir directo a reproducción nativa.
+ */
+function _isLikelyHls(url) {
+    const path = url.toLowerCase().split('?')[0].split('#')[0];
+    // Extensiones definitivamente NO-HLS → nativo directo
+    const NON_HLS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpg', '.mpeg'];
+    if (NON_HLS.some(ext => path.endsWith(ext))) return false;
+    // Extensión HLS confirmada
+    if (path.endsWith('.m3u8') || path.includes('.m3u8?')) return true;
+    // Sin extensión conocida (IPTV, streams de IPTV sin extensión) → intentar HLS
+    return true;
+}
+
+/**
+ * Paso 1 — HLS.js directo.
+ * Para URLs IPTV live que acaban en .ts, prueba primero la variante .m3u8
+ * (la mayoría de servidores IPTV sirven el mismo canal en ambos formatos).
+ * Si falla por red/CORS → proxy del VPS.
+ * Si falla por parseo   → no es HLS, prueba como vídeo nativo .ts.
  */
 function _loadHlsDirect(url) {
+    // Para canales live con .ts: intentar el manifest HLS (.m3u8) del mismo servidor
+    const urlLow = url.toLowerCase().split('?')[0];
+    const hlsUrl = (urlLow.endsWith('.ts') && urlLow.includes('/live/'))
+        ? url.replace(/\.ts(\?.*)?$/i, '.m3u8')
+        : url;
+
     _hls = new Hls({
         maxBufferLength: 30,
         maxBufferSize:   60 * 1000 * 1000,
         xhrSetup: xhr => { xhr.withCredentials = false; },
     });
-    _hls.loadSource(url);
+    _hls.loadSource(hlsUrl);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
         el.videoPlayer.play().catch(() => {});
@@ -413,7 +453,7 @@ function _loadHlsDirect(url) {
         _destroyHls();
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             // CORS u otro error de red → intentar a través del proxy del VPS
-            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(url)}`);
+            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
         } else {
             // Error de parseo: el stream no es HLS → probar como vídeo nativo
             _tryNative(url);
@@ -439,7 +479,8 @@ function _tryNative(url) {
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            // Paso 5: todo falló
+            // Paso 5: todo falló — limpiar spinner y mostrar error
+            _setPlayerLoading(false);
             _showPlayerError('Stream no disponible o formato no compatible con el navegador');
         };
     };
@@ -511,7 +552,8 @@ async function loadGrid(append = false) {
         renderGrid(data.items, append);
 
         const hasMore = state.currentPage < data.pages;
-        el.loadMore.style.display = hasMore ? 'block' : 'none';
+        // data-has-more lo usa el IntersectionObserver para saber si quedan páginas
+        el.loadMore.dataset.hasMore = hasMore ? 'true' : 'false';
     } catch {
         if (!append) el.moviesGrid.innerHTML = '<p class="no-content">Error al cargar contenido</p>';
     }
@@ -559,12 +601,39 @@ async function loadFilters() {
             o.value = y; o.textContent = y;
             el.yearFilter.appendChild(o);
         });
-        generos.slice(0, 40).forEach(g => {
+        // Sin límite de 40 — mostrar todos los géneros (ya vienen ordenados A-Z del API)
+        generos.forEach(g => {
             const o = document.createElement('option');
             o.value = g; o.textContent = g;
             el.genreFilter.appendChild(o);
         });
     } catch { /* silenciar */ }
+}
+
+// ── Vista por tipo: oculta/muestra secciones tipo tab ──────
+function setView(type) {
+    const hero      = document.getElementById('home');
+    const novedSec  = document.getElementById('novedades')?.closest('section');
+    const pelSec    = document.getElementById('peliculas');
+    const serSec    = document.getElementById('series');
+    const liveSec   = document.getElementById('live');
+
+    if (!type) {
+        // Vista inicio: mostrar todo
+        [hero, novedSec, pelSec, serSec, liveSec].forEach(s => {
+            if (s) s.style.display = '';
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+        // Vista de tipo: ocultar hero, novedades y secciones de otros tipos
+        if (hero)     hero.style.display     = 'none';
+        if (novedSec) novedSec.style.display = 'none';
+        const map = { pelicula: pelSec, serie: serSec, live: liveSec };
+        Object.entries(map).forEach(([t, s]) => {
+            if (s) s.style.display = (t === type) ? '' : 'none';
+        });
+        document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
+    }
 }
 
 // ── Eventos ────────────────────────────────────────────────
@@ -625,6 +694,7 @@ function setupEvents() {
         el.videoPlayer.pause();
         _destroyHls();
         el.player.style.display = 'none';
+        el.detailsModal.style.display = 'none';
     });
 
     // Cerrar reproductor — click en la zona negra fuera del vídeo
@@ -633,6 +703,7 @@ function setupEvents() {
             el.videoPlayer.pause();
             _destroyHls();
             el.player.style.display = 'none';
+            el.detailsModal.style.display = 'none';
         }
     });
 
@@ -653,6 +724,7 @@ function setupEvents() {
     // Filtros desplegables
     el.typeFilter?.addEventListener('change', e => {
         state.currentType = e.target.value;
+        setView(e.target.value);
         loadGrid();
     });
     el.yearFilter?.addEventListener('change', e => {
@@ -664,11 +736,29 @@ function setupEvents() {
         loadGrid();
     });
 
-    // Cargar más
-    el.loadMore?.addEventListener('click', () => {
-        state.currentPage++;
-        loadGrid(true);
-    });
+    // ── Scroll infinito (sustituye al botón "Cargar más") ────
+    // El botón sigue existiendo como señal de "hay más", pero no se muestra.
+    // IntersectionObserver lo detecta y carga automáticamente.
+    if (el.loadMore) el.loadMore.style.cssText = 'opacity:0;pointer-events:none;height:1px;';
+    if ('IntersectionObserver' in window && el.loadMore) {
+        let _scrollLoading = false;
+        const _scrollObs = new IntersectionObserver(async entries => {
+            if (!entries[0].isIntersecting || _scrollLoading) return;
+            if (el.loadMore.dataset.hasMore !== 'true') return;
+            _scrollLoading = true;
+            state.currentPage++;
+            await loadGrid(true);
+            _scrollLoading = false;
+        }, { rootMargin: '400px' });
+        _scrollObs.observe(el.loadMore);
+    } else {
+        // Fallback: botón visible si no hay IntersectionObserver
+        el.loadMore.style.cssText = '';
+        el.loadMore.addEventListener('click', () => {
+            state.currentPage++;
+            loadGrid(true);
+        });
+    }
 
     // Header scroll
     window.addEventListener('scroll', () => {
@@ -736,6 +826,7 @@ function setupEvents() {
                     el.videoPlayer.pause();
                     _destroyHls();
                     el.player.style.display = 'none';
+                    el.detailsModal.style.display = 'none';
                     break;
             }
         } else if (!playerOpen && e.key === 'Escape') {
@@ -801,7 +892,7 @@ function setupEvents() {
         el.videoPlayer.playbackRate = parseFloat(e.target.value) || 1;
     });
 
-    // ── Navegación con filtro de tipo (Películas / Series) ──
+    // ── Navegación con filtro de tipo (Películas / Series / Directo) ──
     document.querySelectorAll('a[data-type]').forEach(link => {
         link.addEventListener('click', e => {
             e.preventDefault();
@@ -809,14 +900,14 @@ function setupEvents() {
             state.currentType = type;
             state.currentPage  = 1;
             if (el.typeFilter) el.typeFilter.value = type;
+            setView(type);     // ocultar otras secciones, mostrar sólo la de este tipo
             loadGrid();
-            document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
             document.querySelectorAll(`a[data-type="${type}"]`).forEach(n => n.classList.add('active'));
         });
     });
 
-    // ── Inicio: resetear filtro y volver arriba ──────────────
+    // ── Inicio: resetear todo y volver a la vista completa ───
     document.querySelectorAll('a[href="#home"]').forEach(link => {
         link.addEventListener('click', e => {
             e.preventDefault();
@@ -827,8 +918,8 @@ function setupEvents() {
             if (el.typeFilter)  el.typeFilter.value  = '';
             if (el.yearFilter)  el.yearFilter.value  = '';
             if (el.genreFilter) el.genreFilter.value = '';
+            setView('');       // restaurar todas las secciones
             loadGrid();
-            document.getElementById('home')?.scrollIntoView({ behavior: 'smooth' });
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
             document.querySelectorAll('a[href="#home"]').forEach(n => n.classList.add('active'));
         });
