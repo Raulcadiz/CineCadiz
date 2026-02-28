@@ -912,22 +912,20 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
     font-size: .9rem;
 }
 
-/* Fullscreen: ocultar barra de acciones y mostrar sólo el vídeo */
+/* Fullscreen: header siempre visible, footer oculto (controles nativos del vídeo) */
 .player:fullscreen .player-footer { display: none; }
 .player:fullscreen .player-header {
     position: absolute; top: 0; left: 0; right: 0;
     z-index: 10;
-    opacity: 0;
-    transition: opacity .3s;
+    background: rgba(0,0,0,.8);
 }
-.player:fullscreen:hover .player-header { opacity: 1; }
 
 .player:-webkit-full-screen .player-footer { display: none; }
 .player:-webkit-full-screen .player-header {
     position: absolute; top: 0; left: 0; right: 0;
-    z-index: 10; opacity: 0; transition: opacity .3s;
+    z-index: 10;
+    background: rgba(0,0,0,.8);
 }
-.player:-webkit-full-screen:hover .player-header { opacity: 1; }
 
 /* ─────────────────────────────────────────────────────────
    Genre pills

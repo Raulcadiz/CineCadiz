@@ -397,15 +397,7 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
         }
     }
 
-    // En móvil, entrar automáticamente en pantalla completa
-    const isMobile = window.innerWidth <= 768;
-    if (isMobile && el.player.requestFullscreen) {
-        setTimeout(() => {
-            if (el.player.style.display === 'flex') {
-                el.player.requestFullscreen().catch(() => {});
-            }
-        }, 600);
-    }
+    // (el fullscreen lo activa el usuario con el botón ⛶ o la tecla F)
 
     // Mostrar spinner de carga
     _setPlayerLoading(true);
@@ -640,22 +632,30 @@ async function loadFilters() {
 
 // ── Vista por tipo: oculta/muestra secciones tipo tab ──────
 function setView(type) {
-    const hero      = document.getElementById('home');
-    const novedSec  = document.getElementById('novedades')?.closest('section');
-    const pelSec    = document.getElementById('peliculas');
-    const serSec    = document.getElementById('series');
-    const liveSec   = document.getElementById('live');
+    const hero       = document.getElementById('home');
+    const novedSec   = document.getElementById('novedades')?.closest('section');
+    const pelSec     = document.getElementById('peliculas');
+    const serSec     = document.getElementById('series');
+    const liveSec    = document.getElementById('live');
+    const nov2026Sec = document.getElementById('novedades2026Section');
+    const contSec    = document.getElementById('continueSection');
 
     if (!type) {
         // Vista inicio: mostrar todo
-        [hero, novedSec, pelSec, serSec, liveSec].forEach(s => {
+        [hero, novedSec, pelSec, serSec, liveSec, nov2026Sec].forEach(s => {
             if (s) s.style.display = '';
         });
+        // continueSection solo si hay historial
+        if (contSec) {
+            const hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
+            contSec.style.display = hist.length ? '' : 'none';
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-        // Vista de tipo: ocultar hero, novedades y secciones de otros tipos
-        if (hero)     hero.style.display     = 'none';
-        if (novedSec) novedSec.style.display = 'none';
+        // Vista de tipo: ocultar hero, novedades extra y carruseles de otros tipos
+        [hero, novedSec, nov2026Sec, contSec].forEach(s => {
+            if (s) s.style.display = 'none';
+        });
         const map = { pelicula: pelSec, serie: serSec, live: liveSec };
         Object.entries(map).forEach(([t, s]) => {
             if (s) s.style.display = (t === type) ? '' : 'none';
@@ -1168,11 +1168,15 @@ async function showFavoritesSection() {
     const empty = document.getElementById('favoritesEmpty');
     if (!sec || !grid) return;
 
-    // Ocultar el grid principal y otras secciones
-    const mainSections = ['#home', '#peliculas', '#series', '#live',
-                          '#novedades2026Section', '#continueSection',
-                          '.content-section:not(#favoritesSection)'];
-    document.querySelectorAll(mainSections.join(',')).forEach(s => s.style.display = 'none');
+    // Ocultar secciones principales (lista explícita para no romper nada)
+    ['home', 'peliculas', 'series', 'live', 'novedades2026Section',
+     'continueSection', 'movies'].forEach(id => {
+        const s = document.getElementById(id);
+        if (s) s.style.display = 'none';
+    });
+    // Ocultar también la sección tendencias (sin id propio)
+    const novedSec = document.getElementById('novedades')?.closest('section');
+    if (novedSec) novedSec.style.display = 'none';
     sec.style.display = '';
 
     if (!state.favorites.length) {
@@ -1201,17 +1205,11 @@ async function showFavoritesSection() {
 function hideFavoritesSection() {
     const sec = document.getElementById('favoritesSection');
     if (sec) sec.style.display = 'none';
-    // Restaurar secciones principales
-    ['home', 'peliculas', 'series', 'live'].forEach(id => {
-        const s = document.getElementById(id);
-        if (s) s.style.display = '';
-    });
-    const nov2026 = document.getElementById('novedades2026Section');
-    if (nov2026) nov2026.style.display = '';
-    const contSec = document.getElementById('continueSection');
-    if (contSec && JSON.parse(localStorage.getItem('cc_history') || '[]').length) {
-        contSec.style.display = '';
-    }
+    // Siempre restaurar el grid
+    const movies = document.getElementById('movies');
+    if (movies) movies.style.display = '';
+    // Restaurar el resto según la vista actual
+    setView(state.currentType);
 }
 
 // ── Búsqueda móvil ─────────────────────────────────────────
