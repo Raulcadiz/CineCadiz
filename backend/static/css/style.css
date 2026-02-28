@@ -895,3 +895,163 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
 
     .modal-content { width:96%; }
 }
+
+/* ─────────────────────────────────────────────────────────
+   Thumbnail del reproductor
+   ───────────────────────────────────────────────────────── */
+.player-thumb {
+    width: 32px; height: 46px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,.15);
+}
+
+.btn-pa-fs {
+    padding: .22rem .55rem;
+    font-size: .9rem;
+}
+
+/* Fullscreen: ocultar barra de acciones y mostrar sólo el vídeo */
+.player:fullscreen .player-footer { display: none; }
+.player:fullscreen .player-header {
+    position: absolute; top: 0; left: 0; right: 0;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity .3s;
+}
+.player:fullscreen:hover .player-header { opacity: 1; }
+
+.player:-webkit-full-screen .player-footer { display: none; }
+.player:-webkit-full-screen .player-header {
+    position: absolute; top: 0; left: 0; right: 0;
+    z-index: 10; opacity: 0; transition: opacity .3s;
+}
+.player:-webkit-full-screen:hover .player-header { opacity: 1; }
+
+/* ─────────────────────────────────────────────────────────
+   Genre pills
+   ───────────────────────────────────────────────────────── */
+.genre-pills-wrap {
+    margin-bottom: 1rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.genre-pills-wrap::-webkit-scrollbar { display: none; }
+
+.genre-pills {
+    display: flex;
+    gap: .45rem;
+    flex-wrap: wrap;
+    padding: .2rem 0;
+}
+
+.genre-pill {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: .28rem .85rem;
+    border-radius: 20px;
+    font-size: .78rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.genre-pill:hover {
+    background: rgba(255,255,255,.1);
+    color: var(--text);
+}
+.genre-pill.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Continue watching badge
+   ───────────────────────────────────────────────────────── */
+.continue-badge {
+    position: absolute; bottom: 8px; left: 8px;
+    background: rgba(229,9,20,.85);
+    color: #fff; font-size: .62rem; font-weight: 700;
+    padding: .12rem .45rem; border-radius: 4px;
+    letter-spacing: .03em; z-index: 6;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Búsqueda móvil — overlay fullscreen
+   ───────────────────────────────────────────────────────── */
+.mobile-search-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: var(--bg);
+    z-index: 4000;
+    flex-direction: column;
+}
+.mobile-search-overlay.active {
+    display: flex;
+}
+
+.mso-header {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    padding: .8rem 1rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+#mobileSearchInput {
+    flex: 1;
+    padding: .6rem 1rem;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 20px;
+    color: var(--text);
+    font-size: .95rem;
+}
+#mobileSearchInput:focus { outline: none; border-color: var(--primary); }
+
+#btnCloseMobileSearch {
+    background: none; border: none;
+    color: var(--text-muted); font-size: 1.3rem;
+    cursor: pointer; padding: .3rem;
+    flex-shrink: 0;
+}
+
+.mso-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.mso-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: .8rem;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Sección Novedades 2026 — badge especial en título
+   ───────────────────────────────────────────────────────── */
+#novedades2026Section .section-title::after {
+    content: '2026';
+    background: var(--primary);
+    color: #fff;
+    font-size: .6rem;
+    font-weight: 700;
+    padding: .1rem .4rem;
+    border-radius: 4px;
+    margin-left: .5rem;
+    letter-spacing: .05em;
+    vertical-align: middle;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Responsive adicional
+   ───────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .genre-pills { flex-wrap: nowrap; overflow-x: auto; }
+    .player-thumb { width: 26px; height: 38px; }
+    .mso-grid { grid-template-columns: repeat(2, 1fr); }
+}

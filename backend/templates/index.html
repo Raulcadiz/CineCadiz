@@ -46,10 +46,10 @@
         <a href="#live" class="nav-item" data-type="live">
             <i class="bi bi-broadcast"></i><span>Directo</span>
         </a>
-        <a href="#search" class="nav-item">
+        <a href="#search" class="nav-item" id="mobileSearchBtn">
             <i class="bi bi-search"></i><span>Buscar</span>
         </a>
-        <a href="#favorites" class="nav-item">
+        <a href="#favorites" class="nav-item" id="mobileFavBtn">
             <i class="bi bi-heart"></i><span>Favoritos</span>
         </a>
     </nav>
@@ -95,10 +95,28 @@
             </div>
         </section>
 
+        <!-- Continuar viendo (solo si hay historial) -->
+        <section class="content-section" id="continueSection" style="display:none">
+            <div class="section-header">
+                <h2 class="section-title">▶️ Continuar viendo</h2>
+                <button class="ver-todas" id="btnClearHistory" style="color:var(--text-muted)">Limpiar historial</button>
+            </div>
+            <div class="carousel" id="continueCarousel"></div>
+        </section>
+
         <!-- Novedades -->
         <section class="content-section">
-            <h2 class="section-title">🔥 Novedades</h2>
+            <h2 class="section-title">🔥 Tendencias</h2>
             <div class="carousel" id="novedades"></div>
+        </section>
+
+        <!-- Novedades 2026 -->
+        <section class="content-section" id="novedades2026Section">
+            <div class="section-header">
+                <h2 class="section-title">🆕 Novedades 2026</h2>
+                <a href="#" id="ver2026Link" class="ver-todas">Ver todas →</a>
+            </div>
+            <div class="carousel" id="novedades2026Carousel"></div>
         </section>
 
         <!-- Películas -->
@@ -128,6 +146,16 @@
             <div class="carousel" id="liveCarousel"></div>
         </section>
 
+        <!-- Favoritos (se muestra al pulsar el nav favoritos) -->
+        <section class="content-section" id="favoritesSection" style="display:none">
+            <div class="section-header">
+                <h2 class="section-title">❤️ Mis Favoritos</h2>
+                <button class="ver-todas" id="btnClearFav" style="color:#e50914">Limpiar todo</button>
+            </div>
+            <div class="movies-grid" id="favoritesGrid"></div>
+            <p class="no-content" id="favoritesEmpty" style="display:none">Aún no tienes favoritos. Pulsa ❤️ en cualquier contenido para guardarlo aquí.</p>
+        </section>
+
         <!-- Grid completo -->
         <section class="content-section" id="movies">
             <div class="section-header">
@@ -145,7 +173,17 @@
                     <select id="genreFilter" class="filter-select">
                         <option value="">Todos los géneros</option>
                     </select>
+                    <select id="sortFilter" class="filter-select">
+                        <option value="recent">Más recientes</option>
+                        <option value="year_desc">Año ↓</option>
+                        <option value="year_asc">Año ↑</option>
+                        <option value="title_asc">A–Z</option>
+                    </select>
                 </div>
+            </div>
+            <!-- Pills de género para filtrado rápido -->
+            <div class="genre-pills-wrap" id="genrePillsWrap" style="display:none">
+                <div class="genre-pills" id="genrePills"></div>
             </div>
             <div class="movies-grid" id="moviesGrid"></div>
             <button class="btn-load-more" id="loadMore" style="display:none">Cargar más</button>
@@ -162,8 +200,12 @@
         <!-- Reproductor -->
         <div class="player" id="player">
             <div class="player-header">
+                <img id="playerThumb" class="player-thumb" src="" alt="" style="display:none">
                 <span id="playerTitle"></span>
                 <span class="player-esc-hint">ESC para cerrar</span>
+                <button class="btn-pa btn-pa-fs" id="btnFsPlayer" title="Pantalla completa (F)">
+                    <i class="bi bi-fullscreen"></i>
+                </button>
                 <button class="btn-close-player" title="Cerrar (ESC)">&times; Cerrar</button>
             </div>
             <div class="player-body">
@@ -201,6 +243,15 @@
                     <kbd>P</kbd> PiP
                 </p>
             </div>
+        </div>
+
+        <!-- Overlay de búsqueda móvil -->
+        <div class="mobile-search-overlay" id="mobileSearchOverlay">
+            <div class="mso-header">
+                <input type="text" id="mobileSearchInput" placeholder="Buscar películas, series...">
+                <button id="btnCloseMobileSearch"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="mso-results" id="mobileSearchResults"></div>
         </div>
     </main>
 

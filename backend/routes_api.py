@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from models import db, Contenido, Lista
-from sqlalchemy import or_
+from sqlalchemy import or_, nulls_last
 import requests
 
 # ── Helpers de seguridad para proxies ───────────────────────────
@@ -56,12 +56,14 @@ def paginate_query(query, page, per_page):
 def get_contenido():
     """
     Lista contenido con filtros opcionales.
-    Query params: tipo, genero, año, q (búsqueda), page, limit
+    Query params: tipo, genero, año, q (búsqueda), sort, page, limit
+    sort: recent (default) | year_desc | year_asc | title_asc
     """
     tipo = request.args.get('tipo')           # 'pelicula' | 'serie'
     genero = request.args.get('genero', '')
     año = request.args.get('año', '')
     q = request.args.get('q', '').strip()
+    sort = request.args.get('sort', 'recent')
     page = max(1, request.args.get('page', 1, type=int))
     per_page = min(
         request.args.get('limit', current_app.config['ITEMS_PER_PAGE'], type=int),
@@ -88,7 +90,15 @@ def get_contenido():
             )
         )
 
-    query = query.order_by(Contenido.fecha_agregado.desc())
+    _sort_map = {
+        'year_desc':  [nulls_last(Contenido.año.desc()),   Contenido.fecha_agregado.desc()],
+        'year_asc':   [nulls_last(Contenido.año.asc()),    Contenido.fecha_agregado.desc()],
+        'title_asc':  [Contenido.titulo.asc()],
+        'recent':     [Contenido.fecha_agregado.desc()],
+    }
+    for col in _sort_map.get(sort, _sort_map['recent']):
+        query = query.order_by(col)
+
     return jsonify(paginate_query(query, page, per_page))
 
 

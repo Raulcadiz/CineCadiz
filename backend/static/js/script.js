@@ -12,6 +12,7 @@ const state = {
     currentType: '',
     currentYear: '',
     currentGenre: '',
+    currentSort: 'recent',
     favorites: JSON.parse(localStorage.getItem('cc_favorites') || '[]'),
     allItems: [],           // caché local para búsqueda rápida
 };
@@ -126,7 +127,8 @@ function renderCard(item) {
                     data-stream="${encodeURIComponent(item.streamUrl)}"
                     data-source="${item.source || 'm3u'}"
                     data-title="${item.title}"
-                    data-id="${item.id}">
+                    data-id="${item.id}"
+                    data-image="${encodeURIComponent(imgSrc)}">
                 ${playLabel}
             </button>
             <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
@@ -171,7 +173,8 @@ function renderHero(items) {
                     <button class="btn-play" data-stream="${encodeURIComponent(item.streamUrl)}"
                             data-source="${item.source || 'm3u'}"
                             data-title="${item.title}"
-                            data-id="${item.id}">
+                            data-id="${item.id}"
+                            data-image="${encodeURIComponent(heroImg)}">
                         <i class="bi bi-play-fill"></i> Reproducir
                     </button>
                     <button class="btn-info" data-id="${item.id}">
@@ -210,7 +213,8 @@ async function showDetails(id) {
                                 data-stream="${encodeURIComponent(item.streamUrl)}"
                                 data-source="${item.source || 'm3u'}"
                                 data-title="${item.title}"
-                                data-id="${item.id}">
+                                data-id="${item.id}"
+                                data-image="${encodeURIComponent(modalImg)}">
                             ${item.source === 'rss'
                                 ? '<i class="bi bi-box-arrow-up-right"></i> Abrir en web'
                                 : '<i class="bi bi-play-fill"></i> Reproducir'}
@@ -357,13 +361,14 @@ function _loadHls(url) {
  *   4. Nativo falla      → reintenta a través de /api/stream-proxy
  *   5. Todo falla        → overlay con botones VLC / copiar / intentar HLS
  */
-function playStream(streamUrl, title, source, itemId = '') {
+function playStream(streamUrl, title, source, itemId = '', image = '') {
     const url = decodeURIComponent(streamUrl);
+    const imgDecoded = image ? decodeURIComponent(image) : '';
 
     // Historial local
     let hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
     hist = hist.filter(h => h.url !== url).slice(0, 49);
-    hist.unshift({ url, title, source, ts: Date.now() });
+    hist.unshift({ url, title, source, ts: Date.now(), id: itemId, image: imgDecoded });
     localStorage.setItem('cc_history', JSON.stringify(hist));
 
     // RSS → nueva pestaña (cinemacity.cc bloquea iframe)
@@ -379,6 +384,28 @@ function playStream(streamUrl, title, source, itemId = '') {
     document.getElementById('playerTitle').textContent = title || '';
     el.player.dataset.streamUrl = url;
     el.player.dataset.itemId    = itemId;
+
+    // Thumbnail en la cabecera del reproductor
+    const thumb = document.getElementById('playerThumb');
+    if (thumb) {
+        if (imgDecoded) {
+            thumb.src = imgDecoded;
+            thumb.style.display = 'block';
+            thumb.onerror = () => { thumb.style.display = 'none'; };
+        } else {
+            thumb.style.display = 'none';
+        }
+    }
+
+    // En móvil, entrar automáticamente en pantalla completa
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile && el.player.requestFullscreen) {
+        setTimeout(() => {
+            if (el.player.style.display === 'flex') {
+                el.player.requestFullscreen().catch(() => {});
+            }
+        }, 600);
+    }
 
     // Mostrar spinner de carga
     _setPlayerLoading(true);
@@ -545,6 +572,7 @@ async function loadGrid(append = false) {
             tipo:   state.currentType,
             año:    state.currentYear,
             genero: state.currentGenre,
+            sort:   state.currentSort || 'recent',
             page:   state.currentPage,
             limit:  24,
         });
@@ -656,6 +684,7 @@ function setupEvents() {
                 playBtn.dataset.title,
                 playBtn.dataset.source || 'm3u',
                 playBtn.dataset.id || '',
+                playBtn.dataset.image || '',
             );
             return;
         }
@@ -915,9 +944,14 @@ function setupEvents() {
             state.currentPage  = 1;
             state.currentYear  = '';
             state.currentGenre = '';
+            state.currentSort  = 'recent';
             if (el.typeFilter)  el.typeFilter.value  = '';
             if (el.yearFilter)  el.yearFilter.value  = '';
             if (el.genreFilter) el.genreFilter.value = '';
+            const sf = document.getElementById('sortFilter');
+            if (sf) sf.value = 'recent';
+            document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
+            hideFavoritesSection();
             setView('');       // restaurar todas las secciones
             loadGrid();
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
@@ -933,13 +967,270 @@ function setupEvents() {
         });
     });
 
-    // Navegación móvil — active state para links sin filtro (Buscar, Favoritos)
+    // ── Fullscreen button en cabecera del player ──────────────
+    document.getElementById('btnFsPlayer')?.addEventListener('click', () => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        } else {
+            el.player.requestFullscreen().catch(() => {});
+        }
+    });
+
+    // Actualizar icono al cambiar estado fullscreen
+    document.addEventListener('fullscreenchange', () => {
+        const btn = document.getElementById('btnFsPlayer');
+        if (!btn) return;
+        const icon = btn.querySelector('i');
+        if (document.fullscreenElement) {
+            icon.className = 'bi bi-fullscreen-exit';
+        } else {
+            icon.className = 'bi bi-fullscreen';
+        }
+    });
+
+    // ── Favoritos (nav móvil) ─────────────────────────────────
+    document.getElementById('mobileFavBtn')?.addEventListener('click', e => {
+        e.preventDefault();
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        showFavoritesSection();
+    });
+
+    // Limpiar favoritos
+    document.getElementById('btnClearFav')?.addEventListener('click', () => {
+        state.favorites = [];
+        localStorage.removeItem('cc_favorites');
+        showFavoritesSection();
+        showNotification('Favoritos eliminados');
+    });
+
+    // ── Historial (limpiar) ───────────────────────────────────
+    document.getElementById('btnClearHistory')?.addEventListener('click', () => {
+        localStorage.removeItem('cc_history');
+        const sec = document.getElementById('continueSection');
+        if (sec) sec.style.display = 'none';
+        showNotification('Historial eliminado');
+    });
+
+    // ── Ver todas 2026 ────────────────────────────────────────
+    document.getElementById('ver2026Link')?.addEventListener('click', e => {
+        e.preventDefault();
+        state.currentType  = '';
+        state.currentYear  = '2026';
+        state.currentPage  = 1;
+        state.currentGenre = '';
+        if (el.yearFilter)  el.yearFilter.value  = '2026';
+        if (el.typeFilter)  el.typeFilter.value  = '';
+        if (el.genreFilter) el.genreFilter.value = '';
+        hideFavoritesSection();
+        setView('');
+        loadGrid();
+        document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    // ── Búsqueda móvil ────────────────────────────────────────
+    document.getElementById('mobileSearchBtn')?.addEventListener('click', e => {
+        e.preventDefault();
+        const overlay = document.getElementById('mobileSearchOverlay');
+        if (overlay) {
+            overlay.classList.add('active');
+            setTimeout(() => document.getElementById('mobileSearchInput')?.focus(), 100);
+        }
+    });
+
+    document.getElementById('btnCloseMobileSearch')?.addEventListener('click', () => {
+        document.getElementById('mobileSearchOverlay')?.classList.remove('active');
+    });
+
+    let mobileSearchTimer;
+    document.getElementById('mobileSearchInput')?.addEventListener('input', e => {
+        clearTimeout(mobileSearchTimer);
+        mobileSearchTimer = setTimeout(() => performMobileSearch(e.target.value), 350);
+    });
+
+    // ── Pills de género ───────────────────────────────────────
+    document.getElementById('genrePills')?.addEventListener('click', e => {
+        const pill = e.target.closest('.genre-pill');
+        if (!pill) return;
+        const genre = pill.dataset.genre;
+        // Toggle: si ya está activo, limpia; si no, filtra
+        const isActive = pill.classList.contains('active');
+        document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
+        state.currentGenre = isActive ? '' : genre;
+        if (el.genreFilter) el.genreFilter.value = state.currentGenre;
+        if (!isActive) pill.classList.add('active');
+        state.currentPage = 1;
+        loadGrid();
+    });
+
+    // ── Sort filter ───────────────────────────────────────────
+    document.getElementById('sortFilter')?.addEventListener('change', e => {
+        state.currentSort = e.target.value;
+        state.currentPage = 1;
+        loadGrid();
+    });
+
+    // Navegación móvil — active state para links sin filtro
     document.querySelectorAll('.mobile-nav .nav-item:not([data-type]):not([href="#home"])').forEach(item => {
+        if (item.id === 'mobileSearchBtn' || item.id === 'mobileFavBtn') return;
         item.addEventListener('click', () => {
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             item.classList.add('active');
         });
     });
+}
+
+// ── Continuar viendo ───────────────────────────────────────
+function loadContinueWatching() {
+    const hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
+    const sec  = document.getElementById('continueSection');
+    const cont = document.getElementById('continueCarousel');
+    if (!sec || !cont || !hist.length) return;
+
+    // Solo los que tienen ID (m3u) o URL (rss)
+    const items = hist.slice(0, 12).filter(h => h.title);
+    if (!items.length) return;
+
+    sec.style.display = '';
+    cont.innerHTML = items.map(h => {
+        const typeIcon = h.source === 'rss' ? '🌐' : '▶️';
+        const img = h.image || PLACEHOLDER;
+        return `
+        <div class="movie-card continue-card" data-url="${encodeURIComponent(h.url)}"
+             data-source="${h.source || 'm3u'}" data-title="${h.title}"
+             data-id="${h.id || ''}" data-image="${encodeURIComponent(img)}">
+            <div class="card-img-wrap">
+                <img src="${img}" alt="${h.title}" loading="lazy" onerror="this.src='${PLACEHOLDER}'">
+                <div class="continue-badge">${typeIcon} Continuar</div>
+            </div>
+            <div class="movie-info">
+                <h3 class="movie-title">${h.title}</h3>
+                <div class="movie-meta">
+                    <span style="font-size:.68rem;color:#666">${_timeAgo(h.ts)}</span>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Clicks en las continue-cards
+    cont.querySelectorAll('.continue-card').forEach(card => {
+        card.addEventListener('click', () => {
+            playStream(card.dataset.url, card.dataset.title, card.dataset.source, card.dataset.id, card.dataset.image);
+        });
+    });
+}
+
+function _timeAgo(ts) {
+    const diff = Date.now() - ts;
+    const min  = Math.floor(diff / 60000);
+    if (min < 60)  return `hace ${min}m`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `hace ${h}h`;
+    return `hace ${Math.floor(h / 24)}d`;
+}
+
+// ── Novedades 2026 ─────────────────────────────────────────
+async function loadNovedades2026() {
+    try {
+        const data = await api.contenido({ año: 2026, limit: 20 });
+        const cont = document.getElementById('novedades2026Carousel');
+        const sec  = document.getElementById('novedades2026Section');
+        if (!cont) return;
+        if (!data.items || !data.items.length) {
+            if (sec) sec.style.display = 'none';
+            return;
+        }
+        renderCarousel(data.items, cont);
+    } catch { /* silenciar */ }
+}
+
+// ── Genre Pills ────────────────────────────────────────────
+async function loadGenrePills() {
+    try {
+        const generos = await api.generos();
+        const wrap  = document.getElementById('genrePillsWrap');
+        const pills = document.getElementById('genrePills');
+        if (!wrap || !pills || !generos.length) return;
+
+        // Mostrar solo los primeros 20 géneros más comunes (ya vienen del API)
+        const top = generos.slice(0, 20);
+        pills.innerHTML = top.map(g =>
+            `<button class="genre-pill" data-genre="${g}">${g}</button>`
+        ).join('');
+        wrap.style.display = '';
+    } catch { /* silenciar */ }
+}
+
+// ── Favoritos section ──────────────────────────────────────
+async function showFavoritesSection() {
+    const sec   = document.getElementById('favoritesSection');
+    const grid  = document.getElementById('favoritesGrid');
+    const empty = document.getElementById('favoritesEmpty');
+    if (!sec || !grid) return;
+
+    // Ocultar el grid principal y otras secciones
+    const mainSections = ['#home', '#peliculas', '#series', '#live',
+                          '#novedades2026Section', '#continueSection',
+                          '.content-section:not(#favoritesSection)'];
+    document.querySelectorAll(mainSections.join(',')).forEach(s => s.style.display = 'none');
+    sec.style.display = '';
+
+    if (!state.favorites.length) {
+        grid.innerHTML = '';
+        if (empty) empty.style.display = '';
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    grid.innerHTML = '<p class="no-content">Cargando favoritos…</p>';
+
+    try {
+        const results = await Promise.allSettled(state.favorites.map(id => api.item(id)));
+        const items = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+        if (!items.length) {
+            grid.innerHTML = '';
+            if (empty) empty.style.display = '';
+            return;
+        }
+        grid.innerHTML = items.map(renderCard).join('');
+    } catch {
+        grid.innerHTML = '<p class="no-content">Error cargando favoritos</p>';
+    }
+}
+
+function hideFavoritesSection() {
+    const sec = document.getElementById('favoritesSection');
+    if (sec) sec.style.display = 'none';
+    // Restaurar secciones principales
+    ['home', 'peliculas', 'series', 'live'].forEach(id => {
+        const s = document.getElementById(id);
+        if (s) s.style.display = '';
+    });
+    const nov2026 = document.getElementById('novedades2026Section');
+    if (nov2026) nov2026.style.display = '';
+    const contSec = document.getElementById('continueSection');
+    if (contSec && JSON.parse(localStorage.getItem('cc_history') || '[]').length) {
+        contSec.style.display = '';
+    }
+}
+
+// ── Búsqueda móvil ─────────────────────────────────────────
+async function performMobileSearch(q) {
+    const cont = document.getElementById('mobileSearchResults');
+    if (!cont) return;
+    if (!q.trim()) { cont.innerHTML = ''; return; }
+
+    cont.innerHTML = '<p class="no-content">Buscando…</p>';
+    try {
+        const data = await api.search(q);
+        if (!data.items.length) {
+            cont.innerHTML = '<p class="no-content">Sin resultados para "<em>' + q + '</em>"</p>';
+        } else {
+            cont.innerHTML = `<div class="movies-grid mso-grid">${data.items.map(renderCard).join('')}</div>`;
+        }
+    } catch {
+        cont.innerHTML = '<p class="no-content">Error en la búsqueda</p>';
+    }
 }
 
 // ── Inicialización ─────────────────────────────────────────
@@ -963,6 +1254,11 @@ async function init() {
 
         // Grid principal y filtros
         await Promise.all([loadGrid(), loadFilters()]);
+
+        // Secciones adicionales (en paralelo, no bloquean el init)
+        loadContinueWatching();
+        loadNovedades2026();
+        loadGenrePills();
 
         setupEvents();
     } catch (err) {
