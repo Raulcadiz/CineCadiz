@@ -44,6 +44,8 @@ _SERIE_GROUPS = [
     'serie', 'series', 'show', 'shows', 'novela', 'telenovela',
     'temporada', 'temporadas', 'dorama', 'anime', 'animacion',
     'animação', 'cartoon', 'docuseries',
+    'animados',   # "CLÁSICOS ANIMADOS", "ANIMADOS HD", etc.
+    'clasicos',   # "CLÁSICOS" con episodios numerados
 ]
 
 # Palabras en group-title que CONFIRMAN el tipo pelicula
@@ -51,6 +53,8 @@ _PELICULA_GROUPS = [
     'pelicula', 'peliculas', 'peli ', 'pelis',
     'movie', 'movies', 'film', 'films', 'cine', 'cinema',
     'documental', 'documentales', 'documentary',
+    'estrenos', 'estreno',   # "ESTRENOS 2021", "ESTRENO", etc.
+    'novedades', 'novedad',  # "NOVEDADES 2025"
 ]
 
 
@@ -105,7 +109,8 @@ def parse_extinf(line: str) -> dict:
             info['titulo'] = re.sub(r'\s*\(\d{4}\)\s*', ' ', info['titulo']).strip()
 
     # ── Detectar serie por patrón S01E01 en el título ─────────
-    se = re.search(r'[Ss](\d{1,2})[Ee](\d{1,3})', info['titulo'])
+    # Acepta: S01E01, S01.E01, S01-E01, S01 E01 (punto/guion/espacio como separador)
+    se = re.search(r'[Ss](\d{1,2})\s*[._-]?\s*[Ee](\d{1,3})', info['titulo'])
     if se:
         info['tipo'] = 'serie'
         if not info['temporada']:
@@ -185,6 +190,10 @@ _DEFAULT_VOD_CONFIRMED = [
     'serie', 'series', 'show', 'shows', 'temporada',
     'documental', 'documentales', 'documentary',
     'animacion', 'animación', 'anime', 'dorama',
+    'animados',              # "CLÁSICOS ANIMADOS"
+    'clasicos',              # "CLÁSICOS" (colecciones antiguas con episodios)
+    'estrenos', 'estreno',   # "ESTRENOS 2021"
+    'novedades', 'novedad',  # "NOVEDADES 2025"
     'vod',
 ]
 
@@ -321,7 +330,8 @@ def is_vod_content(item: dict, config) -> bool:
     # ── 5. Inclusión: título con año o patrón S/E ──────────────
     if re.search(r'\(\d{4}\)', titulo):
         return True
-    if re.search(r'[Ss]\d{1,2}[Ee]\d{1,3}', titulo):
+    # Acepta: S01E01, S01.E01, S01-E01, S01 E01
+    if re.search(r'[Ss]\d{1,2}\s*[._-]?\s*[Ee]\d{1,3}', titulo):
         return True
     if item.get('temporada') or item.get('episodio'):
         return True

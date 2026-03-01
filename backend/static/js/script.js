@@ -811,9 +811,11 @@ async function loadFilters() {
             el.yearFilter.appendChild(o);
         });
         // Sin límite de 40 — mostrar todos los géneros (ya vienen ordenados A-Z del API)
+        // o.value = valor RAW (mayúsculas, para que el filtro API funcione con LIKE)
+        // o.textContent = título capitalizado (presentación al usuario)
         generos.forEach(g => {
             const o = document.createElement('option');
-            o.value = g; o.textContent = g;
+            o.value = g; o.textContent = titleCase(g);
             el.genreFilter.appendChild(o);
         });
     } catch { /* silenciar */ }
@@ -1395,6 +1397,13 @@ async function loadNovedades2026() {
     } catch { /* silenciar */ }
 }
 
+// ── Utilidad: título capitalizado (para mostrar géneros limpios) ──
+function titleCase(str) {
+    // El API devuelve los géneros en MAYÚSCULAS (ej: "ACCIÓN", "CLÁSICOS ANIMADOS")
+    // Los mostramos en formato Título (primera letra de cada palabra en mayúscula)
+    return str.toLowerCase().replace(/(?:^|[\s\-])\S/g, c => c.toUpperCase());
+}
+
 // ── Genre Pills ────────────────────────────────────────────
 async function loadGenrePills() {
     try {
@@ -1405,8 +1414,10 @@ async function loadGenrePills() {
 
         // Mostrar solo los primeros 20 géneros más comunes (ya vienen del API)
         const top = generos.slice(0, 20);
+        // data-genre almacena el valor RAW (en mayúsculas) que se envía a la API para filtrar.
+        // El texto visible se convierte a Título para una presentación más limpia.
         pills.innerHTML = top.map(g =>
-            `<button class="genre-pill" data-genre="${g}">${g}</button>`
+            `<button class="genre-pill" data-genre="${g}">${titleCase(g)}</button>`
         ).join('');
         wrap.style.display = '';
     } catch { /* silenciar */ }

@@ -76,7 +76,13 @@ def get_contenido():
         query = query.filter_by(tipo=tipo)
 
     if genero:
-        query = query.filter(Contenido.genero.ilike(f'%{genero}%'))
+        # Buscar en el campo genero (ilike para ASCII) Y en group_title (like para Unicode)
+        query = query.filter(
+            or_(
+                Contenido.genero.ilike(f'%{genero}%'),
+                Contenido.group_title.like(f'%{genero}%'),
+            )
+        )
 
     if año and año.isdigit():
         query = query.filter_by(año=int(año))
@@ -151,6 +157,24 @@ def get_trending():
     return jsonify([i.to_dict() for i in items])
 
 
+def _clean_genre_text(text: str) -> str:
+    """
+    Limpia emojis y caracteres decorativos de textos de group-title.
+    Elimina: emojis, flechas (⏩⏪), llaves decorativas, asteriscos, etc.
+    Elimina también años de 4 dígitos (ej: "ESTRENOS 2021" → "ESTRENOS").
+    Conserva: letras (incluidas las acentuadas), dígitos no-año, espacios, guiones.
+    Devuelve el texto en mayúsculas para que el LIKE en SQLite lo encuentre
+    directamente en el group_title original (que también suele ser mayúsculas).
+    """
+    # Conservar solo letras unicode, dígitos, espacios, guiones y paréntesis
+    cleaned = _re.sub(r'[^\w\s\-\(\)]', ' ', text)
+    # Eliminar números de 4 dígitos que parecen años (2000-2029)
+    cleaned = _re.sub(r'\b20[0-2]\d\b', '', cleaned)
+    cleaned = _re.sub(r'\b19\d{2}\b', '', cleaned)
+    # Normalizar espacios y convertir a mayúsculas (para coincidir con group_title)
+    return ' '.join(cleaned.split()).upper()
+
+
 @api_bp.get('/generos')
 def get_generos():
     """Lista de géneros únicos disponibles."""
@@ -168,22 +192,25 @@ def get_generos():
                 generos.add(cleaned)
 
     # Si hay muy pocos géneros, usar group_title como fallback
+    # Solo de contenido NO-live (excluye grupos de canales de TV)
     _SKIP = {
-        'vod spain', 'vod', 'series', 'peliculas', 'movies', 'live tv', 'live',
-        'adult', 'xxx', 'sports', 'news', 'kids', 'entertainment', 'general',
-        'undefined', 'uk', 'us', 'es', 'latino', 'español', 'english',
+        'VOD', 'VOD SPAIN', 'SERIES', 'PELICULAS', 'MOVIES', 'LIVE TV', 'LIVE',
+        'ADULT', 'XXX', 'SPORTS', 'NEWS', 'KIDS', 'ENTERTAINMENT', 'GENERAL',
+        'UNDEFINED', 'UK', 'US', 'ES', 'LATINO', 'ESPANOL', 'ENGLISH',
+        'TV', 'TDT', 'RADIO', 'CANAL', 'CANALES', 'CHANNEL', 'CHANNELS',
+        'MUSIC', 'MUSICA', 'DEPORTES', 'NOTICIAS',
     }
     if len(generos) < 5:
         rows2 = db.session.query(Contenido.group_title).filter(
             Contenido.activo == True,
+            Contenido.tipo != 'live',   # excluir grupos de canales en directo
             Contenido.group_title != None,
             Contenido.group_title != '',
         ).distinct().all()
         for (g,) in rows2:
-            for part in _re.split(r'[|,/]', g):
-                cleaned = part.strip()
-                if cleaned.lower() not in _SKIP and 2 < len(cleaned) <= 50:
-                    generos.add(cleaned)
+            cleaned = _clean_genre_text(g)
+            if cleaned and cleaned not in _SKIP and 2 < len(cleaned) <= 50:
+                generos.add(cleaned)
 
     return jsonify(sorted(generos))
 
