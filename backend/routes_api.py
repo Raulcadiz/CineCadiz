@@ -167,7 +167,148 @@ def get_generos():
             if cleaned:
                 generos.add(cleaned)
 
+    # Si hay muy pocos géneros, usar group_title como fallback
+    _SKIP = {
+        'vod spain', 'vod', 'series', 'peliculas', 'movies', 'live tv', 'live',
+        'adult', 'xxx', 'sports', 'news', 'kids', 'entertainment', 'general',
+        'undefined', 'uk', 'us', 'es', 'latino', 'español', 'english',
+    }
+    if len(generos) < 5:
+        rows2 = db.session.query(Contenido.group_title).filter(
+            Contenido.activo == True,
+            Contenido.group_title != None,
+            Contenido.group_title != '',
+        ).distinct().all()
+        for (g,) in rows2:
+            for part in _re.split(r'[|,/]', g):
+                cleaned = part.strip()
+                if cleaned.lower() not in _SKIP and 2 < len(cleaned) <= 50:
+                    generos.add(cleaned)
+
     return jsonify(sorted(generos))
+
+
+# ── Helper para extraer título base de serie ───────────────
+
+def _get_base_title(title: str) -> str:
+    """Elimina info de temporada/episodio del título para agrupar series."""
+    _EP_PATTERNS = [
+        r'\s+[Ss]\d{1,3}\s*[Ee]\d{1,3}.*$',          # S01E01, S1E1
+        r'\s+\d{1,2}[xX]\d{1,3}.*$',                  # 1x01, 2x10
+        r'\s+[-–]\s*[Ss]eason\s*\d+.*$',               # - Season 1
+        r'\s+[-–]\s*[Tt]emporada\s*\d+.*$',            # - Temporada 1
+        r'\s+[Tt]\d+\s*[Ee]\d+.*$',                    # T1E01
+        r'\s+[-–:]\s*[Cc]ap[íi]tulo\s*\d+.*$',        # - Capitulo 1
+        r'\s+[-–:]\s*[Ee]p(?:isodio|isode)?\.?\s*\d+.*$',  # Episodio / Episode 1
+        r'\s+[-–:]\s*\d+$',                             # trailing number
+    ]
+    result = title.strip()
+    for p in _EP_PATTERNS:
+        new = _re.sub(p, '', result, flags=_re.IGNORECASE).strip(' -–:')
+        if new:
+            result = new
+    return result or title.strip()
+
+
+@api_bp.get('/series-agrupadas')
+def get_series_agrupadas():
+    """
+    Series agrupadas por título base (un ítem por serie).
+    Devuelve: título, imagen, año, géneros, nº temporadas, nº episodios.
+    """
+    page     = max(1, request.args.get('page', 1, type=int))
+    per_page = min(request.args.get('limit', 24, type=int), 100)
+    q        = request.args.get('q', '').strip()
+    genero   = request.args.get('genero', '').strip()
+    sort     = request.args.get('sort', 'title_asc')
+
+    base_q = Contenido.query.filter_by(activo=True, tipo='serie')
+    if q:
+        base_q = base_q.filter(Contenido.titulo.ilike(f'%{q}%'))
+    if genero:
+        base_q = base_q.filter(
+            or_(Contenido.genero.ilike(f'%{genero}%'),
+                Contenido.group_title.ilike(f'%{genero}%'))
+        )
+
+    all_eps = base_q.all()
+
+    groups: dict = {}
+    for ep in all_eps:
+        base = _get_base_title(ep.titulo)
+        if base not in groups:
+            groups[base] = {
+                'first_id':   ep.id,
+                'image':      ep.imagen or '',
+                'year':       ep.año,
+                'genres':     [],
+                'seasons':    set(),
+                'ep_count':   0,
+                'group_title': ep.group_title or '',
+                'added_at':   ep.fecha_agregado,
+                'source':     ep.fuente,
+            }
+        g = groups[base]
+        g['ep_count'] += 1
+        if ep.temporada:
+            g['seasons'].add(ep.temporada)
+        if ep.imagen and not g['image']:
+            g['image'] = ep.imagen
+        if ep.año and not g['year']:
+            g['year'] = ep.año
+        if ep.genero and not g['genres']:
+            g['genres'] = [x.strip() for x in ep.genero.split(',') if x.strip()]
+        if ep.fecha_agregado and (
+            not g['added_at'] or ep.fecha_agregado > g['added_at']
+        ):
+            g['added_at'] = ep.fecha_agregado
+
+    series_list = []
+    for base_title, data in groups.items():
+        series_list.append({
+            'id':           data['first_id'],
+            'title':        base_title,
+            'type':         'series',
+            'source':       data['source'],
+            'streamUrl':    '',
+            'image':        data['image'],
+            'year':         data['year'],
+            'genres':       data['genres'],
+            'seasonCount':  len(data['seasons']) or 1,
+            'episodeCount': data['ep_count'],
+            'groupTitle':   data['group_title'],
+            'addedAt':      data['added_at'].isoformat() if data['added_at'] else None,
+        })
+
+    if sort == 'recent':
+        series_list.sort(key=lambda x: x.get('addedAt') or '', reverse=True)
+    else:
+        series_list.sort(key=lambda x: x['title'].lower())
+
+    total = len(series_list)
+    start = (page - 1) * per_page
+    items = series_list[start:start + per_page]
+
+    return jsonify({
+        'items':    items,
+        'total':    total,
+        'page':     page,
+        'pages':    max(1, (total + per_page - 1) // per_page),
+        'per_page': per_page,
+    })
+
+
+@api_bp.get('/serie-episodios')
+def get_serie_episodios():
+    """Devuelve todos los episodios de una serie dado su título base."""
+    titulo = request.args.get('titulo', '').strip()
+    if not titulo:
+        return jsonify([])
+
+    all_eps = Contenido.query.filter_by(activo=True, tipo='serie').all()
+    episodes = [ep.to_dict() for ep in all_eps if _get_base_title(ep.titulo) == titulo]
+    episodes.sort(key=lambda x: (x.get('season') or 99, x.get('episode') or 99))
+    return jsonify(episodes)
 
 
 @api_bp.get('/anos')

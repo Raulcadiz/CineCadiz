@@ -1053,3 +1053,295 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
     .player-thumb { width: 26px; height: 38px; }
     .mso-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   MEJORAS NETFLIX — añadidas
+   ═══════════════════════════════════════════════════════════ */
+
+/* Título de sección con acento rojo izquierdo */
+.section-title {
+    padding-left: .7rem;
+    border-left: 3px solid var(--primary);
+}
+
+/* Hover más dramático en tarjetas */
+.movie-card:hover {
+    transform: translateY(-8px) scale(1.04);
+    box-shadow: 0 24px 56px rgba(0,0,0,.85);
+}
+
+/* Badge para series — muestra temporadas/episodios */
+.series-ep-badge {
+    position: absolute;
+    bottom: 8px; right: 8px;
+    background: rgba(0,0,0,.82);
+    color: rgba(255,255,255,.9);
+    font-size: .62rem;
+    font-weight: 700;
+    padding: .15rem .45rem;
+    border-radius: 4px;
+    z-index: 3;
+    letter-spacing: .03em;
+}
+
+/* Tarjeta series: botón "Ver episodios" */
+.btn-series-open {
+    background: rgba(255,255,255,.15) !important;
+    border: 1.5px solid rgba(255,255,255,.4) !important;
+}
+.btn-series-open:hover {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Modal de Series — layout completo con hero + tabs + grid
+   ───────────────────────────────────────────────────────── */
+.series-modal .modal-content.series-modal-content {
+    max-width: 900px;
+    width: 94%;
+    max-height: 88vh;
+    overflow-y: auto;
+    background: #181818;
+    padding: 0;
+    border-radius: var(--radius);
+}
+
+/* Scrollbar dentro del modal */
+.series-modal-content::-webkit-scrollbar { width: 6px; }
+.series-modal-content::-webkit-scrollbar-track { background: #111; }
+.series-modal-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,.2); border-radius:3px; }
+
+/* Hero de la serie — imagen de fondo con gradiente */
+.series-hero {
+    width: 100%;
+    min-height: 260px;
+    background-size: cover;
+    background-position: center top;
+    position: relative;
+    border-radius: var(--radius) var(--radius) 0 0;
+    overflow: hidden;
+}
+.series-hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(
+        to bottom,
+        rgba(0,0,0,.35) 0%,
+        rgba(24,24,24,.95) 85%,
+        #181818 100%
+    );
+    z-index: 1;
+}
+.series-hero-content {
+    position: relative; z-index: 2;
+    padding: 1.8rem 2rem 1.4rem;
+    display: flex;
+    gap: 1.4rem;
+    align-items: flex-end;
+}
+.series-hero-poster {
+    flex-shrink: 0;
+    width: 110px;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.7);
+    display: block;
+}
+.series-hero-info { flex: 1; }
+.series-hero-info h2 {
+    font-size: 1.8rem;
+    font-weight: 900;
+    line-height: 1.15;
+    margin-bottom: .5rem;
+    text-shadow: 0 2px 8px rgba(0,0,0,.6);
+}
+.series-stats {
+    display: flex;
+    gap: .8rem;
+    flex-wrap: wrap;
+    font-size: .82rem;
+    color: rgba(255,255,255,.7);
+    margin-bottom: .7rem;
+    align-items: center;
+}
+.series-stats .stat-pill {
+    background: rgba(255,255,255,.12);
+    padding: .15rem .55rem;
+    border-radius: 12px;
+    font-weight: 600;
+    color: #fff;
+}
+
+/* ── Season tabs ── */
+.season-tabs-bar {
+    display: flex;
+    gap: .5rem;
+    padding: 1rem 1.5rem .6rem;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.season-tabs-bar::-webkit-scrollbar { display: none; }
+
+.season-tab {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.25);
+    color: rgba(255,255,255,.65);
+    padding: .35rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: .82rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all .2s ease;
+    flex-shrink: 0;
+}
+.season-tab:hover { border-color: rgba(255,255,255,.5); color: #fff; }
+.season-tab.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+/* ── Episodes grid ── */
+.season-panel { display: none; padding: 1.2rem 1.5rem 1.5rem; }
+.season-panel.active { display: block; }
+
+.episodes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: .9rem;
+}
+
+/* Tarjeta de episodio */
+.episode-card {
+    background: rgba(255,255,255,.05);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform .22s ease, box-shadow .22s ease, background .2s;
+}
+.episode-card:hover {
+    transform: scale(1.04);
+    box-shadow: 0 10px 30px rgba(0,0,0,.6);
+    background: rgba(255,255,255,.1);
+}
+
+/* Thumbnail con ratio 16:9 */
+.ep-thumb-wrap {
+    position: relative;
+    padding-top: 56.25%;
+    background: #111;
+    overflow: hidden;
+}
+.ep-thumb-wrap img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transition: transform .3s ease;
+}
+.episode-card:hover .ep-thumb-wrap img { transform: scale(1.06); }
+
+/* Play overlay */
+.ep-play-overlay {
+    position: absolute; inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,.55);
+    opacity: 0;
+    transition: opacity .2s ease;
+    font-size: 2.2rem;
+    color: #fff;
+}
+.episode-card:hover .ep-play-overlay { opacity: 1; }
+
+/* Episodio badge S01E01 */
+.ep-badge {
+    position: absolute;
+    bottom: 6px; left: 6px;
+    background: rgba(0,0,0,.75);
+    color: rgba(255,255,255,.85);
+    font-size: .6rem;
+    font-weight: 700;
+    padding: .1rem .35rem;
+    border-radius: 3px;
+    letter-spacing: .04em;
+}
+
+/* Info del episodio */
+.ep-info {
+    padding: .5rem .6rem .6rem;
+}
+.ep-title {
+    font-size: .78rem;
+    font-weight: 500;
+    color: rgba(255,255,255,.88);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ep-num-label {
+    font-size: .68rem;
+    color: var(--text-muted);
+    margin-top: .15rem;
+}
+
+/* ── Responsive series modal ── */
+@media (max-width: 768px) {
+    .series-hero-content { flex-direction: column; gap: .8rem; align-items: flex-start; }
+    .series-hero-poster { width: 80px; }
+    .series-hero-info h2 { font-size: 1.35rem; }
+    .episodes-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: .65rem; }
+    .season-tabs-bar { padding: .7rem 1rem .5rem; }
+    .season-panel { padding: .8rem 1rem 1.2rem; }
+}
+@media (max-width: 480px) {
+    .episodes-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ─────────────────────────────────────────────────────────
+   Sección Géneros en header — mejora visual
+   ───────────────────────────────────────────────────────── */
+.genre-pills-wrap {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    padding: .6rem .8rem;
+    margin-bottom: 1.2rem;
+    border: 1px solid var(--border);
+}
+
+/* ─────────────────────────────────────────────────────────
+   Botón "Ver episodios" en overlay de serie
+   ───────────────────────────────────────────────────────── */
+.series-modal .close-modal {
+    position: sticky;
+    top: 12px;
+    float: right;
+    margin: 12px 16px 0 0;
+    z-index: 20;
+}
+
+/* "Ver todas" en secciones de carruseles */
+.ver-todas {
+    background: rgba(255,255,255,.08);
+    padding: .25rem .75rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,.12);
+    transition: background var(--transition), border-color var(--transition);
+}
+.ver-todas:hover {
+    background: rgba(255,255,255,.15);
+    border-color: rgba(255,255,255,.25);
+    color: #fff;
+}
+
+/* Botón de play en hero más pulido */
+.btn-play {
+    box-shadow: 0 4px 16px rgba(229,9,20,.4);
+}
+
+/* Modal overlay más oscuro */
+.modal {
+    background: rgba(0,0,0,.88);
+}

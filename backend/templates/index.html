@@ -63,8 +63,8 @@
                 <a href="#movies" data-type="pelicula">Películas</a>
                 <a href="#series" data-type="serie">Series</a>
                 <a href="#live" data-type="live">En Directo</a>
-                <a href="#genres">Géneros</a>
-                <a href="#novedades">Novedades</a>
+                <a href="#generos-link" id="generosNavLink">Géneros</a>
+                <a href="#novedades" id="novedadesNavLink">Novedades</a>
             </nav>
         </div>
 
@@ -194,6 +194,16 @@
             <div class="modal-content">
                 <span class="close-modal">&times;</span>
                 <div id="modalBody"></div>
+            </div>
+        </div>
+
+        <!-- Modal Series — episodios agrupados por temporada -->
+        <div class="modal series-modal" id="seriesModal">
+            <div class="modal-content series-modal-content">
+                <span class="close-modal">&times;</span>
+                <div id="seriesModalBody">
+                    <div class="no-content">Cargando…</div>
+                </div>
             </div>
         </div>
 

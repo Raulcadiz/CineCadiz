@@ -54,7 +54,7 @@ const api = {
 
     trending: () => api.get('trending', { limit: 20 }),
     peliculas: (page = 1) => api.get('contenido', { tipo: 'pelicula', page, limit: 12 }),
-    series:    (page = 1) => api.get('contenido', { tipo: 'serie',    page, limit: 12 }),
+    series:    (page = 1) => api.get('series-agrupadas', { page, limit: 12 }),
     live:      (page = 1) => api.get('contenido', { tipo: 'live',     page, limit: 12 }),
     generos:   ()         => api.get('generos'),
     años:      ()         => api.get('anos'),   // endpoint sin tilde
@@ -63,6 +63,8 @@ const api = {
     search: (q) => api.get('contenido', { q, limit: 8 }),
 
     contenido: (params) => api.get('contenido', params),
+    seriesAgrupadas: (params) => api.get('series-agrupadas', params),
+    serieEpisodios: (titulo) => api.get('serie-episodios', { titulo }),
 
     item: (id) => api.get(`contenido/${id}`),
 };
@@ -93,6 +95,11 @@ function isFav(id) {
 }
 
 function renderCard(item) {
+    // Series agrupadas → tarjeta especial con selector de episodios
+    if (item.episodeCount !== undefined) {
+        return renderSeriesCard(item);
+    }
+
     const fav = isFav(item.id);
     const typeIcon = item.type === 'movie' ? '🎬' : item.type === 'live' ? '📡' : '📺';
     const epBadge = item.season
@@ -135,6 +142,77 @@ function renderCard(item) {
                 <i class="bi ${fav ? 'bi-heart-fill' : 'bi-heart'}"></i>
             </button>
             <p class="movie-genres">${(item.genres || []).slice(0,2).join(', ') || 'Sin género'}</p>
+        </div>
+    </div>`;
+}
+
+/** Tarjeta para series agrupadas (muestra temporadas + episodios). */
+function renderSeriesCard(series) {
+    const fav = isFav(series.id);
+    const imgSrc = series.image || PLACEHOLDER;
+    const seasons = series.seasonCount || 1;
+    const eps     = series.episodeCount || 0;
+    const badge   = seasons > 1
+        ? `${seasons} Temp. · ${eps} Ep.`
+        : `${eps} Episodio${eps !== 1 ? 's' : ''}`;
+
+    const encodedTitle = encodeURIComponent(series.title);
+
+    return `
+    <div class="movie-card series-card"
+         data-id="${series.id}"
+         data-series-title="${encodedTitle}">
+        <div class="card-img-wrap">
+            <img src="${imgSrc}"
+                 alt="${series.title}"
+                 loading="lazy"
+                 onerror="this.src='${PLACEHOLDER}'">
+            <span class="series-ep-badge">📺 ${badge}</span>
+        </div>
+        <div class="movie-info">
+            <h3 class="movie-title">${series.title}</h3>
+            <div class="movie-meta">
+                <span>${series.year || ''}</span>
+                <span>📺 Serie</span>
+            </div>
+        </div>
+        <div class="movie-overlay">
+            <button class="btn-watch btn-series-open"
+                    data-series-title="${encodedTitle}">
+                <i class="bi bi-collection-play"></i> Ver episodios
+            </button>
+            <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${series.id}">
+                <i class="bi ${fav ? 'bi-heart-fill' : 'bi-heart'}"></i>
+            </button>
+            <p class="movie-genres">${(series.genres || []).slice(0,2).join(', ') || 'Serie'}</p>
+        </div>
+    </div>`;
+}
+
+/** Tarjeta de episodio dentro del modal de serie. */
+function renderEpisodeCard(ep) {
+    const imgSrc   = getImageUrl(ep);
+    const epLabel  = (ep.season && ep.episode)
+        ? `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`
+        : '';
+    const encStream = encodeURIComponent(ep.streamUrl);
+    const encImg    = encodeURIComponent(imgSrc);
+
+    return `
+    <div class="episode-card"
+         data-stream="${encStream}"
+         data-source="${ep.source || 'm3u'}"
+         data-title="${ep.title}"
+         data-id="${ep.id}"
+         data-image="${encImg}">
+        <div class="ep-thumb-wrap">
+            <img src="${imgSrc}" alt="${ep.title}" loading="lazy" onerror="this.src='${PLACEHOLDER}'">
+            <div class="ep-play-overlay"><i class="bi bi-play-circle-fill"></i></div>
+            ${epLabel ? `<span class="ep-badge">${epLabel}</span>` : ''}
+        </div>
+        <div class="ep-info">
+            <p class="ep-title">${ep.title}</p>
+            ${epLabel ? `<p class="ep-num-label">${epLabel}</p>` : ''}
         </div>
     </div>`;
 }
@@ -235,6 +313,107 @@ async function showDetails(id) {
         el.detailsModal.style.display = 'flex';
     } catch {
         showNotification('Error al cargar los detalles', 'error');
+    }
+}
+
+// ── Modal de serie: temporadas y episodios ──────────────────
+async function showSeriesDetail(baseTitle) {
+    const modal = document.getElementById('seriesModal');
+    const body  = document.getElementById('seriesModalBody');
+    if (!modal || !body) return;
+
+    modal.style.display = 'flex';
+    body.innerHTML = '<p class="no-content" style="padding:2rem">Cargando episodios…</p>';
+
+    try {
+        const episodes = await api.serieEpisodios(baseTitle);
+        if (!episodes.length) {
+            body.innerHTML = '<p class="no-content" style="padding:2rem">No se encontraron episodios.</p>';
+            return;
+        }
+
+        // Agrupar por temporada
+        const seasons = {};
+        episodes.forEach(ep => {
+            const s = ep.season || 1;
+            if (!seasons[s]) seasons[s] = [];
+            seasons[s].push(ep);
+        });
+        const seasonKeys = Object.keys(seasons).map(Number).sort((a, b) => a - b);
+
+        // Datos para el hero (primer episodio con imagen)
+        const heroEp   = episodes.find(e => e.image) || episodes[0];
+        const heroImg  = heroEp.image ? getImageUrl(heroEp) : PLACEHOLDER;
+        const totalEps = episodes.length;
+        const genreHtml = (heroEp.genres || [])
+            .map(g => `<span class="genre-tag">${g}</span>`).join('');
+
+        body.innerHTML = `
+        <div class="series-hero"
+             style="background-image:url('${heroImg}')">
+            <div class="series-hero-content">
+                <img class="series-hero-poster"
+                     src="${heroImg}"
+                     alt="${baseTitle}"
+                     onerror="this.style.display='none'">
+                <div class="series-hero-info">
+                    <h2>${baseTitle}</h2>
+                    <div class="series-stats">
+                        ${heroEp.year ? `<span>${heroEp.year}</span>` : ''}
+                        <span class="stat-pill">${seasonKeys.length} Temp.</span>
+                        <span class="stat-pill">${totalEps} Episodios</span>
+                    </div>
+                    <div class="modal-genres">${genreHtml}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="season-tabs-bar">
+            ${seasonKeys.map((s, i) => `
+                <button class="season-tab ${i === 0 ? 'active' : ''}"
+                        data-season="${s}">
+                    Temporada ${s}
+                </button>
+            `).join('')}
+        </div>
+
+        ${seasonKeys.map((s, i) => `
+            <div class="season-panel ${i === 0 ? 'active' : ''}"
+                 data-season="${s}">
+                <div class="episodes-grid">
+                    ${seasons[s].map(renderEpisodeCard).join('')}
+                </div>
+            </div>
+        `).join('')}`;
+
+        // Cambio de temporada
+        body.querySelectorAll('.season-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                body.querySelectorAll('.season-tab').forEach(t => t.classList.remove('active'));
+                body.querySelectorAll('.season-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                body.querySelector(`.season-panel[data-season="${tab.dataset.season}"]`)
+                    ?.classList.add('active');
+            });
+        });
+
+        // Reproducir episodio al hacer click en la tarjeta
+        body.querySelectorAll('.episode-card').forEach(card => {
+            card.addEventListener('click', () => {
+                modal.style.display = 'none';
+                playStream(
+                    card.dataset.stream,
+                    card.dataset.title,
+                    card.dataset.source || 'm3u',
+                    card.dataset.id,
+                    card.dataset.image,
+                );
+            });
+        });
+
+    } catch (err) {
+        console.error('showSeriesDetail error:', err);
+        body.innerHTML = '<p class="no-content" style="padding:2rem">Error al cargar los episodios.</p>';
     }
 }
 
@@ -560,19 +739,29 @@ async function loadGrid(append = false) {
     }
 
     try {
-        const data = await api.contenido({
-            tipo:   state.currentType,
-            año:    state.currentYear,
-            genero: state.currentGenre,
-            sort:   state.currentSort || 'recent',
-            page:   state.currentPage,
-            limit:  24,
-        });
+        let data;
+        if (state.currentType === 'serie') {
+            // Series → mostrar agrupadas por título (no episodios individuales)
+            data = await api.seriesAgrupadas({
+                genero: state.currentGenre,
+                sort:   state.currentSort === 'recent' ? 'recent' : 'title_asc',
+                page:   state.currentPage,
+                limit:  24,
+            });
+        } else {
+            data = await api.contenido({
+                tipo:   state.currentType,
+                año:    state.currentYear,
+                genero: state.currentGenre,
+                sort:   state.currentSort || 'recent',
+                page:   state.currentPage,
+                limit:  24,
+            });
+        }
 
         renderGrid(data.items, append);
 
         const hasMore = state.currentPage < data.pages;
-        // data-has-more lo usa el IntersectionObserver para saber si quedan páginas
         el.loadMore.dataset.hasMore = hasMore ? 'true' : 'false';
     } catch {
         if (!append) el.moviesGrid.innerHTML = '<p class="no-content">Error al cargar contenido</p>';
@@ -668,7 +857,24 @@ function setView(type) {
 function setupEvents() {
     // Delegación de clicks en cards / botones
     document.addEventListener('click', e => {
-        // Click en tarjeta → abrir detalles
+        // Botón "Ver episodios" de serie agrupada
+        const seriesBtn = e.target.closest('.btn-series-open');
+        if (seriesBtn) {
+            e.stopPropagation();
+            const t = seriesBtn.dataset.seriesTitle;
+            if (t) showSeriesDetail(decodeURIComponent(t));
+            return;
+        }
+
+        // Click en tarjeta de serie agrupada → abrir modal de episodios
+        const seriesCard = e.target.closest('.series-card');
+        if (seriesCard && !e.target.closest('button')) {
+            const t = seriesCard.dataset.seriesTitle;
+            if (t) showSeriesDetail(decodeURIComponent(t));
+            return;
+        }
+
+        // Click en tarjeta normal → abrir detalles
         const card = e.target.closest('.movie-card');
         if (card && !e.target.closest('button')) {
             showDetails(card.dataset.id);
@@ -712,9 +918,19 @@ function setupEvents() {
             return;
         }
 
-        // Cerrar modal
-        if (e.target === el.detailsModal || e.target.classList.contains('close-modal')) {
+        // Cerrar cualquier modal
+        if (e.target.classList.contains('close-modal')) {
             el.detailsModal.style.display = 'none';
+            const sm = document.getElementById('seriesModal');
+            if (sm) sm.style.display = 'none';
+            return;
+        }
+        if (e.target === el.detailsModal) {
+            el.detailsModal.style.display = 'none';
+        }
+        const sm = document.getElementById('seriesModal');
+        if (sm && e.target === sm) {
+            sm.style.display = 'none';
         }
     });
 
@@ -860,6 +1076,8 @@ function setupEvents() {
             }
         } else if (!playerOpen && e.key === 'Escape') {
             el.detailsModal.style.display = 'none';
+            const sm = document.getElementById('seriesModal');
+            if (sm) sm.style.display = 'none';
         }
     });
 
@@ -959,12 +1177,45 @@ function setupEvents() {
         });
     });
 
-    // ── Novedades: scroll a la sección ───────────────────────
-    document.querySelectorAll('a[href="#novedades"]').forEach(link => {
+    // ── Novedades: resetea vista y muestra tendencias ─────────
+    document.querySelectorAll('a[href="#novedades"], #novedadesNavLink').forEach(link => {
         link.addEventListener('click', e => {
             e.preventDefault();
-            document.getElementById('novedades')?.scrollIntoView({ behavior: 'smooth' });
+            // Asegurarse de que la vista home esté activa (puede estar en películas/series)
+            state.currentType  = '';
+            state.currentPage  = 1;
+            state.currentYear  = '';
+            state.currentGenre = '';
+            if (el.typeFilter)  el.typeFilter.value  = '';
+            if (el.yearFilter)  el.yearFilter.value  = '';
+            if (el.genreFilter) el.genreFilter.value = '';
+            hideFavoritesSection();
+            setView('');
+            // Scroll a la sección tendencias
+            setTimeout(() => {
+                const sec = document.getElementById('novedades')?.closest('section');
+                if (sec) sec.scrollIntoView({ behavior: 'smooth' });
+            }, 120);
+            document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
         });
+    });
+
+    // ── Géneros: scroll a la sección de pills ─────────────────
+    document.getElementById('generosNavLink')?.addEventListener('click', e => {
+        e.preventDefault();
+        state.currentType  = '';
+        if (el.typeFilter) el.typeFilter.value = '';
+        hideFavoritesSection();
+        setView('');
+        setTimeout(() => {
+            const wrap = document.getElementById('genrePillsWrap');
+            if (wrap) {
+                wrap.style.display = '';
+                wrap.scrollIntoView({ behavior: 'smooth' });
+            } else {
+                document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
+            }
+        }, 120);
     });
 
     // ── Fullscreen button en cabecera del player ──────────────
