@@ -848,13 +848,10 @@ function setView(type) {
         }
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-        // Vista de tipo: ocultar hero, novedades extra y carruseles de otros tipos
-        [hero, novedSec, nov2026Sec, contSec].forEach(s => {
+        // Vista de tipo: ocultar hero, novedades y TODOS los carruseles.
+        // El grid (#movies) muestra el contenido completo del tipo seleccionado.
+        [hero, novedSec, nov2026Sec, contSec, pelSec, serSec, liveSec].forEach(s => {
             if (s) s.style.display = 'none';
-        });
-        const map = { pelicula: pelSec, serie: serSec, live: liveSec };
-        Object.entries(map).forEach(([t, s]) => {
-            if (s) s.style.display = (t === type) ? '' : 'none';
         });
         document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
     }
@@ -1151,10 +1148,19 @@ function setupEvents() {
         link.addEventListener('click', e => {
             e.preventDefault();
             const type = link.dataset.type;
-            state.currentType = type;
+            state.currentType  = type;
             state.currentPage  = 1;
-            if (el.typeFilter) el.typeFilter.value = type;
-            setView(type);     // ocultar otras secciones, mostrar sólo la de este tipo
+            // Resetear filtros al cambiar de tipo para evitar grids vacíos
+            state.currentYear  = '';
+            state.currentGenre = '';
+            state.currentSort  = 'recent';
+            if (el.typeFilter)  el.typeFilter.value  = type;
+            if (el.yearFilter)  el.yearFilter.value  = '';
+            if (el.genreFilter) el.genreFilter.value = '';
+            const sf = document.getElementById('sortFilter');
+            if (sf) sf.value = 'recent';
+            document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
+            setView(type);     // ocultar hero, novedades y carruseles; mostrar sólo el grid
             loadGrid();
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
             document.querySelectorAll(`a[data-type="${type}"]`).forEach(n => n.classList.add('active'));

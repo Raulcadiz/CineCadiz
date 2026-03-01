@@ -244,10 +244,48 @@
 
 {% block scripts %}
 <script>
-// Auto-refrescar la página si hay listas pendientes de importar
-const hasPending = document.querySelector('.badge-status-warn');
-if (hasPending) {
-    setTimeout(() => location.reload(), 8000);
-}
+// Auto-refrescar vía AJAX cuando hay listas pendientes de importar.
+// Evita recargas infinitas con un límite máximo de intentos.
+(function() {
+    const pendingBadges = document.querySelectorAll('.badge-status-warn');
+    if (!pendingBadges.length) return;
+
+    // Extraer IDs de las listas pendientes desde el id del <tr>
+    const pendingIds = [...pendingBadges].map(b => {
+        const row = b.closest('tr[id]');
+        return row ? row.id.replace('lista-row-', '') : null;
+    }).filter(Boolean);
+
+    if (!pendingIds.length) return;
+
+    let pollCount = 0;
+    const maxPolls = 50;   // ~6 min máx (50 × 7.5 s)
+    const pollInterval = 7500;
+
+    function pollStatus() {
+        if (pollCount++ >= maxPolls) {
+            // Seguridad: tras 6 min forzamos una sola recarga
+            location.reload();
+            return;
+        }
+
+        Promise.all(pendingIds.map(id =>
+            fetch(`/admin/api/listas/${id}/status`)
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null)
+        )).then(results => {
+            const allDone = results.every(r => r && r.ultima_actualizacion);
+            if (allDone) {
+                location.reload();   // recarga única al terminar
+            } else {
+                setTimeout(pollStatus, pollInterval);
+            }
+        }).catch(() => {
+            setTimeout(pollStatus, pollInterval);
+        });
+    }
+
+    setTimeout(pollStatus, pollInterval);
+})();
 </script>
 {% endblock %}

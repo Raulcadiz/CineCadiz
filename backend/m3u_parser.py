@@ -278,6 +278,12 @@ def is_spanish(item: dict, config) -> bool:
             if kw_n in group:
                 return True
 
+    # 4. Sin etiqueta de idioma ni país → asumir español.
+    #    Muchas listas IPTV en español no incluyen tvg-language ni tvg-country;
+    #    sería incorrecto descartarlas con el filtro "Solo español".
+    if not lang and not country:
+        return True
+
     return False
 
 
