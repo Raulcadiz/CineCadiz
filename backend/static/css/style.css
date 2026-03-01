@@ -1345,3 +1345,18 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
 .modal {
     background: rgba(0,0,0,.88);
 }
+
+/* ─────────────────────────────────────────────────────────
+   Genre Pills — sección superior (antes de los carruseles)
+   ───────────────────────────────────────────────────────── */
+.genre-pills-top {
+    padding: .5rem var(--content-padding, 4%);
+    margin: 0 0 .5rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+}
+.genre-pills-top .genre-pill {
+    font-size: .82rem;
+    padding: .3rem .85rem;
+}

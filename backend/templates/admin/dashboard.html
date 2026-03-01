@@ -4,11 +4,18 @@
 {% block content %}
 <div class="topbar">
     <h1><i class="bi bi-grid-1x2-fill me-2 text-danger"></i>Dashboard</h1>
+    <button class="btn btn-outline-info btn-sm me-1" id="btnReclassify"
+            title="Reclasifica series/películas mal etiquetadas en la base de datos (útil tras actualizar el parser)">
+        <i class="bi bi-arrow-repeat"></i> Reclasificar contenido
+    </button>
     <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#scanModal">
         <i class="bi bi-radar"></i> Escanear links
         {% if scan_state.running %}<span class="spinner-border spinner-border-sm ms-1"></span>{% endif %}
     </button>
 </div>
+
+<!-- Resultado reclasificación -->
+<div id="reclassifyAlert" class="alert alert-info mb-3 py-2 small" style="display:none"></div>
 
 <!-- Resultado último scan -->
 {% if scan_state.last_result and not scan_state.running %}
@@ -187,5 +194,31 @@
         .catch(() => setTimeout(poll, 8000));
 })();
 {% endif %}
+
+// Botón "Reclasificar contenido"
+document.getElementById('btnReclassify')?.addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Reclasificando…';
+    const alert = document.getElementById('reclassifyAlert');
+    alert.style.display = 'none';
+
+    fetch('/admin/reclassify', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            alert.className = d.ok ? 'alert alert-success mb-3 py-2 small' : 'alert alert-danger mb-3 py-2 small';
+            alert.textContent = d.msg || JSON.stringify(d);
+            alert.style.display = '';
+            // Recargar la página tras 2s para actualizar las estadísticas
+            setTimeout(() => location.reload(), 2000);
+        })
+        .catch(err => {
+            alert.className = 'alert alert-danger mb-3 py-2 small';
+            alert.textContent = 'Error: ' + err;
+            alert.style.display = '';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Reclasificar contenido';
+        });
+});
 </script>
 {% endblock %}

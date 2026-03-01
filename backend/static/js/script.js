@@ -733,15 +733,16 @@ async function loadGrid(append = false) {
                 pelicula: '🎬 Películas',
                 serie:    '📺 Series',
                 live:     '📡 En Directo',
+                '':       '🎬 Películas',   // sin filtro → muestra películas por defecto
             };
-            el.gridTitle.textContent = titles[state.currentType] || '🎬 Todo el contenido';
+            el.gridTitle.textContent = titles[state.currentType] ?? '🎬 Películas';
         }
     }
 
     try {
         let data;
         if (state.currentType === 'serie') {
-            // Series → mostrar agrupadas por título (no episodios individuales)
+            // Series → mostrar agrupadas por título (una tarjeta por serie)
             data = await api.seriesAgrupadas({
                 genero: state.currentGenre,
                 sort:   state.currentSort === 'recent' ? 'recent' : 'title_asc',
@@ -749,8 +750,12 @@ async function loadGrid(append = false) {
                 limit:  24,
             });
         } else {
+            // Películas / En Directo / Todo
+            // Cuando no hay filtro de tipo, mostrar solo películas por defecto
+            // (las series se ven agrupadas en su sección — evita ver 42 portadas del mismo episodio)
+            const tipoFiltro = state.currentType || 'pelicula';
             data = await api.contenido({
-                tipo:   state.currentType,
+                tipo:   tipoFiltro,
                 año:    state.currentYear,
                 genero: state.currentGenre,
                 sort:   state.currentSort || 'recent',

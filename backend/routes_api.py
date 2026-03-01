@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from models import db, Contenido, Lista
-from sqlalchemy import or_, nulls_last
+from sqlalchemy import or_, and_, nulls_last
 import requests
 
 # ── Helpers de seguridad para proxies ───────────────────────────
@@ -218,16 +218,22 @@ def get_generos():
 # ── Helper para extraer título base de serie ───────────────
 
 def _get_base_title(title: str) -> str:
-    """Elimina info de temporada/episodio del título para agrupar series."""
+    """
+    Elimina info de temporada/episodio del título para agrupar series.
+    Maneja el formato IPTV habitual: "{título} S01 {título} - S01E52"
+    """
     _EP_PATTERNS = [
-        r'\s+[Ss]\d{1,3}\s*[Ee]\d{1,3}.*$',          # S01E01, S1E1
-        r'\s+\d{1,2}[xX]\d{1,3}.*$',                  # 1x01, 2x10
-        r'\s+[-–]\s*[Ss]eason\s*\d+.*$',               # - Season 1
-        r'\s+[-–]\s*[Tt]emporada\s*\d+.*$',            # - Temporada 1
-        r'\s+[Tt]\d+\s*[Ee]\d+.*$',                    # T1E01
-        r'\s+[-–:]\s*[Cc]ap[íi]tulo\s*\d+.*$',        # - Capitulo 1
-        r'\s+[-–:]\s*[Ee]p(?:isodio|isode)?\.?\s*\d+.*$',  # Episodio / Episode 1
-        r'\s+[-–:]\s*\d+$',                             # trailing number
+        r'\s+[Ss]\d{1,3}\s*[Ee]\d{1,3}.*$',           # S01E01, S01.E01, S01-E01
+        r'\s+\d{1,2}[xX]\d{1,3}.*$',                   # 1x01, 2x10
+        r'\s+[-–]\s*[Ss]eason\s*\d+.*$',                # - Season 1
+        r'\s+[-–]\s*[Tt]emporada\s*\d+.*$',             # - Temporada 1
+        r'\s+[Tt]\d+\s*[Ee]\d+.*$',                     # T1E01
+        r'\s+[-–:]\s*[Cc]ap[íi]tulo\s*\d+.*$',         # - Capitulo 1
+        r'\s+[-–:]\s*[Ee]p(?:isodio|isode)?\.?\s*\d+.*$',   # Episodio / Episode 1
+        # Limpieza del marcador de temporada suelto (formato IPTV: "Título S01 Título")
+        # Se aplica DESPUÉS de quitar el patrón SnnEmm para eliminar " S01 resto"
+        r'\s+[Ss]\d{1,2}\b.*$',                         # S01 ... al final
+        r'\s+[-–:]\s*\d+$',                              # número suelto al final
     ]
     result = title.strip()
     for p in _EP_PATTERNS:
@@ -249,13 +255,24 @@ def get_series_agrupadas():
     genero   = request.args.get('genero', '').strip()
     sort     = request.args.get('sort', 'title_asc')
 
-    base_q = Contenido.query.filter_by(activo=True, tipo='serie')
+    # Incluir tanto tipo='serie' como items marcados como 'live' que tienen
+    # número de temporada (series mal clasificadas por el parser antiguo)
+    base_q = Contenido.query.filter(
+        Contenido.activo == True,
+        or_(
+            Contenido.tipo == 'serie',
+            and_(
+                Contenido.tipo == 'live',
+                Contenido.temporada != None,   # tiene S01E01 → es serie, no canal
+            ),
+        ),
+    )
     if q:
         base_q = base_q.filter(Contenido.titulo.ilike(f'%{q}%'))
     if genero:
         base_q = base_q.filter(
             or_(Contenido.genero.ilike(f'%{genero}%'),
-                Contenido.group_title.ilike(f'%{genero}%'))
+                Contenido.group_title.like(f'%{genero}%'))
         )
 
     all_eps = base_q.all()
@@ -332,7 +349,17 @@ def get_serie_episodios():
     if not titulo:
         return jsonify([])
 
-    all_eps = Contenido.query.filter_by(activo=True, tipo='serie').all()
+    # Igual que series-agrupadas: incluir items 'live' con temporada (series mal clasificadas)
+    all_eps = Contenido.query.filter(
+        Contenido.activo == True,
+        or_(
+            Contenido.tipo == 'serie',
+            and_(
+                Contenido.tipo == 'live',
+                Contenido.temporada != None,
+            ),
+        ),
+    ).all()
     episodes = [ep.to_dict() for ep in all_eps if _get_base_title(ep.titulo) == titulo]
     episodes.sort(key=lambda x: (x.get('season') or 99, x.get('episode') or 99))
     return jsonify(episodes)

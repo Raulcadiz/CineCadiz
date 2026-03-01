@@ -82,6 +82,62 @@ def dashboard():
                            fuentes=fuentes, scan_state=_scan_state)
 
 
+# ── Reclasificación de contenido ──────────────────────────────
+
+@admin_bp.post('/reclassify')
+@login_required
+def reclassify_content():
+    """
+    Re-clasifica el contenido M3U existente usando las reglas del parser actualizado.
+    Corrige items mal clasificados (ej: series guardadas como 'live').
+    """
+    import re as _re_adm
+    from m3u_parser import _normalize, _SERIE_GROUPS, _PELICULA_GROUPS, _DEFAULT_VOD_CONFIRMED
+
+    items = Contenido.query.filter_by(fuente='m3u', activo=True).all()
+    updated = 0
+
+    for item in items:
+        titulo = item.titulo or ''
+        group  = _normalize(item.group_title or '')
+        nuevo_tipo = None
+
+        # 1. S01E01 en el título → serie (regex ampliado con punto/guion)
+        if _re_adm.search(r'[Ss]\d{1,2}\s*[._-]?\s*[Ee]\d{1,3}', titulo):
+            nuevo_tipo = 'serie'
+
+        # 2. Temporada o episodio ya detectado en la BD
+        elif item.temporada or item.episodio:
+            nuevo_tipo = 'serie'
+
+        # 3. Group-title → serie
+        elif any(kw in group for kw in _SERIE_GROUPS):
+            nuevo_tipo = 'serie'
+
+        # 4. Group-title → pelicula
+        elif any(kw in group for kw in _PELICULA_GROUPS):
+            nuevo_tipo = 'pelicula'
+
+        # 5. Group-title VOD confirmado
+        elif any(_normalize(kw) in group for kw in _DEFAULT_VOD_CONFIRMED):
+            if item.tipo == 'live':
+                nuevo_tipo = 'pelicula'
+
+        if nuevo_tipo and nuevo_tipo != item.tipo:
+            item.tipo = nuevo_tipo
+            updated += 1
+
+    if updated:
+        db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'updated': updated,
+        'total': len(items),
+        'msg': f'{updated} de {len(items)} items reclasificados correctamente.',
+    })
+
+
 # ── Gestión de listas M3U ──────────────────────────────────────
 
 @admin_bp.get('/listas')
