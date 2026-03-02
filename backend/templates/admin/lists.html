@@ -6,17 +6,25 @@
     <h1><i class="bi bi-collection-play-fill me-2 text-danger"></i>Listas M3U</h1>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- FORMULARIOS                                                -->
-<!-- ═══════════════════════════════════════════════════════════ -->
+<style>
+.grupos-scroll { max-height: 230px; overflow-y: auto; padding-right: 2px; }
+.tipo-cycle-btn {
+    opacity: .45; transition: opacity .15s;
+    font-size: .8rem; line-height: 1; cursor: pointer;
+    border: none; background: none; padding: 0 2px;
+}
+.tipo-cycle-btn:hover { opacity: 1; }
+</style>
+
+<!-- ═══════════════ FORMULARIOS ═══════════════════════════════ -->
 <div class="row g-4 mb-4">
 
-    <!-- ── POR URL ─────────────────────────────────────────── -->
+    <!-- ── POR URL ────────────────────────────────────────────── -->
     <div class="col-lg-7">
         <div class="form-card h-100">
             <h5 class="mb-3"><i class="bi bi-link-45deg me-2 text-success"></i>Agregar por URL</h5>
 
-            <!-- Paso 1: datos básicos -->
+            <!-- Paso 1 -->
             <div class="row g-2 align-items-end mb-3">
                 <div class="col-md-4">
                     <label class="form-label text-secondary small mb-1">Nombre</label>
@@ -41,26 +49,32 @@
 
             <div id="url-alert" class="alert alert-danger py-2 small d-none"></div>
 
-            <!-- Paso 2: selección de grupos (oculto hasta preview) -->
+            <!-- Paso 2: panel de grupos -->
             <div id="panel-url" class="d-none">
                 <div class="border border-secondary border-opacity-25 rounded p-3">
+
+                    <!-- Cabecera: resumen + botones de selección por tipo -->
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <span class="text-muted small" id="summary-url">—</span>
                         <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-danger"  data-mode="url" data-tipo="pelicula">🎬 Películas</button>
-                            <button type="button" class="btn btn-outline-info"    data-mode="url" data-tipo="serie">📺 Series</button>
-                            <button type="button" class="btn btn-outline-warning" data-mode="url" data-tipo="live">📡 Live</button>
-                            <button type="button" class="btn btn-outline-secondary" id="sel-none-url">Ninguno</button>
+                            <button type="button" class="btn btn-outline-danger  sel-tipo-header" data-mode="url" data-tipo="pelicula" title="Seleccionar / deseleccionar todas las películas">🎬</button>
+                            <button type="button" class="btn btn-outline-info    sel-tipo-header" data-mode="url" data-tipo="serie"    title="Seleccionar / deseleccionar todas las series">📺</button>
+                            <button type="button" class="btn btn-outline-warning sel-tipo-header" data-mode="url" data-tipo="live"     title="Seleccionar / deseleccionar todos los canales">📡</button>
+                            <button type="button" class="btn btn-outline-secondary" id="sel-none-url" title="Desmarcar todo">✕ Ninguno</button>
                         </div>
                     </div>
 
+                    <!-- Grid de grupos (renderizado por JS) -->
                     <div id="grupos-url" class="row g-0"></div>
 
+                    <!-- Pie: opciones + botón importar -->
                     <hr class="border-secondary my-3">
                     <div class="d-flex flex-wrap gap-3 align-items-center">
                         <div class="form-check form-switch">
                             <input class="form-check-input" type="checkbox" id="url-filtrar">
-                            <label class="form-check-label text-secondary small" for="url-filtrar">Solo español (filtro extra)</label>
+                            <label class="form-check-label text-secondary small" for="url-filtrar">
+                                Solo español (filtro extra de idioma)
+                            </label>
                         </div>
                         <span class="text-muted small ms-auto" id="sel-count-url">0 grupos seleccionados</span>
                         <button type="button" id="btn-import-url" class="btn btn-danger">
@@ -70,12 +84,12 @@
                 </div>
             </div>
 
-            <!-- Formulario oculto que se envía al importar -->
+            <!-- Formulario oculto que se construye y envía al importar -->
             <form id="form-url" action="{{ url_for('admin.agregar_lista') }}" method="post" class="d-none"></form>
         </div>
     </div>
 
-    <!-- ── POR ARCHIVO ─────────────────────────────────────── -->
+    <!-- ── POR ARCHIVO ────────────────────────────────────────── -->
     <div class="col-lg-5">
         <div class="form-card h-100 border border-warning border-opacity-25">
             <h5 class="mb-1">
@@ -103,16 +117,16 @@
 
             <div id="file-alert" class="alert alert-danger py-2 small d-none"></div>
 
-            <!-- Paso 2 -->
+            <!-- Paso 2: panel de grupos -->
             <div id="panel-file" class="d-none mt-2">
                 <div class="border border-secondary border-opacity-25 rounded p-3">
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <span class="text-muted small" id="summary-file">—</span>
                         <div class="btn-group btn-group-sm">
-                            <button type="button" class="btn btn-outline-danger"  data-mode="file" data-tipo="pelicula">🎬</button>
-                            <button type="button" class="btn btn-outline-info"    data-mode="file" data-tipo="serie">📺</button>
-                            <button type="button" class="btn btn-outline-warning" data-mode="file" data-tipo="live">📡</button>
-                            <button type="button" class="btn btn-outline-secondary" id="sel-none-file">✕</button>
+                            <button type="button" class="btn btn-outline-danger  sel-tipo-header" data-mode="file" data-tipo="pelicula" title="Películas">🎬</button>
+                            <button type="button" class="btn btn-outline-info    sel-tipo-header" data-mode="file" data-tipo="serie"    title="Series">📺</button>
+                            <button type="button" class="btn btn-outline-warning sel-tipo-header" data-mode="file" data-tipo="live"     title="Canales">📡</button>
+                            <button type="button" class="btn btn-outline-secondary" id="sel-none-file" title="Desmarcar todo">✕</button>
                         </div>
                     </div>
 
@@ -138,9 +152,7 @@
 
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TABLA DE LISTAS                                            -->
-<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ═══════════════ TABLA DE LISTAS ═══════════════════════════ -->
 {% if listas %}
 <div class="form-card">
     <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Listas registradas ({{ listas|length }})</h5>
@@ -163,9 +175,7 @@
             <tbody>
             {% for lista in listas %}
             <tr id="lista-row-{{ lista.id }}">
-                <td>
-                    <strong>{{ lista.nombre }}</strong>
-                </td>
+                <td><strong>{{ lista.nombre }}</strong></td>
                 <td>
                     <span class="text-muted small" title="{{ lista.url }}">
                         {{ lista.url[:40] }}{% if lista.url|length > 40 %}…{% endif %}
@@ -287,22 +297,32 @@
 
 {% block scripts %}
 <script>
-// ──────────────────────────────────────────────────────────────
-// Utilidades
-// ──────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// Constantes de tipo
+// ════════════════════════════════════════════════════════════════
+const TIPOS      = ['pelicula', 'serie', 'live', 'otro'];
+const TIPO_EMOJI = { pelicula: '🎬', serie: '📺', live: '📡', otro: '❓' };
+const TIPO_LABEL = { pelicula: 'Películas', serie: 'Series', live: 'En directo', otro: 'Sin clasificar' };
+const TIPO_COLOR = { pelicula: 'danger',    serie: 'info',   live: 'warning',    otro: 'secondary' };
 
+// ════════════════════════════════════════════════════════════════
+// Estado: _gdata[mode] = [{uid, name, tipo, count, checked}]
+// ════════════════════════════════════════════════════════════════
+const _gdata = {};
+
+// ════════════════════════════════════════════════════════════════
+// Utilidades
+// ════════════════════════════════════════════════════════════════
 function escHtml(s) {
     return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
 function addHidden(form, name, value) {
     const inp = document.createElement('input');
     inp.type = 'hidden'; inp.name = name; inp.value = value;
     form.appendChild(inp);
 }
-
 function setBtn(id, loading, labelHtml) {
     const btn = document.getElementById(id);
     if (!btn) return;
@@ -311,7 +331,6 @@ function setBtn(id, loading, labelHtml) {
         ? '<span class="spinner-border spinner-border-sm me-1"></span>' + labelHtml
         : labelHtml;
 }
-
 function showAlert(mode, msg) {
     const el = document.getElementById(mode + '-alert');
     if (!el) return;
@@ -320,128 +339,164 @@ function showAlert(mode, msg) {
     clearTimeout(el._t);
     el._t = setTimeout(() => el.classList.add('d-none'), 8000);
 }
-
 function updateSelCount(mode) {
-    const n = document.querySelectorAll('.grupo-cb-' + mode + ':checked').length;
+    const n  = (_gdata[mode] || []).filter(g => g.checked).length;
     const el = document.getElementById('sel-count-' + mode);
     if (el) el.textContent = n + ' grupos seleccionados';
 }
 
-// ──────────────────────────────────────────────────────────────
-// Renderizar grupos tras previsualización
-// ──────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
+// Render principal — se llama al previsualizar y al cambiar tipo
+// ════════════════════════════════════════════════════════════════
 function renderGrupos(mode, groups, ctx) {
     window['_ctx_' + mode] = ctx;
+    _gdata[mode] = groups.map((g, i) => ({
+        uid:     mode + '_' + i,
+        name:    g.name,
+        tipo:    TIPOS.includes(g.tipo) ? g.tipo : 'otro',
+        count:   g.count,
+        checked: g.tipo !== 'live'   // live desmarcado por defecto
+    }));
+    _renderDisplay(mode);
+    document.getElementById('panel-' + mode).classList.remove('d-none');
+}
 
-    const panel     = document.getElementById('panel-' + mode);
+function _renderDisplay(mode) {
     const container = document.getElementById('grupos-' + mode);
-    const summary   = document.getElementById('summary-' + mode);
+    const data      = _gdata[mode] || [];
 
-    if (!groups.length) {
-        container.innerHTML = '<div class="col-12"><p class="text-warning small mb-0">No se encontraron grupos en esta lista.</p></div>';
-        panel.classList.remove('d-none');
-        return;
-    }
+    // Resumen
+    const total = data.reduce((s, g) => s + g.count, 0);
+    document.getElementById('summary-' + mode).textContent =
+        data.length + ' grupos · ' + total.toLocaleString('es') + ' items';
 
-    const total = groups.reduce((s, g) => s + g.count, 0);
-    summary.textContent = groups.length + ' grupos · ' + total.toLocaleString('es') + ' items';
-
+    // Agrupar por tipo
     const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
-    groups.forEach(g => {
-        const k = byTipo[g.tipo] !== undefined ? g.tipo : 'otro';
-        byTipo[k].push(g);
-    });
+    data.forEach(g => byTipo[g.tipo].push(g));
 
-    const secciones = [
-        { key: 'pelicula', label: '🎬 Películas',     color: 'danger'    },
-        { key: 'serie',    label: '📺 Series',         color: 'info'      },
-        { key: 'live',     label: '📡 En directo',     color: 'warning'   },
-        { key: 'otro',     label: '❓ Sin clasificar', color: 'secondary' },
-    ];
-
-    container.innerHTML = secciones.map(({ key, label, color }) => {
-        const gs = byTipo[key];
+    // Renderizar columnas
+    container.innerHTML = TIPOS.map(key => {
+        const gs    = byTipo[key];
         if (!gs.length) return '';
+        const color = TIPO_COLOR[key];
         return `
         <div class="col-sm-6 col-xl-3 mb-3 pe-3">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <span class="text-${color} small fw-bold">${label}</span>
-                <button type="button" class="btn btn-link btn-sm p-0 text-${color} sel-tipo-btn"
-                        data-mode="${mode}" data-tipo="${key}" style="font-size:.75rem">todos</button>
+                <span class="text-${color} small fw-bold">
+                    ${TIPO_EMOJI[key]} ${TIPO_LABEL[key]}
+                    <span class="text-muted fw-normal">(${gs.length})</span>
+                </span>
+                <button type="button"
+                        class="btn btn-link btn-sm p-0 text-${color} inner-sel-btn"
+                        data-mode="${mode}" data-tipo="${key}"
+                        style="font-size:.72rem">todos</button>
             </div>
-            <div style="max-height:220px;overflow-y:auto;padding-right:4px">
-            ${gs.map((g, i) => `
-                <div class="form-check mb-1">
-                    <input class="form-check-input grupo-cb grupo-cb-${mode} grupo-tipo-${mode}-${key}"
-                           type="checkbox" id="g-${mode}-${key}-${i}"
-                           value="${escHtml(g.name)}" data-tipo="${key}"
-                           ${key !== 'live' ? 'checked' : ''}>
-                    <label class="form-check-label small d-flex justify-content-between gap-1"
-                           for="g-${mode}-${key}-${i}" title="${escHtml(g.name)}">
-                        <span class="text-truncate" style="max-width:130px">${escHtml(g.name)}</span>
-                        <span class="text-muted flex-shrink-0">${g.count.toLocaleString('es')}</span>
+            <div class="grupos-scroll">
+            ${gs.map(g => `
+                <div class="d-flex align-items-center gap-1 mb-1">
+                    <input class="form-check-input flex-shrink-0 grupo-cb grupo-cb-${mode}"
+                           type="checkbox" id="${g.uid}"
+                           value="${escHtml(g.name)}" data-uid="${g.uid}"
+                           ${g.checked ? 'checked' : ''}>
+                    <label class="form-check-label small flex-grow-1 d-flex justify-content-between gap-1 min-w-0"
+                           for="${g.uid}" title="${escHtml(g.name)}">
+                        <span class="text-truncate">${escHtml(g.name)}</span>
+                        <span class="text-muted flex-shrink-0" style="font-size:.7rem">
+                            ${g.count.toLocaleString('es')}
+                        </span>
                     </label>
+                    <!-- Botón para mover el grupo a otro tipo (ciclo al hacer clic) -->
+                    <button type="button"
+                            class="tipo-cycle-btn"
+                            data-mode="${mode}" data-uid="${g.uid}"
+                            title="Mover grupo a otra sección&#10;Orden: 🎬→📺→📡→❓">
+                        ${TIPO_EMOJI[g.tipo]}
+                    </button>
                 </div>`).join('')}
             </div>
         </div>`;
     }).join('');
 
-    // Eventos: botón "todos" por tipo
-    container.querySelectorAll('.sel-tipo-btn').forEach(btn => {
+    // ── Eventos de checkbox (sin re-render) ──────────────────────
+    container.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
+        cb.addEventListener('change', () => {
+            const g = data.find(x => x.uid === cb.dataset.uid);
+            if (g) g.checked = cb.checked;
+            updateSelCount(mode);
+        });
+    });
+
+    // ── Botón ciclo de tipo (CON re-render para mover el grupo) ──
+    container.querySelectorAll('.tipo-cycle-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const g = data.find(x => x.uid === btn.dataset.uid);
+            if (!g) return;
+            const idx = TIPOS.indexOf(g.tipo);
+            g.tipo = TIPOS[(idx + 1) % TIPOS.length];
+            _renderDisplay(mode);   // re-renderiza → el grupo aparece en la nueva sección
+        });
+    });
+
+    // ── Botón "todos/ninguno" por sección (sin re-render) ────────
+    container.querySelectorAll('.inner-sel-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const tipo = btn.dataset.tipo;
-            const all  = container.querySelectorAll('.grupo-tipo-' + mode + '-' + tipo);
-            const anyUnchecked = [...all].some(cb => !cb.checked);
-            all.forEach(cb => cb.checked = anyUnchecked);
+            const gs   = data.filter(g => g.tipo === tipo);
+            const anyUnchecked = gs.some(g => !g.checked);
+            gs.forEach(g => g.checked = anyUnchecked);
+            // Actualizar checkboxes en el DOM sin re-renderizar
+            container.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
+                const g = data.find(x => x.uid === cb.dataset.uid);
+                if (g && g.tipo === tipo) cb.checked = g.checked;
+            });
             btn.textContent = anyUnchecked ? 'ninguno' : 'todos';
             updateSelCount(mode);
         });
     });
 
-    container.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
-        cb.addEventListener('change', () => updateSelCount(mode));
-    });
-
     updateSelCount(mode);
-    panel.classList.remove('d-none');
 }
 
-// ──────────────────────────────────────────────────────────────
-// Botones de selección rápida por tipo (cabecera del panel)
-// ──────────────────────────────────────────────────────────────
-
-document.querySelectorAll('[data-mode][data-tipo]').forEach(btn => {
+// ════════════════════════════════════════════════════════════════
+// Botones de cabecera del panel (seleccionan / deseleccionan un tipo)
+// ════════════════════════════════════════════════════════════════
+document.querySelectorAll('.sel-tipo-header').forEach(btn => {
     btn.addEventListener('click', () => {
         const mode = btn.dataset.mode;
         const tipo = btn.dataset.tipo;
-        const all  = document.querySelectorAll('.grupo-tipo-' + mode + '-' + tipo);
-        const anyUnchecked = [...all].some(cb => !cb.checked);
-        all.forEach(cb => cb.checked = anyUnchecked);
+        const gs   = (_gdata[mode] || []).filter(g => g.tipo === tipo);
+        const anyUnchecked = gs.some(g => !g.checked);
+        gs.forEach(g => g.checked = anyUnchecked);
+        // Actualizar checkboxes en el DOM
+        document.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
+            const g = (_gdata[mode] || []).find(x => x.uid === cb.dataset.uid);
+            if (g && g.tipo === tipo) cb.checked = g.checked;
+        });
         updateSelCount(mode);
     });
 });
 
 document.getElementById('sel-none-url')?.addEventListener('click', () => {
+    (_gdata['url'] || []).forEach(g => g.checked = false);
     document.querySelectorAll('.grupo-cb-url').forEach(cb => cb.checked = false);
     updateSelCount('url');
 });
 document.getElementById('sel-none-file')?.addEventListener('click', () => {
+    (_gdata['file'] || []).forEach(g => g.checked = false);
     document.querySelectorAll('.grupo-cb-file').forEach(cb => cb.checked = false);
     updateSelCount('file');
 });
 
-// ──────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 // Preview URL
-// ──────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
 document.getElementById('btn-preview-url').addEventListener('click', async () => {
     const nombre = document.getElementById('url-nombre').value.trim();
     const url    = document.getElementById('url-url').value.trim();
     const proxy  = document.getElementById('url-proxy').checked;
 
     if (!nombre) { showAlert('url', 'Introduce un nombre para la lista.'); return; }
-    if (!url)    { showAlert('url', 'Introduce la URL de la lista M3U.'); return; }
+    if (!url)    { showAlert('url', 'Introduce la URL de la lista M3U.');  return; }
 
     setBtn('btn-preview-url', true, 'Descargando...');
 
@@ -461,15 +516,14 @@ document.getElementById('btn-preview-url').addEventListener('click', async () =>
     }
 });
 
-// ──────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 // Preview Archivo
-// ──────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
 document.getElementById('btn-preview-file').addEventListener('click', async () => {
     const nombre    = document.getElementById('file-nombre').value.trim();
     const fileInput = document.getElementById('file-archivo');
 
-    if (!nombre)               { showAlert('file', 'Introduce un nombre.'); return; }
+    if (!nombre)                 { showAlert('file', 'Introduce un nombre.'); return; }
     if (!fileInput.files.length) { showAlert('file', 'Selecciona un archivo .m3u.'); return; }
 
     setBtn('btn-preview-file', true, 'Analizando...');
@@ -489,14 +543,15 @@ document.getElementById('btn-preview-file').addEventListener('click', async () =
     }
 });
 
-// ──────────────────────────────────────────────────────────────
-// Importar: URL
-// ──────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
+// Importar — URL
+// ════════════════════════════════════════════════════════════════
 document.getElementById('btn-import-url').addEventListener('click', () => {
-    const checked = [...document.querySelectorAll('.grupo-cb-url:checked')].map(cb => cb.value);
-    if (!checked.length) { showAlert('url', 'Selecciona al menos un grupo para importar.'); return; }
-
+    const checked = (_gdata['url'] || []).filter(g => g.checked).map(g => g.name);
+    if (!checked.length) {
+        showAlert('url', 'Selecciona al menos un grupo para importar.');
+        return;
+    }
     const ctx    = window['_ctx_url'];
     const filtrar = document.getElementById('url-filtrar').checked;
     const form   = document.getElementById('form-url');
@@ -505,38 +560,36 @@ document.getElementById('btn-import-url').addEventListener('click', () => {
     addHidden(form, 'nombre', ctx.nombre);
     addHidden(form, 'url', ctx.url);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
-    if (ctx.proxy)  addHidden(form, 'usar_proxy', '1');
-    if (filtrar)    addHidden(form, 'filtrar_español', '1');
-
+    if (ctx.proxy) addHidden(form, 'usar_proxy',      '1');
+    if (filtrar)   addHidden(form, 'filtrar_español', '1');
     form.submit();
 });
 
-// ──────────────────────────────────────────────────────────────
-// Importar: Archivo
-// ──────────────────────────────────────────────────────────────
-
+// ════════════════════════════════════════════════════════════════
+// Importar — Archivo
+// ════════════════════════════════════════════════════════════════
 document.getElementById('btn-import-file').addEventListener('click', () => {
-    const checked = [...document.querySelectorAll('.grupo-cb-file:checked')].map(cb => cb.value);
-    if (!checked.length) { showAlert('file', 'Selecciona al menos un grupo para importar.'); return; }
-
-    const ctx    = window['_ctx_file'];
+    const checked = (_gdata['file'] || []).filter(g => g.checked).map(g => g.name);
+    if (!checked.length) {
+        showAlert('file', 'Selecciona al menos un grupo para importar.');
+        return;
+    }
+    const ctx     = window['_ctx_file'];
     const filtrar = document.getElementById('file-filtrar').checked;
-    const form   = document.getElementById('form-file');
+    const form    = document.getElementById('form-file');
 
     form.innerHTML = '';
     addHidden(form, 'nombre', ctx.nombre);
     addHidden(form, 'temp_id', ctx.temp_id);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
     if (filtrar) addHidden(form, 'filtrar_español', '1');
-
     form.submit();
 });
 
-// ──────────────────────────────────────────────────────────────
-// Auto-polling para listas pendientes de importar
-// ──────────────────────────────────────────────────────────────
-
-(function() {
+// ════════════════════════════════════════════════════════════════
+// Auto-polling para listas pendientes
+// ════════════════════════════════════════════════════════════════
+(function () {
     const pendingBadges = document.querySelectorAll('.badge-status-warn');
     if (!pendingBadges.length) return;
 
@@ -548,24 +601,17 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
     if (!pendingIds.length) return;
 
     let pollCount = 0;
-    const maxPolls = 50;
-    const pollInterval = 7500;
-
     function pollStatus() {
-        if (pollCount++ >= maxPolls) { location.reload(); return; }
+        if (pollCount++ >= 50) { location.reload(); return; }
         Promise.all(pendingIds.map(id =>
             fetch('/admin/api/listas/' + id + '/status')
                 .then(r => r.ok ? r.json() : null).catch(() => null)
         )).then(results => {
-            if (results.every(r => r && r.ultima_actualizacion)) {
-                location.reload();
-            } else {
-                setTimeout(pollStatus, pollInterval);
-            }
-        }).catch(() => setTimeout(pollStatus, pollInterval));
+            if (results.every(r => r && r.ultima_actualizacion)) location.reload();
+            else setTimeout(pollStatus, 7500);
+        }).catch(() => setTimeout(pollStatus, 7500));
     }
-
-    setTimeout(pollStatus, pollInterval);
+    setTimeout(pollStatus, 7500);
 })();
 </script>
 {% endblock %}
