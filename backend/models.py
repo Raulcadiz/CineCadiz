@@ -31,6 +31,7 @@ class Lista(db.Model):
     filtrar_español = db.Column(db.Boolean, default=False)
     incluir_live = db.Column(db.Boolean, default=False)   # importar canales en directo
     usar_proxy = db.Column(db.Boolean, default=False)     # usar proxy HTTP aleatorio
+    grupos_seleccionados = db.Column(db.Text, nullable=True)  # JSON list de group-titles; None=todos
     activa = db.Column(db.Boolean, default=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     ultima_actualizacion = db.Column(db.DateTime)
@@ -52,6 +53,7 @@ class Lista(db.Model):
             'filtrar_español': self.filtrar_español,
             'incluir_live': self.incluir_live,
             'usar_proxy': self.usar_proxy,
+            'grupos_seleccionados': self.grupos_seleccionados,
             'activa': self.activa,
             'fecha_creacion': self.fecha_creacion.isoformat() if self.fecha_creacion else None,
             'ultima_actualizacion': (

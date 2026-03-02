@@ -6,93 +6,141 @@
     <h1><i class="bi bi-collection-play-fill me-2 text-danger"></i>Listas M3U</h1>
 </div>
 
-<!-- Formularios: URL o Archivo -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- FORMULARIOS                                                -->
+<!-- ═══════════════════════════════════════════════════════════ -->
 <div class="row g-4 mb-4">
 
-    <!-- Por URL -->
+    <!-- ── POR URL ─────────────────────────────────────────── -->
     <div class="col-lg-7">
         <div class="form-card h-100">
             <h5 class="mb-3"><i class="bi bi-link-45deg me-2 text-success"></i>Agregar por URL</h5>
-            <form action="{{ url_for('admin.agregar_lista') }}" method="post">
-                <div class="row g-3">
-                    <div class="col-md-5">
-                        <label class="form-label text-secondary small">Nombre</label>
-                        <input type="text" name="nombre" class="form-control"
-                               placeholder="Ej: Lista ES principal" required>
+
+            <!-- Paso 1: datos básicos -->
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-4">
+                    <label class="form-label text-secondary small mb-1">Nombre</label>
+                    <input type="text" id="url-nombre" class="form-control"
+                           placeholder="Ej: Lista ES principal">
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label text-secondary small mb-1">URL de la lista M3U</label>
+                    <input type="url" id="url-url" class="form-control"
+                           placeholder="http://proveedor.com/lista.m3u">
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="url-proxy">
+                        <label class="form-check-label text-secondary small" for="url-proxy">Proxy HTTP</label>
                     </div>
-                    <div class="col-md-7">
-                        <label class="form-label text-secondary small">URL de la lista M3U</label>
-                        <input type="url" name="url" class="form-control"
-                               placeholder="http://proveedor.com/lista.m3u" required>
+                    <button type="button" id="btn-preview-url" class="btn btn-outline-info btn-sm w-100">
+                        <i class="bi bi-search me-1"></i>Analizar grupos
+                    </button>
+                </div>
+            </div>
+
+            <div id="url-alert" class="alert alert-danger py-2 small d-none"></div>
+
+            <!-- Paso 2: selección de grupos (oculto hasta preview) -->
+            <div id="panel-url" class="d-none">
+                <div class="border border-secondary border-opacity-25 rounded p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <span class="text-muted small" id="summary-url">—</span>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-danger"  data-mode="url" data-tipo="pelicula">🎬 Películas</button>
+                            <button type="button" class="btn btn-outline-info"    data-mode="url" data-tipo="serie">📺 Series</button>
+                            <button type="button" class="btn btn-outline-warning" data-mode="url" data-tipo="live">📡 Live</button>
+                            <button type="button" class="btn btn-outline-secondary" id="sel-none-url">Ninguno</button>
+                        </div>
+                    </div>
+
+                    <div id="grupos-url" class="row g-0"></div>
+
+                    <hr class="border-secondary my-3">
+                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="url-filtrar">
+                            <label class="form-check-label text-secondary small" for="url-filtrar">Solo español (filtro extra)</label>
+                        </div>
+                        <span class="text-muted small ms-auto" id="sel-count-url">0 grupos seleccionados</span>
+                        <button type="button" id="btn-import-url" class="btn btn-danger">
+                            <i class="bi bi-cloud-download me-1"></i>Importar seleccionados
+                        </button>
                     </div>
                 </div>
-                <div class="d-flex flex-wrap gap-3 my-3">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="filtrar_español" id="filtrarSwitch">
-                        <label class="form-check-label text-secondary small" for="filtrarSwitch">Solo español</label>
-                    </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="incluir_live" id="liveSwitch">
-                        <label class="form-check-label text-secondary small" for="liveSwitch">Incluir canales en directo</label>
-                    </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="usar_proxy" id="proxySwitch">
-                        <label class="form-check-label text-secondary small" for="proxySwitch">Usar proxy HTTP</label>
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-danger">
-                    <i class="bi bi-plus-lg me-1"></i>Agregar y descargar
-                </button>
-                <p class="text-muted small mt-2 mb-0">
-                    <i class="bi bi-info-circle me-1"></i>
-                    Se importa en segundo plano. Refresca para ver el progreso.
-                </p>
-            </form>
+            </div>
+
+            <!-- Formulario oculto que se envía al importar -->
+            <form id="form-url" action="{{ url_for('admin.agregar_lista') }}" method="post" class="d-none"></form>
         </div>
     </div>
 
-    <!-- Por archivo (bypass bloqueo IP) -->
+    <!-- ── POR ARCHIVO ─────────────────────────────────────── -->
     <div class="col-lg-5">
         <div class="form-card h-100 border border-warning border-opacity-25">
             <h5 class="mb-1">
                 <i class="bi bi-upload me-2 text-warning"></i>Subir archivo .m3u
             </h5>
             <p class="text-muted small mb-3">
-                Úsalo cuando el proveedor bloquea la IP del servidor.
+                Cuando el proveedor bloquea la IP del servidor.<br>
                 Descarga el archivo en tu PC y súbelo aquí.
             </p>
-            <form action="{{ url_for('admin.subir_lista') }}" method="post"
-                  enctype="multipart/form-data">
-                <div class="mb-2">
-                    <label class="form-label text-secondary small">Nombre</label>
-                    <input type="text" name="nombre" class="form-control"
-                           placeholder="Ej: CineGold local" required>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label text-secondary small">Archivo .m3u / .m3u8</label>
-                    <input type="file" name="archivo" class="form-control"
-                           accept=".m3u,.m3u8,.txt" required>
-                </div>
-                <div class="d-flex flex-wrap gap-3 mb-3">
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="filtrar_español" id="filtrarSwitchFile">
-                        <label class="form-check-label text-secondary small" for="filtrarSwitchFile">Solo español</label>
+
+            <!-- Paso 1 -->
+            <div class="mb-2">
+                <label class="form-label text-secondary small mb-1">Nombre</label>
+                <input type="text" id="file-nombre" class="form-control"
+                       placeholder="Ej: CineGold local">
+            </div>
+            <div class="mb-2">
+                <label class="form-label text-secondary small mb-1">Archivo .m3u / .m3u8</label>
+                <input type="file" id="file-archivo" class="form-control"
+                       accept=".m3u,.m3u8,.txt">
+            </div>
+            <button type="button" id="btn-preview-file" class="btn btn-outline-warning btn-sm mb-2">
+                <i class="bi bi-search me-1"></i>Analizar archivo
+            </button>
+
+            <div id="file-alert" class="alert alert-danger py-2 small d-none"></div>
+
+            <!-- Paso 2 -->
+            <div id="panel-file" class="d-none mt-2">
+                <div class="border border-secondary border-opacity-25 rounded p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <span class="text-muted small" id="summary-file">—</span>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-danger"  data-mode="file" data-tipo="pelicula">🎬</button>
+                            <button type="button" class="btn btn-outline-info"    data-mode="file" data-tipo="serie">📺</button>
+                            <button type="button" class="btn btn-outline-warning" data-mode="file" data-tipo="live">📡</button>
+                            <button type="button" class="btn btn-outline-secondary" id="sel-none-file">✕</button>
+                        </div>
                     </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="incluir_live" id="liveSwitchFile">
-                        <label class="form-check-label text-secondary small" for="liveSwitchFile">Incluir directo</label>
+
+                    <div id="grupos-file" class="row g-0"></div>
+
+                    <hr class="border-secondary my-3">
+                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="file-filtrar">
+                            <label class="form-check-label text-secondary small" for="file-filtrar">Solo español</label>
+                        </div>
+                        <span class="text-muted small ms-auto" id="sel-count-file">0 grupos seleccionados</span>
+                        <button type="button" id="btn-import-file" class="btn btn-warning text-dark">
+                            <i class="bi bi-upload me-1"></i>Importar
+                        </button>
                     </div>
                 </div>
-                <button type="submit" class="btn btn-warning text-dark">
-                    <i class="bi bi-upload me-1"></i>Subir e importar
-                </button>
-            </form>
+            </div>
+
+            <form id="form-file" action="{{ url_for('admin.subir_lista') }}" method="post" class="d-none"></form>
         </div>
     </div>
 
 </div>
 
-<!-- Tabla de listas -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TABLA DE LISTAS                                            -->
+<!-- ═══════════════════════════════════════════════════════════ -->
 {% if listas %}
 <div class="form-card">
     <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Listas registradas ({{ listas|length }})</h5>
@@ -102,8 +150,8 @@
                 <tr>
                     <th>Nombre</th>
                     <th>URL</th>
+                    <th class="text-center">Grupos</th>
                     <th class="text-center">Solo ES</th>
-                    <th class="text-center">Live</th>
                     <th class="text-center">Proxy</th>
                     <th class="text-center">Activos</th>
                     <th class="text-center">Total</th>
@@ -119,21 +167,23 @@
                     <strong>{{ lista.nombre }}</strong>
                 </td>
                 <td>
-                    <span class="text-muted small"
-                          title="{{ lista.url }}">
-                        {{ lista.url[:45] }}{% if lista.url|length > 45 %}…{% endif %}
+                    <span class="text-muted small" title="{{ lista.url }}">
+                        {{ lista.url[:40] }}{% if lista.url|length > 40 %}…{% endif %}
                     </span>
+                </td>
+                <td class="text-center">
+                    {% if lista.grupos_seleccionados %}
+                        {% set gcount = lista.grupos_seleccionados | fromjson | length %}
+                        <span class="badge bg-secondary" title="{{ lista.grupos_seleccionados }}">
+                            {{ gcount }} grupo{{ 's' if gcount != 1 else '' }}
+                        </span>
+                    {% else %}
+                        <span class="text-muted small">todos</span>
+                    {% endif %}
                 </td>
                 <td class="text-center">
                     {% if lista.filtrar_español %}
                         <i class="bi bi-check-circle text-success"></i>
-                    {% else %}
-                        <i class="bi bi-x-circle text-secondary"></i>
-                    {% endif %}
-                </td>
-                <td class="text-center">
-                    {% if lista.incluir_live %}
-                        <i class="bi bi-broadcast text-info" title="Incluye canales en directo"></i>
                     {% else %}
                         <i class="bi bi-x-circle text-secondary"></i>
                     {% endif %}
@@ -145,12 +195,8 @@
                         <i class="bi bi-x-circle text-secondary"></i>
                     {% endif %}
                 </td>
-                <td class="text-center fw-bold text-success">
-                    {{ lista.items_activos or 0 }}
-                </td>
-                <td class="text-center text-secondary">
-                    {{ lista.total_items or 0 }}
-                </td>
+                <td class="text-center fw-bold text-success">{{ lista.items_activos or 0 }}</td>
+                <td class="text-center text-secondary">{{ lista.total_items or 0 }}</td>
                 <td class="small text-muted">
                     {% if lista.ultima_actualizacion %}
                         {{ lista.ultima_actualizacion.strftime('%d/%m/%Y %H:%M') }}
@@ -175,7 +221,6 @@
                 </td>
                 <td>
                     <div class="d-flex gap-1 flex-wrap">
-                        <!-- Refresh por URL o re-subir archivo -->
                         {% if lista.url == '[archivo subido]' %}
                         <button type="button" class="btn btn-outline-warning btn-sm"
                                 title="Actualizar con nuevo archivo"
@@ -198,7 +243,6 @@
                         </form>
                         {% endif %}
 
-                        <!-- Toggle activa -->
                         <form action="{{ url_for('admin.toggle_lista', lista_id=lista.id) }}"
                               method="post" class="d-inline">
                             <button type="submit"
@@ -208,7 +252,6 @@
                             </button>
                         </form>
 
-                        <!-- Eliminar -->
                         <form action="{{ url_for('admin.eliminar_lista', lista_id=lista.id) }}"
                               method="post" class="d-inline"
                               onsubmit="return confirm('¿Eliminar lista y TODO su contenido? Esta acción no se puede deshacer.')">
@@ -244,13 +287,259 @@
 
 {% block scripts %}
 <script>
-// Auto-refrescar vía AJAX cuando hay listas pendientes de importar.
-// Evita recargas infinitas con un límite máximo de intentos.
+// ──────────────────────────────────────────────────────────────
+// Utilidades
+// ──────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function addHidden(form, name, value) {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = name; inp.value = value;
+    form.appendChild(inp);
+}
+
+function setBtn(id, loading, labelHtml) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = loading;
+    btn.innerHTML = loading
+        ? '<span class="spinner-border spinner-border-sm me-1"></span>' + labelHtml
+        : labelHtml;
+}
+
+function showAlert(mode, msg) {
+    const el = document.getElementById(mode + '-alert');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('d-none');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.add('d-none'), 8000);
+}
+
+function updateSelCount(mode) {
+    const n = document.querySelectorAll('.grupo-cb-' + mode + ':checked').length;
+    const el = document.getElementById('sel-count-' + mode);
+    if (el) el.textContent = n + ' grupos seleccionados';
+}
+
+// ──────────────────────────────────────────────────────────────
+// Renderizar grupos tras previsualización
+// ──────────────────────────────────────────────────────────────
+
+function renderGrupos(mode, groups, ctx) {
+    window['_ctx_' + mode] = ctx;
+
+    const panel     = document.getElementById('panel-' + mode);
+    const container = document.getElementById('grupos-' + mode);
+    const summary   = document.getElementById('summary-' + mode);
+
+    if (!groups.length) {
+        container.innerHTML = '<div class="col-12"><p class="text-warning small mb-0">No se encontraron grupos en esta lista.</p></div>';
+        panel.classList.remove('d-none');
+        return;
+    }
+
+    const total = groups.reduce((s, g) => s + g.count, 0);
+    summary.textContent = groups.length + ' grupos · ' + total.toLocaleString('es') + ' items';
+
+    const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
+    groups.forEach(g => {
+        const k = byTipo[g.tipo] !== undefined ? g.tipo : 'otro';
+        byTipo[k].push(g);
+    });
+
+    const secciones = [
+        { key: 'pelicula', label: '🎬 Películas',     color: 'danger'    },
+        { key: 'serie',    label: '📺 Series',         color: 'info'      },
+        { key: 'live',     label: '📡 En directo',     color: 'warning'   },
+        { key: 'otro',     label: '❓ Sin clasificar', color: 'secondary' },
+    ];
+
+    container.innerHTML = secciones.map(({ key, label, color }) => {
+        const gs = byTipo[key];
+        if (!gs.length) return '';
+        return `
+        <div class="col-sm-6 col-xl-3 mb-3 pe-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-${color} small fw-bold">${label}</span>
+                <button type="button" class="btn btn-link btn-sm p-0 text-${color} sel-tipo-btn"
+                        data-mode="${mode}" data-tipo="${key}" style="font-size:.75rem">todos</button>
+            </div>
+            <div style="max-height:220px;overflow-y:auto;padding-right:4px">
+            ${gs.map((g, i) => `
+                <div class="form-check mb-1">
+                    <input class="form-check-input grupo-cb grupo-cb-${mode} grupo-tipo-${mode}-${key}"
+                           type="checkbox" id="g-${mode}-${key}-${i}"
+                           value="${escHtml(g.name)}" data-tipo="${key}"
+                           ${key !== 'live' ? 'checked' : ''}>
+                    <label class="form-check-label small d-flex justify-content-between gap-1"
+                           for="g-${mode}-${key}-${i}" title="${escHtml(g.name)}">
+                        <span class="text-truncate" style="max-width:130px">${escHtml(g.name)}</span>
+                        <span class="text-muted flex-shrink-0">${g.count.toLocaleString('es')}</span>
+                    </label>
+                </div>`).join('')}
+            </div>
+        </div>`;
+    }).join('');
+
+    // Eventos: botón "todos" por tipo
+    container.querySelectorAll('.sel-tipo-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tipo = btn.dataset.tipo;
+            const all  = container.querySelectorAll('.grupo-tipo-' + mode + '-' + tipo);
+            const anyUnchecked = [...all].some(cb => !cb.checked);
+            all.forEach(cb => cb.checked = anyUnchecked);
+            btn.textContent = anyUnchecked ? 'ninguno' : 'todos';
+            updateSelCount(mode);
+        });
+    });
+
+    container.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
+        cb.addEventListener('change', () => updateSelCount(mode));
+    });
+
+    updateSelCount(mode);
+    panel.classList.remove('d-none');
+}
+
+// ──────────────────────────────────────────────────────────────
+// Botones de selección rápida por tipo (cabecera del panel)
+// ──────────────────────────────────────────────────────────────
+
+document.querySelectorAll('[data-mode][data-tipo]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        const tipo = btn.dataset.tipo;
+        const all  = document.querySelectorAll('.grupo-tipo-' + mode + '-' + tipo);
+        const anyUnchecked = [...all].some(cb => !cb.checked);
+        all.forEach(cb => cb.checked = anyUnchecked);
+        updateSelCount(mode);
+    });
+});
+
+document.getElementById('sel-none-url')?.addEventListener('click', () => {
+    document.querySelectorAll('.grupo-cb-url').forEach(cb => cb.checked = false);
+    updateSelCount('url');
+});
+document.getElementById('sel-none-file')?.addEventListener('click', () => {
+    document.querySelectorAll('.grupo-cb-file').forEach(cb => cb.checked = false);
+    updateSelCount('file');
+});
+
+// ──────────────────────────────────────────────────────────────
+// Preview URL
+// ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-preview-url').addEventListener('click', async () => {
+    const nombre = document.getElementById('url-nombre').value.trim();
+    const url    = document.getElementById('url-url').value.trim();
+    const proxy  = document.getElementById('url-proxy').checked;
+
+    if (!nombre) { showAlert('url', 'Introduce un nombre para la lista.'); return; }
+    if (!url)    { showAlert('url', 'Introduce la URL de la lista M3U.'); return; }
+
+    setBtn('btn-preview-url', true, 'Descargando...');
+
+    const fd = new FormData();
+    fd.append('url', url);
+    if (proxy) fd.append('usar_proxy', '1');
+
+    try {
+        const r = await fetch('/admin/listas/preview-url', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!d.ok) { showAlert('url', d.error); return; }
+        renderGrupos('url', d.groups, { nombre, url, proxy });
+    } catch(e) {
+        showAlert('url', 'Error de red: ' + e.message);
+    } finally {
+        setBtn('btn-preview-url', false, '<i class="bi bi-search me-1"></i>Analizar grupos');
+    }
+});
+
+// ──────────────────────────────────────────────────────────────
+// Preview Archivo
+// ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-preview-file').addEventListener('click', async () => {
+    const nombre    = document.getElementById('file-nombre').value.trim();
+    const fileInput = document.getElementById('file-archivo');
+
+    if (!nombre)               { showAlert('file', 'Introduce un nombre.'); return; }
+    if (!fileInput.files.length) { showAlert('file', 'Selecciona un archivo .m3u.'); return; }
+
+    setBtn('btn-preview-file', true, 'Analizando...');
+
+    const fd = new FormData();
+    fd.append('archivo', fileInput.files[0]);
+
+    try {
+        const r = await fetch('/admin/listas/preview-file', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!d.ok) { showAlert('file', d.error); return; }
+        renderGrupos('file', d.groups, { nombre, temp_id: d.temp_id, size_kb: d.size_kb });
+    } catch(e) {
+        showAlert('file', 'Error: ' + e.message);
+    } finally {
+        setBtn('btn-preview-file', false, '<i class="bi bi-search me-1"></i>Analizar archivo');
+    }
+});
+
+// ──────────────────────────────────────────────────────────────
+// Importar: URL
+// ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-import-url').addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('.grupo-cb-url:checked')].map(cb => cb.value);
+    if (!checked.length) { showAlert('url', 'Selecciona al menos un grupo para importar.'); return; }
+
+    const ctx    = window['_ctx_url'];
+    const filtrar = document.getElementById('url-filtrar').checked;
+    const form   = document.getElementById('form-url');
+
+    form.innerHTML = '';
+    addHidden(form, 'nombre', ctx.nombre);
+    addHidden(form, 'url', ctx.url);
+    addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
+    if (ctx.proxy)  addHidden(form, 'usar_proxy', '1');
+    if (filtrar)    addHidden(form, 'filtrar_español', '1');
+
+    form.submit();
+});
+
+// ──────────────────────────────────────────────────────────────
+// Importar: Archivo
+// ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-import-file').addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('.grupo-cb-file:checked')].map(cb => cb.value);
+    if (!checked.length) { showAlert('file', 'Selecciona al menos un grupo para importar.'); return; }
+
+    const ctx    = window['_ctx_file'];
+    const filtrar = document.getElementById('file-filtrar').checked;
+    const form   = document.getElementById('form-file');
+
+    form.innerHTML = '';
+    addHidden(form, 'nombre', ctx.nombre);
+    addHidden(form, 'temp_id', ctx.temp_id);
+    addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
+    if (filtrar) addHidden(form, 'filtrar_español', '1');
+
+    form.submit();
+});
+
+// ──────────────────────────────────────────────────────────────
+// Auto-polling para listas pendientes de importar
+// ──────────────────────────────────────────────────────────────
+
 (function() {
     const pendingBadges = document.querySelectorAll('.badge-status-warn');
     if (!pendingBadges.length) return;
 
-    // Extraer IDs de las listas pendientes desde el id del <tr>
     const pendingIds = [...pendingBadges].map(b => {
         const row = b.closest('tr[id]');
         return row ? row.id.replace('lista-row-', '') : null;
@@ -259,30 +548,21 @@
     if (!pendingIds.length) return;
 
     let pollCount = 0;
-    const maxPolls = 50;   // ~6 min máx (50 × 7.5 s)
+    const maxPolls = 50;
     const pollInterval = 7500;
 
     function pollStatus() {
-        if (pollCount++ >= maxPolls) {
-            // Seguridad: tras 6 min forzamos una sola recarga
-            location.reload();
-            return;
-        }
-
+        if (pollCount++ >= maxPolls) { location.reload(); return; }
         Promise.all(pendingIds.map(id =>
-            fetch(`/admin/api/listas/${id}/status`)
-                .then(r => r.ok ? r.json() : null)
-                .catch(() => null)
+            fetch('/admin/api/listas/' + id + '/status')
+                .then(r => r.ok ? r.json() : null).catch(() => null)
         )).then(results => {
-            const allDone = results.every(r => r && r.ultima_actualizacion);
-            if (allDone) {
-                location.reload();   // recarga única al terminar
+            if (results.every(r => r && r.ultima_actualizacion)) {
+                location.reload();
             } else {
                 setTimeout(pollStatus, pollInterval);
             }
-        }).catch(() => {
-            setTimeout(pollStatus, pollInterval);
-        });
+        }).catch(() => setTimeout(pollStatus, pollInterval));
     }
 
     setTimeout(pollStatus, pollInterval);

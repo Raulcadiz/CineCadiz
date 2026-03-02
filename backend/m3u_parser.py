@@ -359,27 +359,81 @@ def parse_and_filter(
     config,
     filter_spanish: bool = False,
     include_live: bool = False,
+    grupos: set | None = None,
 ) -> list:
     """
     Parsea un string M3U ya decodificado y aplica los filtros de idioma/live.
     Útil cuando el contenido ya está disponible localmente (archivo subido por el admin).
+
+    grupos: si se indica, solo se incluyen items cuyo group_title esté en ese conjunto.
+            Los items de grupos live se incluyen automáticamente si su grupo fue seleccionado.
+            Si es None, se usa el comportamiento clásico (include_live flag).
     """
     all_items = parse_m3u_content(content)
 
     vod_items, live_items = [], []
     for it in all_items:
+        # Filtro por grupos seleccionados
+        if grupos is not None:
+            g = it.get('group_title') or '(sin grupo)'
+            if g not in grupos:
+                continue
+
         if is_vod_content(it, config):
             vod_items.append(it)
         else:
             it['tipo'] = 'live'
             live_items.append(it)
 
-    items = vod_items + (live_items if include_live else [])
+    # Con grupos seleccionados: incluir todo lo que pasó el filtro de grupo
+    # Sin grupos: usar la flag include_live clásica
+    if grupos is not None:
+        items = vod_items + live_items
+    else:
+        items = vod_items + (live_items if include_live else [])
+
     items = [it for it in items if not is_explicitly_non_spanish(it, config)]
     if filter_spanish:
         items = [it for it in items if is_spanish(it, config)]
     return items
 
+
+# ──────────────────────────────────────────────────────────────
+# Previsualización de grupos
+# ──────────────────────────────────────────────────────────────
+
+def get_groups_preview(content: str) -> list[dict]:
+    """
+    Parsea el contenido M3U y devuelve los grupos únicos con tipo detectado y conteo.
+    No aplica ningún filtro de idioma ni de live/VOD — muestra TODO para que el usuario elija.
+    """
+    all_items = parse_m3u_content(content)
+    groups: dict[str, dict] = {}
+
+    for item in all_items:
+        g = item.get('group_title') or '(sin grupo)'
+        gl = _normalize(g)
+
+        # Clasificar el grupo por su nombre: live tiene prioridad
+        if any(kw in gl for kw in _DEFAULT_LIVE_GROUPS):
+            tipo = 'live'
+        elif any(kw in gl for kw in _SERIE_GROUPS):
+            tipo = 'serie'
+        elif any(kw in gl for kw in _PELICULA_GROUPS):
+            tipo = 'pelicula'
+        else:
+            tipo = item.get('tipo', 'pelicula')   # fallback a lo que detectó parse_extinf
+
+        if g not in groups:
+            groups[g] = {'name': g, 'tipo': tipo, 'count': 0}
+        groups[g]['count'] += 1
+
+    return sorted(groups.values(), key=lambda x: (-x['count'], x['name']))
+
+
+# ──────────────────────────────────────────────────────────────
+# Descarga y parseo completo
+# ──────────────────────────────────────────────────────────────
 
 HEADERS = {
     'User-Agent': (
@@ -390,32 +444,13 @@ HEADERS = {
 }
 
 
-def fetch_and_parse(
+def _download_m3u(
     url: str,
     config,
-    filter_spanish: bool = False,
-    include_live: bool = False,
     proxy: str | None = None,
-) -> tuple[list, str | None]:
-    """
-    Descarga una lista M3U con TIMEOUT TOTAL, la parsea y aplica filtros:
-
-      1. Siempre: clasifica canales en vivo (tipo='live')
-         - Si include_live=False → excluye los canales en vivo
-         - Si include_live=True  → los incluye con tipo='live'
-      2. Siempre: excluye ítems con tvg-language explícito NO español
-      3. Si filter_spanish=True: aplica filtro estricto de español
-
-    proxy: "host:port" (sin esquema) del proxy HTTP a usar, o None para directo.
-    Timeout total configurable (DOWNLOAD_TIMEOUT segundos, default 300).
-    Usa streaming para detectar si el servidor es muy lento y abortar.
-
-    Devuelve (items, error_msg). Si error_msg es None, fue exitoso.
-    """
+) -> tuple[bytes | None, str | None]:
+    """Descarga una lista M3U con timeout total. Devuelve (raw_bytes, error_msg)."""
     max_secs = _cfg(config, 'DOWNLOAD_TIMEOUT', 300)
-
-    # {} → sin proxy (ignora HTTPS_PROXY del sistema; PythonAnywhere lo inyecta)
-    # {http/https: url} → proxy explícito configurado por el admin
     req_proxies = {
         'http':  f'http://{proxy}',
         'https': f'http://{proxy}',
@@ -425,45 +460,88 @@ def fetch_and_parse(
         start = time.monotonic()
         resp = requests.get(
             url,
-            timeout=(10, 30),   # (connect_timeout, read_per_chunk_timeout)
+            timeout=(10, 30),
             headers=HEADERS,
             stream=True,
             proxies=req_proxies,
         )
         resp.raise_for_status()
 
-        # Leer en chunks con límite de tiempo total
         chunks: list[bytes] = []
-        for chunk in resp.iter_content(chunk_size=131_072):  # 128 KB por chunk
+        for chunk in resp.iter_content(chunk_size=131_072):
             if chunk:
                 chunks.append(chunk)
-            elapsed = time.monotonic() - start
-            if elapsed > max_secs:
+            if time.monotonic() - start > max_secs:
                 resp.close()
-                return [], (
+                return None, (
                     f'Timeout total: la lista tardó más de {max_secs}s en descargarse. '
                     f'El servidor es demasiado lento o el archivo es demasiado grande.'
                 )
-        raw_bytes = b''.join(chunks)
+        return b''.join(chunks), None
 
     except requests.exceptions.Timeout:
-        return [], 'Timeout de conexión: el servidor no respondió en 10s'
+        return None, 'Timeout de conexión: el servidor no respondió en 10s'
     except requests.exceptions.ConnectionError as e:
-        return [], f'Error de conexión: {e}'
+        return None, f'Error de conexión: {e}'
     except requests.exceptions.HTTPError as e:
-        return [], f'Error HTTP {e.response.status_code}'
+        return None, f'Error HTTP {e.response.status_code}'
     except Exception as e:
-        return [], str(e)
+        return None, str(e)
 
-    # Decodificar con fallback de encoding (utf-8-sig primero para BOM)
-    content = None
+
+def decode_m3u_bytes(raw_bytes: bytes) -> str:
+    """Decodifica bytes M3U con fallback de encoding (utf-8-sig primero para BOM)."""
     for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'windows-1252'):
         try:
-            content = raw_bytes.decode(enc)
-            break
+            return raw_bytes.decode(enc)
         except UnicodeDecodeError:
             continue
-    if content is None:
-        content = raw_bytes.decode('utf-8', errors='replace')
+    return raw_bytes.decode('utf-8', errors='replace')
 
-    return parse_and_filter(content, config, filter_spanish, include_live), None
+
+def fetch_and_parse(
+    url: str,
+    config,
+    filter_spanish: bool = False,
+    include_live: bool = False,
+    proxy: str | None = None,
+    grupos: set | None = None,
+) -> tuple[list, str | None]:
+    """
+    Descarga una lista M3U con TIMEOUT TOTAL, la parsea y aplica filtros:
+
+      1. Siempre: clasifica canales en vivo (tipo='live')
+         - Si grupos es None e include_live=False → excluye canales en vivo
+         - Si grupos es None e include_live=True  → los incluye con tipo='live'
+         - Si grupos está definido → incluye todo lo que tenga grupo seleccionado
+      2. Siempre: excluye ítems con tvg-language explícito NO español
+      3. Si filter_spanish=True: aplica filtro estricto de español
+
+    proxy: "host:port" (sin esquema) del proxy HTTP a usar, o None para directo.
+    grupos: conjunto de nombres de group-title a incluir, o None para no filtrar por grupo.
+    Devuelve (items, error_msg). Si error_msg es None, fue exitoso.
+    """
+    raw_bytes, error = _download_m3u(url, config, proxy)
+    if error:
+        return [], error
+
+    content = decode_m3u_bytes(raw_bytes)
+    return parse_and_filter(content, config, filter_spanish, include_live, grupos), None
+
+
+def fetch_groups_preview(
+    url: str,
+    config,
+    proxy: str | None = None,
+) -> tuple[list, str | None]:
+    """
+    Descarga una lista M3U y devuelve los grupos únicos para previsualización,
+    sin aplicar ningún filtro. Útil para el paso de selección de grupos en el admin.
+    Devuelve (groups, error_msg).
+    """
+    raw_bytes, error = _download_m3u(url, config, proxy)
+    if error:
+        return [], error
+
+    content = decode_m3u_bytes(raw_bytes)
+    return get_groups_preview(content), None

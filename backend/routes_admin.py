@@ -1,7 +1,9 @@
 """
 Panel de administración — /admin/
 """
+import json
 import threading
+import uuid
 from datetime import datetime
 from functools import wraps
 
@@ -14,7 +16,10 @@ import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
 from models import db, Lista, FuenteRSS, Contenido, Proxy
-from m3u_parser import fetch_and_parse, parse_and_filter
+from m3u_parser import (
+    fetch_and_parse, parse_and_filter,
+    fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
+)
 from link_checker import scan_dead_links
 from rss_importer import import_rss_source, DEFAULT_RSS_SOURCES
 
@@ -22,6 +27,10 @@ admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
 # ── Estado del scan en memoria ─────────────────────────────────
 _scan_state: dict = {'running': False, 'last_result': None}
+
+# ── Almacén temporal para uploads en el flujo de previsualización ──
+# Clave: temp_id (UUID), valor: raw_bytes del archivo M3U
+_temp_uploads: dict[str, bytes] = {}
 
 
 # ── Auth ───────────────────────────────────────────────────────
@@ -152,10 +161,8 @@ def listas():
 def agregar_lista():
     nombre = request.form.get('nombre', '').strip()
     url = request.form.get('url', '').strip()
-    # checkboxes desmarcados no envían nada → 'in request.form' es la forma correcta
-    filtrar       = 'filtrar_español' in request.form
-    incluir_live  = 'incluir_live'    in request.form
-    usar_proxy    = 'usar_proxy'      in request.form
+    filtrar    = 'filtrar_español' in request.form
+    usar_proxy = 'usar_proxy'      in request.form
 
     if not nombre or not url:
         flash('Nombre y URL son obligatorios', 'danger')
@@ -164,8 +171,23 @@ def agregar_lista():
         flash('La URL debe comenzar con http:// o https://', 'danger')
         return redirect(url_for('admin.listas'))
 
-    lista = Lista(nombre=nombre, url=url, filtrar_español=filtrar,
-                  incluir_live=incluir_live, usar_proxy=usar_proxy)
+    # grupos_seleccionados: JSON list de group-titles enviado por el paso de preview
+    grupos_json = request.form.get('grupos_seleccionados', '').strip() or None
+    if grupos_json:
+        try:
+            parsed = json.loads(grupos_json)
+            grupos_json = json.dumps(parsed) if isinstance(parsed, list) and parsed else None
+        except (ValueError, TypeError):
+            grupos_json = None
+
+    lista = Lista(
+        nombre=nombre,
+        url=url,
+        filtrar_español=filtrar,
+        incluir_live=True,    # con group selection el live lo controla el grupo elegido
+        usar_proxy=usar_proxy,
+        grupos_seleccionados=grupos_json,
+    )
     db.session.add(lista)
     db.session.commit()
     _import_lista_async(current_app._get_current_object(), lista.id)
@@ -471,37 +493,51 @@ def eliminar_proxy(proxy_id):
 @login_required
 def subir_lista():
     """Importa un archivo .m3u subido por el admin (bypass de bloqueo IP)."""
-    nombre      = request.form.get('nombre', '').strip()
-    filtrar     = 'filtrar_español' in request.form
-    incluir_live = 'incluir_live'  in request.form
-    archivo     = request.files.get('archivo')
+    nombre   = request.form.get('nombre', '').strip()
+    filtrar  = 'filtrar_español' in request.form
+    temp_id  = request.form.get('temp_id', '').strip()
 
     if not nombre:
         flash('El nombre es obligatorio.', 'danger')
         return redirect(url_for('admin.listas'))
-    if not archivo or not archivo.filename:
-        flash('Selecciona un archivo .m3u o .m3u8.', 'danger')
-        return redirect(url_for('admin.listas'))
 
-    try:
-        raw_bytes = archivo.read()
-    except Exception as e:
-        flash(f'Error al leer el archivo: {e}', 'danger')
-        return redirect(url_for('admin.listas'))
+    # Obtener bytes: primero desde el almacén temporal (flujo 2-pasos), luego desde el archivo
+    raw_bytes = None
+    if temp_id and temp_id in _temp_uploads:
+        raw_bytes = _temp_uploads.pop(temp_id)
+    else:
+        archivo = request.files.get('archivo')
+        if not archivo or not archivo.filename:
+            flash('Selecciona un archivo .m3u o .m3u8.', 'danger')
+            return redirect(url_for('admin.listas'))
+        try:
+            raw_bytes = archivo.read()
+        except Exception as e:
+            flash(f'Error al leer el archivo: {e}', 'danger')
+            return redirect(url_for('admin.listas'))
 
     if not raw_bytes:
         flash('El archivo está vacío.', 'danger')
         return redirect(url_for('admin.listas'))
 
+    grupos_json = request.form.get('grupos_seleccionados', '').strip() or None
+    if grupos_json:
+        try:
+            parsed = json.loads(grupos_json)
+            grupos_json = json.dumps(parsed) if isinstance(parsed, list) and parsed else None
+        except (ValueError, TypeError):
+            grupos_json = None
+
     lista = Lista(
         nombre=nombre,
         url='[archivo subido]',
         filtrar_español=filtrar,
-        incluir_live=incluir_live,
+        incluir_live=True,
         usar_proxy=False,
+        grupos_seleccionados=grupos_json,
     )
     db.session.add(lista)
-    db.session.flush()   # necesario para obtener lista.id antes del commit
+    db.session.flush()
 
     app = current_app._get_current_object()
     t = threading.Thread(
@@ -556,6 +592,61 @@ def resubir_lista(lista_id):
     return redirect(url_for('admin.listas'))
 
 
+# ── Previsualización de grupos M3U ─────────────────────────────
+
+@admin_bp.post('/listas/preview-url')
+@login_required
+def preview_url_grupos():
+    """Descarga la M3U y devuelve los grupos únicos para que el admin seleccione."""
+    url = request.form.get('url', '').strip()
+    usar_proxy = 'usar_proxy' in request.form
+
+    if not url or not url.startswith('http'):
+        return jsonify({'ok': False, 'error': 'URL inválida'}), 400
+
+    proxy_url = None
+    if usar_proxy:
+        active_proxies = Proxy.query.filter_by(activo=True).all()
+        if active_proxies:
+            proxy_url = random.choice(active_proxies).url
+
+    groups, error = fetch_groups_preview(url, current_app.config, proxy=proxy_url)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
+
+    return jsonify({'ok': True, 'groups': groups})
+
+
+@admin_bp.post('/listas/preview-file')
+@login_required
+def preview_file_grupos():
+    """Lee el archivo M3U subido y devuelve los grupos únicos + un temp_id para el import."""
+    archivo = request.files.get('archivo')
+    if not archivo or not archivo.filename:
+        return jsonify({'ok': False, 'error': 'No se recibió archivo'}), 400
+
+    try:
+        raw_bytes = archivo.read()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    if not raw_bytes:
+        return jsonify({'ok': False, 'error': 'El archivo está vacío'}), 400
+
+    content = decode_m3u_bytes(raw_bytes)
+    groups = get_groups_preview(content)
+
+    temp_id = str(uuid.uuid4())
+    _temp_uploads[temp_id] = raw_bytes
+
+    return jsonify({
+        'ok': True,
+        'groups': groups,
+        'temp_id': temp_id,
+        'size_kb': len(raw_bytes) // 1024,
+    })
+
+
 # ── Importador M3U (interno) ───────────────────────────────────
 
 def _import_lista_async(app, lista_id: int):
@@ -577,9 +668,18 @@ def _import_lista(app, lista_id: int):
                 if active_proxies:
                     proxy_url = random.choice(active_proxies).url
 
+            # Parsear grupos_seleccionados si existe
+            grupos_set = None
+            if lista.grupos_seleccionados:
+                try:
+                    grupos_set = set(json.loads(lista.grupos_seleccionados))
+                except (ValueError, TypeError):
+                    pass
+
             app.logger.info(
                 f'[Import M3U] Iniciando: {lista.nombre}'
                 + (f' (proxy: {proxy_url})' if proxy_url else '')
+                + (f' ({len(grupos_set)} grupos seleccionados)' if grupos_set else '')
             )
             items, error = fetch_and_parse(
                 lista.url,
@@ -587,6 +687,7 @@ def _import_lista(app, lista_id: int):
                 filter_spanish=lista.filtrar_español,
                 include_live=lista.incluir_live,
                 proxy=proxy_url,
+                grupos=grupos_set,
             )
 
             if error:
@@ -672,22 +773,20 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
 
             app.logger.info(f'[Import M3U] Procesando archivo: {lista.nombre} ({len(raw_bytes)//1024} KB)')
 
-            # Decodificar con fallback de encoding
-            content = None
-            for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'windows-1252'):
-                try:
-                    content = raw_bytes.decode(enc)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if content is None:
-                content = raw_bytes.decode('utf-8', errors='replace')
+            content = decode_m3u_bytes(raw_bytes)
 
-            # Parsear + filtrar usando la misma lógica que fetch_and_parse
+            grupos_set = None
+            if lista.grupos_seleccionados:
+                try:
+                    grupos_set = set(json.loads(lista.grupos_seleccionados))
+                except (ValueError, TypeError):
+                    pass
+
             items = parse_and_filter(
                 content, app.config,
                 filter_spanish=lista.filtrar_español,
                 include_live=lista.incluir_live,
+                grupos=grupos_set,
             )
 
             app.logger.info(f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros')

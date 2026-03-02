@@ -1,6 +1,7 @@
 """
 CinemaCity — Flask Application Factory
 """
+import json
 import os
 from flask import Flask, render_template, send_from_directory
 
@@ -21,6 +22,14 @@ def create_app(config_class=Config):
 
     # ── Extensiones ────────────────────────────────────────────
     db.init_app(app)
+
+    # ── Filtros Jinja2 personalizados ──────────────────────────
+    @app.template_filter('fromjson')
+    def fromjson_filter(value):
+        try:
+            return json.loads(value) if value else []
+        except (ValueError, TypeError):
+            return []
 
     # ── Blueprints ─────────────────────────────────────────────
     app.register_blueprint(api_bp)
@@ -90,8 +99,9 @@ def _migrate_db():
     from sqlalchemy import text
     with db.engine.connect() as conn:
         for stmt in (
-            'ALTER TABLE listas ADD COLUMN incluir_live BOOLEAN NOT NULL DEFAULT 0',
-            'ALTER TABLE listas ADD COLUMN usar_proxy   BOOLEAN NOT NULL DEFAULT 0',
+            'ALTER TABLE listas ADD COLUMN incluir_live         BOOLEAN NOT NULL DEFAULT 0',
+            'ALTER TABLE listas ADD COLUMN usar_proxy           BOOLEAN NOT NULL DEFAULT 0',
+            'ALTER TABLE listas ADD COLUMN grupos_seleccionados TEXT',
         ):
             try:
                 conn.execute(text(stmt))
