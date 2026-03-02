@@ -360,6 +360,7 @@ def parse_and_filter(
     filter_spanish: bool = False,
     include_live: bool = False,
     grupos: set | None = None,
+    tipos_override: dict | None = None,   # {group_title: 'pelicula'|'serie'|'live'}
 ) -> list:
     """
     Parsea un string M3U ya decodificado y aplica los filtros de idioma/live.
@@ -368,18 +369,28 @@ def parse_and_filter(
     grupos: si se indica, solo se incluyen items cuyo group_title esté en ese conjunto.
             Los items de grupos live se incluyen automáticamente si su grupo fue seleccionado.
             Si es None, se usa el comportamiento clásico (include_live flag).
+    tipos_override: mapa {group_title: tipo} con la clasificación manual del admin.
+            Cuando está definido, su clasificación tiene prioridad sobre is_vod_content().
     """
     all_items = parse_m3u_content(content)
 
     vod_items, live_items = [], []
     for it in all_items:
+        g = it.get('group_title') or '(sin grupo)'
+
         # Filtro por grupos seleccionados
         if grupos is not None:
-            g = it.get('group_title') or '(sin grupo)'
             if g not in grupos:
                 continue
 
-        if is_vod_content(it, config):
+        # Usar tipos_override si el admin asignó un tipo manualmente a este grupo
+        if tipos_override and g in tipos_override:
+            it['tipo'] = tipos_override[g]
+            if it['tipo'] == 'live':
+                live_items.append(it)
+            else:
+                vod_items.append(it)
+        elif is_vod_content(it, config):
             vod_items.append(it)
         else:
             it['tipo'] = 'live'
@@ -506,6 +517,7 @@ def fetch_and_parse(
     include_live: bool = False,
     proxy: str | None = None,
     grupos: set | None = None,
+    tipos_override: dict | None = None,   # {group_title: 'pelicula'|'serie'|'live'}
 ) -> tuple[list, str | None]:
     """
     Descarga una lista M3U con TIMEOUT TOTAL, la parsea y aplica filtros:
@@ -519,6 +531,7 @@ def fetch_and_parse(
 
     proxy: "host:port" (sin esquema) del proxy HTTP a usar, o None para directo.
     grupos: conjunto de nombres de group-title a incluir, o None para no filtrar por grupo.
+    tipos_override: mapa {group_title: tipo} con la clasificación manual del admin.
     Devuelve (items, error_msg). Si error_msg es None, fue exitoso.
     """
     raw_bytes, error = _download_m3u(url, config, proxy)
@@ -526,7 +539,7 @@ def fetch_and_parse(
         return [], error
 
     content = decode_m3u_bytes(raw_bytes)
-    return parse_and_filter(content, config, filter_spanish, include_live, grupos), None
+    return parse_and_filter(content, config, filter_spanish, include_live, grupos, tipos_override), None
 
 
 def fetch_groups_preview(

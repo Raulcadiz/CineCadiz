@@ -180,6 +180,15 @@ def agregar_lista():
         except (ValueError, TypeError):
             grupos_json = None
 
+    # grupos_tipos: JSON dict {group_title: tipo} con la clasificación manual del admin
+    grupos_tipos_json = request.form.get('grupos_tipos', '').strip() or None
+    if grupos_tipos_json:
+        try:
+            parsed_t = json.loads(grupos_tipos_json)
+            grupos_tipos_json = json.dumps(parsed_t) if isinstance(parsed_t, dict) and parsed_t else None
+        except (ValueError, TypeError):
+            grupos_tipos_json = None
+
     lista = Lista(
         nombre=nombre,
         url=url,
@@ -187,6 +196,7 @@ def agregar_lista():
         incluir_live=True,    # con group selection el live lo controla el grupo elegido
         usar_proxy=usar_proxy,
         grupos_seleccionados=grupos_json,
+        grupos_tipos=grupos_tipos_json,
     )
     db.session.add(lista)
     db.session.commit()
@@ -528,6 +538,14 @@ def subir_lista():
         except (ValueError, TypeError):
             grupos_json = None
 
+    grupos_tipos_json = request.form.get('grupos_tipos', '').strip() or None
+    if grupos_tipos_json:
+        try:
+            parsed_t = json.loads(grupos_tipos_json)
+            grupos_tipos_json = json.dumps(parsed_t) if isinstance(parsed_t, dict) and parsed_t else None
+        except (ValueError, TypeError):
+            grupos_tipos_json = None
+
     lista = Lista(
         nombre=nombre,
         url='[archivo subido]',
@@ -535,6 +553,7 @@ def subir_lista():
         incluir_live=True,
         usar_proxy=False,
         grupos_seleccionados=grupos_json,
+        grupos_tipos=grupos_tipos_json,
     )
     db.session.add(lista)
     db.session.flush()
@@ -676,10 +695,19 @@ def _import_lista(app, lista_id: int):
                 except (ValueError, TypeError):
                     pass
 
+            # Parsear grupos_tipos (clasificación manual del admin)
+            tipos_override = None
+            if lista.grupos_tipos:
+                try:
+                    tipos_override = json.loads(lista.grupos_tipos)
+                except (ValueError, TypeError):
+                    pass
+
             app.logger.info(
                 f'[Import M3U] Iniciando: {lista.nombre}'
                 + (f' (proxy: {proxy_url})' if proxy_url else '')
                 + (f' ({len(grupos_set)} grupos seleccionados)' if grupos_set else '')
+                + (f' ({len(tipos_override)} tipos override)' if tipos_override else '')
             )
             items, error = fetch_and_parse(
                 lista.url,
@@ -688,6 +716,7 @@ def _import_lista(app, lista_id: int):
                 include_live=lista.incluir_live,
                 proxy=proxy_url,
                 grupos=grupos_set,
+                tipos_override=tipos_override,
             )
 
             if error:
@@ -782,11 +811,19 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                 except (ValueError, TypeError):
                     pass
 
+            tipos_override = None
+            if lista.grupos_tipos:
+                try:
+                    tipos_override = json.loads(lista.grupos_tipos)
+                except (ValueError, TypeError):
+                    pass
+
             items = parse_and_filter(
                 content, app.config,
                 filter_spanish=lista.filtrar_español,
                 include_live=lista.incluir_live,
                 grupos=grupos_set,
+                tipos_override=tipos_override,
             )
 
             app.logger.info(f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros')

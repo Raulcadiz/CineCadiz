@@ -102,6 +102,7 @@ def _migrate_db():
             'ALTER TABLE listas ADD COLUMN incluir_live         BOOLEAN NOT NULL DEFAULT 0',
             'ALTER TABLE listas ADD COLUMN usar_proxy           BOOLEAN NOT NULL DEFAULT 0',
             'ALTER TABLE listas ADD COLUMN grupos_seleccionados TEXT',
+            'ALTER TABLE listas ADD COLUMN grupos_tipos         TEXT',
         ):
             try:
                 conn.execute(text(stmt))

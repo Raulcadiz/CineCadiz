@@ -32,6 +32,7 @@ class Lista(db.Model):
     incluir_live = db.Column(db.Boolean, default=False)   # importar canales en directo
     usar_proxy = db.Column(db.Boolean, default=False)     # usar proxy HTTP aleatorio
     grupos_seleccionados = db.Column(db.Text, nullable=True)  # JSON list de group-titles; None=todos
+    grupos_tipos = db.Column(db.Text, nullable=True)          # JSON dict {group_title: tipo}; None=auto
     activa = db.Column(db.Boolean, default=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     ultima_actualizacion = db.Column(db.DateTime)
@@ -54,6 +55,7 @@ class Lista(db.Model):
             'incluir_live': self.incluir_live,
             'usar_proxy': self.usar_proxy,
             'grupos_seleccionados': self.grupos_seleccionados,
+            'grupos_tipos': self.grupos_tipos,
             'activa': self.activa,
             'fecha_creacion': self.fecha_creacion.isoformat() if self.fecha_creacion else None,
             'ultima_actualizacion': (

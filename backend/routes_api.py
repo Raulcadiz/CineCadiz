@@ -76,11 +76,13 @@ def get_contenido():
         query = query.filter_by(tipo=tipo)
 
     if genero:
-        # Buscar en el campo genero (ilike para ASCII) Y en group_title (like para Unicode)
+        # ilike en ambos campos: SQLAlchemy genera lower(col) LIKE lower(pattern),
+        # lo que funciona con caracteres acentuados en SQLite porque lower() los deja
+        # igual en ambos lados (SQLite lower() solo convierte ASCII).
         query = query.filter(
             or_(
                 Contenido.genero.ilike(f'%{genero}%'),
-                Contenido.group_title.like(f'%{genero}%'),
+                Contenido.group_title.ilike(f'%{genero}%'),
             )
         )
 
@@ -193,6 +195,8 @@ def get_generos():
 
     # Si hay muy pocos géneros, usar group_title como fallback
     # Solo de contenido NO-live (excluye grupos de canales de TV)
+    # Lista de valores a omitir como "géneros" (son categorías genéricas, no géneros reales)
+    # Se compara en mayúsculas con la versión limpia del group_title
     _SKIP = {
         'VOD', 'VOD SPAIN', 'SERIES', 'PELICULAS', 'MOVIES', 'LIVE TV', 'LIVE',
         'ADULT', 'XXX', 'SPORTS', 'NEWS', 'KIDS', 'ENTERTAINMENT', 'GENERAL',
@@ -208,9 +212,12 @@ def get_generos():
             Contenido.group_title != '',
         ).distinct().all()
         for (g,) in rows2:
-            cleaned = _clean_genre_text(g)
-            if cleaned and cleaned not in _SKIP and 2 < len(cleaned) <= 50:
-                generos.add(cleaned)
+            # Usar el valor original (no _clean_genre_text) para que el filtro por
+            # group_title coincida exactamente con lo almacenado en la BD
+            cleaned_check = _clean_genre_text(g)   # solo para la comprobación _SKIP
+            if (cleaned_check and cleaned_check not in _SKIP
+                    and 2 < len(g.strip()) <= 60):
+                generos.add(g.strip())
 
     return jsonify(sorted(generos))
 
@@ -255,8 +262,8 @@ def get_series_agrupadas():
     genero   = request.args.get('genero', '').strip()
     sort     = request.args.get('sort', 'title_asc')
 
-    # Incluir tanto tipo='serie' como items marcados como 'live' que tienen
-    # número de temporada (series mal clasificadas por el parser antiguo)
+    # Incluir tipo='serie', items 'live' con temporada (series mal clasificadas por el
+    # parser antiguo) Y tipo='pelicula' con temporada (importados antes del tipos_override)
     base_q = Contenido.query.filter(
         Contenido.activo == True,
         or_(
@@ -265,6 +272,10 @@ def get_series_agrupadas():
                 Contenido.tipo == 'live',
                 Contenido.temporada != None,   # tiene S01E01 → es serie, no canal
             ),
+            and_(
+                Contenido.tipo == 'pelicula',
+                Contenido.temporada != None,   # importado antes del tipos_override
+            ),
         ),
     )
     if q:
@@ -272,7 +283,7 @@ def get_series_agrupadas():
     if genero:
         base_q = base_q.filter(
             or_(Contenido.genero.ilike(f'%{genero}%'),
-                Contenido.group_title.like(f'%{genero}%'))
+                Contenido.group_title.ilike(f'%{genero}%'))
         )
 
     all_eps = base_q.all()
@@ -349,13 +360,17 @@ def get_serie_episodios():
     if not titulo:
         return jsonify([])
 
-    # Igual que series-agrupadas: incluir items 'live' con temporada (series mal clasificadas)
+    # Igual que series-agrupadas: incluir 'serie', 'live' con temporada y 'pelicula' con temporada
     all_eps = Contenido.query.filter(
         Contenido.activo == True,
         or_(
             Contenido.tipo == 'serie',
             and_(
                 Contenido.tipo == 'live',
+                Contenido.temporada != None,
+            ),
+            and_(
+                Contenido.tipo == 'pelicula',
                 Contenido.temporada != None,
             ),
         ),

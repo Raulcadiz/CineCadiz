@@ -547,8 +547,8 @@ document.getElementById('btn-preview-file').addEventListener('click', async () =
 // Importar — URL
 // ════════════════════════════════════════════════════════════════
 document.getElementById('btn-import-url').addEventListener('click', () => {
-    const checked = (_gdata['url'] || []).filter(g => g.checked).map(g => g.name);
-    if (!checked.length) {
+    const checkedGroups = (_gdata['url'] || []).filter(g => g.checked);
+    if (!checkedGroups.length) {
         showAlert('url', 'Selecciona al menos un grupo para importar.');
         return;
     }
@@ -556,10 +556,17 @@ document.getElementById('btn-import-url').addEventListener('click', () => {
     const filtrar = document.getElementById('url-filtrar').checked;
     const form   = document.getElementById('form-url');
 
+    // Lista de nombres seleccionados
+    const checked = checkedGroups.map(g => g.name);
+    // Mapa de tipo manual: {nombre_grupo: tipo} para todos los grupos seleccionados
+    const tiposMap = {};
+    checkedGroups.forEach(g => { tiposMap[g.name] = g.tipo; });
+
     form.innerHTML = '';
     addHidden(form, 'nombre', ctx.nombre);
     addHidden(form, 'url', ctx.url);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
+    addHidden(form, 'grupos_tipos',         JSON.stringify(tiposMap));
     if (ctx.proxy) addHidden(form, 'usar_proxy',      '1');
     if (filtrar)   addHidden(form, 'filtrar_español', '1');
     form.submit();
@@ -569,8 +576,8 @@ document.getElementById('btn-import-url').addEventListener('click', () => {
 // Importar — Archivo
 // ════════════════════════════════════════════════════════════════
 document.getElementById('btn-import-file').addEventListener('click', () => {
-    const checked = (_gdata['file'] || []).filter(g => g.checked).map(g => g.name);
-    if (!checked.length) {
+    const checkedGroups = (_gdata['file'] || []).filter(g => g.checked);
+    if (!checkedGroups.length) {
         showAlert('file', 'Selecciona al menos un grupo para importar.');
         return;
     }
@@ -578,10 +585,15 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
     const filtrar = document.getElementById('file-filtrar').checked;
     const form    = document.getElementById('form-file');
 
+    const checked = checkedGroups.map(g => g.name);
+    const tiposMap = {};
+    checkedGroups.forEach(g => { tiposMap[g.name] = g.tipo; });
+
     form.innerHTML = '';
     addHidden(form, 'nombre', ctx.nombre);
     addHidden(form, 'temp_id', ctx.temp_id);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
+    addHidden(form, 'grupos_tipos',         JSON.stringify(tiposMap));
     if (filtrar) addHidden(form, 'filtrar_español', '1');
     form.submit();
 });
