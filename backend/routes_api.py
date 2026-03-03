@@ -147,16 +147,34 @@ def get_contenido_by_type(tipo):
 
 @api_bp.get('/trending')
 def get_trending():
-    """Novedades: primero los de año más reciente (2026 > 2025 …), luego los más añadidos."""
+    """Novedades: año más reciente primero, luego fecha de adición.
+    Las series se deduplicán: una sola tarjeta por serie (el episodio más reciente)
+    para evitar que la misma serie ocupe 20 tarjetas en la sección Tendencias."""
     limit = min(request.args.get('limit', 20, type=int), 50)
-    items = (
+
+    # Obtener más candidatos de los necesarios para poder deduplicar sin quedarnos cortos
+    candidates = (
         Contenido.query
-        .filter_by(activo=True)
+        .filter(Contenido.activo == True, Contenido.tipo != 'live')
         .order_by(Contenido.año.desc(), Contenido.fecha_agregado.desc())
-        .limit(limit)
+        .limit(limit * 8)
         .all()
     )
-    return jsonify([i.to_dict() for i in items])
+
+    seen_series: set = set()
+    result: list = []
+    for item in candidates:
+        # Deduplicar series: una tarjeta por título base (sin S01E01)
+        if item.tipo == 'serie' or item.temporada is not None:
+            base = _get_base_title(item.titulo)
+            if base in seen_series:
+                continue
+            seen_series.add(base)
+        result.append(item)
+        if len(result) >= limit:
+            break
+
+    return jsonify([i.to_dict() for i in result])
 
 
 def _clean_genre_text(text: str) -> str:

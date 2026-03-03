@@ -53,9 +53,9 @@ const api = {
     },
 
     trending: () => api.get('trending', { limit: 20 }),
-    peliculas: (page = 1) => api.get('contenido', { tipo: 'pelicula', page, limit: 12 }),
-    series:    (page = 1) => api.get('series-agrupadas', { page, limit: 12 }),
-    live:      (page = 1) => api.get('contenido', { tipo: 'live',     page, limit: 12 }),
+    peliculas: (page = 1) => api.get('contenido', { tipo: 'pelicula', page, limit: 20 }),
+    series:    (page = 1) => api.get('series-agrupadas', { page, limit: 20 }),
+    live:      (page = 1) => api.get('contenido', { tipo: 'live',     page, limit: 20 }),
     generos:   ()         => api.get('generos'),
     años:      ()         => api.get('anos'),   // endpoint sin tilde
     stats:     ()         => api.get('stats'),
@@ -747,7 +747,7 @@ async function loadGrid(append = false) {
                 genero: state.currentGenre,
                 sort:   state.currentSort === 'recent' ? 'recent' : 'title_asc',
                 page:   state.currentPage,
-                limit:  24,
+                limit:  48,
             });
         } else {
             // Películas / En Directo / Todo
@@ -760,7 +760,7 @@ async function loadGrid(append = false) {
                 genero: state.currentGenre,
                 sort:   state.currentSort || 'recent',
                 page:   state.currentPage,
-                limit:  24,
+                limit:  48,
             });
         }
 
@@ -833,12 +833,11 @@ function setView(type) {
     const pelSec     = document.getElementById('peliculas');
     const serSec     = document.getElementById('series');
     const liveSec    = document.getElementById('live');
-    const nov2026Sec = document.getElementById('novedades2026Section');
-    const contSec    = document.getElementById('continueSection');
+    const contSec = document.getElementById('continueSection');
 
     if (!type) {
         // Vista inicio: mostrar todo
-        [hero, novedSec, pelSec, serSec, liveSec, nov2026Sec].forEach(s => {
+        [hero, novedSec, pelSec, serSec, liveSec].forEach(s => {
             if (s) s.style.display = '';
         });
         // continueSection solo si hay historial
@@ -850,7 +849,7 @@ function setView(type) {
     } else {
         // Vista de tipo: ocultar hero, novedades y TODOS los carruseles.
         // El grid (#movies) muestra el contenido completo del tipo seleccionado.
-        [hero, novedSec, nov2026Sec, contSec, pelSec, serSec, liveSec].forEach(s => {
+        [hero, novedSec, contSec, pelSec, serSec, liveSec].forEach(s => {
             if (s) s.style.display = 'none';
         });
         document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
@@ -1190,46 +1189,7 @@ function setupEvents() {
         });
     });
 
-    // ── Novedades: resetea vista y muestra tendencias ─────────
-    document.querySelectorAll('a[href="#novedades"], #novedadesNavLink').forEach(link => {
-        link.addEventListener('click', e => {
-            e.preventDefault();
-            // Asegurarse de que la vista home esté activa (puede estar en películas/series)
-            state.currentType  = '';
-            state.currentPage  = 1;
-            state.currentYear  = '';
-            state.currentGenre = '';
-            if (el.typeFilter)  el.typeFilter.value  = '';
-            if (el.yearFilter)  el.yearFilter.value  = '';
-            if (el.genreFilter) el.genreFilter.value = '';
-            hideFavoritesSection();
-            setView('');
-            // Scroll a la sección tendencias
-            setTimeout(() => {
-                const sec = document.getElementById('novedades')?.closest('section');
-                if (sec) sec.scrollIntoView({ behavior: 'smooth' });
-            }, 120);
-            document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
-        });
-    });
 
-    // ── Géneros: scroll a la sección de pills ─────────────────
-    document.getElementById('generosNavLink')?.addEventListener('click', e => {
-        e.preventDefault();
-        state.currentType  = '';
-        if (el.typeFilter) el.typeFilter.value = '';
-        hideFavoritesSection();
-        setView('');
-        setTimeout(() => {
-            const wrap = document.getElementById('genrePillsWrap');
-            if (wrap) {
-                wrap.style.display = '';
-                wrap.scrollIntoView({ behavior: 'smooth' });
-            } else {
-                document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
-            }
-        }, 120);
-    });
 
     // ── Fullscreen button en cabecera del player ──────────────
     document.getElementById('btnFsPlayer')?.addEventListener('click', () => {
@@ -1276,21 +1236,6 @@ function setupEvents() {
         showNotification('Historial eliminado');
     });
 
-    // ── Ver todas 2026 ────────────────────────────────────────
-    document.getElementById('ver2026Link')?.addEventListener('click', e => {
-        e.preventDefault();
-        state.currentType  = '';
-        state.currentYear  = '2026';
-        state.currentPage  = 1;
-        state.currentGenre = '';
-        if (el.yearFilter)  el.yearFilter.value  = '2026';
-        if (el.typeFilter)  el.typeFilter.value  = '';
-        if (el.genreFilter) el.genreFilter.value = '';
-        hideFavoritesSection();
-        setView('');
-        loadGrid();
-        document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
-    });
 
     // ── Búsqueda móvil ────────────────────────────────────────
     document.getElementById('mobileSearchBtn')?.addEventListener('click', e => {
@@ -1312,20 +1257,6 @@ function setupEvents() {
         mobileSearchTimer = setTimeout(() => performMobileSearch(e.target.value), 350);
     });
 
-    // ── Pills de género ───────────────────────────────────────
-    document.getElementById('genrePills')?.addEventListener('click', e => {
-        const pill = e.target.closest('.genre-pill');
-        if (!pill) return;
-        const genre = pill.dataset.genre;
-        // Toggle: si ya está activo, limpia; si no, filtra
-        const isActive = pill.classList.contains('active');
-        document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
-        state.currentGenre = isActive ? '' : genre;
-        if (el.genreFilter) el.genreFilter.value = state.currentGenre;
-        if (!isActive) pill.classList.add('active');
-        state.currentPage = 1;
-        loadGrid();
-    });
 
     // ── Sort filter ───────────────────────────────────────────
     document.getElementById('sortFilter')?.addEventListener('change', e => {
@@ -1393,45 +1324,11 @@ function _timeAgo(ts) {
     return `hace ${Math.floor(h / 24)}d`;
 }
 
-// ── Novedades 2026 ─────────────────────────────────────────
-async function loadNovedades2026() {
-    try {
-        const data = await api.contenido({ año: 2026, limit: 20 });
-        const cont = document.getElementById('novedades2026Carousel');
-        const sec  = document.getElementById('novedades2026Section');
-        if (!cont) return;
-        if (!data.items || !data.items.length) {
-            if (sec) sec.style.display = 'none';
-            return;
-        }
-        renderCarousel(data.items, cont);
-    } catch { /* silenciar */ }
-}
-
 // ── Utilidad: título capitalizado (para mostrar géneros limpios) ──
 function titleCase(str) {
     // El API devuelve los géneros en MAYÚSCULAS (ej: "ACCIÓN", "CLÁSICOS ANIMADOS")
     // Los mostramos en formato Título (primera letra de cada palabra en mayúscula)
     return str.toLowerCase().replace(/(?:^|[\s\-])\S/g, c => c.toUpperCase());
-}
-
-// ── Genre Pills ────────────────────────────────────────────
-async function loadGenrePills() {
-    try {
-        const generos = await api.generos();
-        const wrap  = document.getElementById('genrePillsWrap');
-        const pills = document.getElementById('genrePills');
-        if (!wrap || !pills || !generos.length) return;
-
-        // Mostrar solo los primeros 20 géneros más comunes (ya vienen del API)
-        const top = generos.slice(0, 20);
-        // data-genre almacena el valor RAW (en mayúsculas) que se envía a la API para filtrar.
-        // El texto visible se convierte a Título para una presentación más limpia.
-        pills.innerHTML = top.map(g =>
-            `<button class="genre-pill" data-genre="${g}">${titleCase(g)}</button>`
-        ).join('');
-        wrap.style.display = '';
-    } catch { /* silenciar */ }
 }
 
 // ── Favoritos section ──────────────────────────────────────
@@ -1442,8 +1339,7 @@ async function showFavoritesSection() {
     if (!sec || !grid) return;
 
     // Ocultar secciones principales (lista explícita para no romper nada)
-    ['home', 'peliculas', 'series', 'live', 'novedades2026Section',
-     'continueSection', 'movies'].forEach(id => {
+    ['home', 'peliculas', 'series', 'live', 'continueSection', 'movies'].forEach(id => {
         const s = document.getElementById(id);
         if (s) s.style.display = 'none';
     });
@@ -1528,8 +1424,6 @@ async function init() {
 
         // Secciones adicionales (en paralelo, no bloquean el init)
         loadContinueWatching();
-        loadNovedades2026();
-        loadGenrePills();
 
         setupEvents();
     } catch (err) {
