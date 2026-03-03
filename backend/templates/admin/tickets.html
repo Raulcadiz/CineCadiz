@@ -1,0 +1,104 @@
+{% extends 'admin/base.html' %}
+{% block title %}Tickets{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1>
+        <i class="bi bi-ticket-perforated-fill me-2"></i>Tickets de soporte
+        {% if pendientes > 0 %}
+        <span class="badge" style="background:var(--cc-red);font-size:.7rem;">{{ pendientes }}</span>
+        {% endif %}
+    </h1>
+</div>
+
+<!-- Filtro de estado -->
+<div class="form-card mb-4">
+    <div class="d-flex gap-2 flex-wrap">
+        {% for estado, label in [('pendiente','Pendientes'), ('aprobado','Aprobados'), ('rechazado','Rechazados')] %}
+        <a href="{{ url_for('admin.tickets', estado=estado) }}"
+           class="btn btn-sm {% if estado_filter == estado %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+            {% if estado == 'pendiente' %}<i class="bi bi-hourglass-split me-1"></i>
+            {% elif estado == 'aprobado' %}<i class="bi bi-check-circle me-1"></i>
+            {% else %}<i class="bi bi-x-circle me-1"></i>{% endif %}
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+
+{% if tickets %}
+<div class="row g-3">
+{% for t in tickets %}
+<div class="col-12">
+<div class="form-card">
+    <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+        <div>
+            <strong>{{ t.user.username }}</strong>
+            <span class="ms-2 text-muted small">
+                {{ t.tipo.replace('_', ' ').title() }}
+            </span>
+        </div>
+        <div class="text-end">
+            {% if t.estado == 'pendiente' %}
+            <span class="badge" style="background:#3a2800;color:#f59e0b;">Pendiente</span>
+            {% elif t.estado == 'aprobado' %}
+            <span class="badge" style="background:#1a3a1a;color:#4caf50;">Aprobado</span>
+            {% else %}
+            <span class="badge" style="background:#3a1a1a;color:#f44336;">Rechazado</span>
+            {% endif %}
+            <br><small class="text-muted">{{ t.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}</small>
+        </div>
+    </div>
+
+    <p class="mb-3 p-2 rounded" style="background:#111;border-left:3px solid #333;">{{ t.mensaje }}</p>
+
+    {% if t.respuesta %}
+    <div class="mb-3 p-2 rounded" style="background:#0d1a0d;border-left:3px solid #4caf50;">
+        <small class="text-success"><i class="bi bi-reply me-1"></i>Respuesta:</small>
+        <p class="mb-0 small text-muted">{{ t.respuesta }}</p>
+    </div>
+    {% endif %}
+
+    {% if t.estado == 'pendiente' %}
+    <form method="POST" action="{{ url_for('admin.responder_ticket', ticket_id=t.id) }}">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label small text-muted mb-1">Respuesta (opcional)</label>
+                <textarea name="respuesta" class="form-control form-control-sm" rows="2"
+                          placeholder="Mensaje al usuario…"
+                          style="background:#111;border-color:#333;color:#fff;"></textarea>
+            </div>
+            {% if t.tipo == 'mas_invitaciones' %}
+            <div class="col-md-3">
+                <label class="form-label small text-muted mb-1">Invitaciones a añadir</label>
+                <input type="number" name="incremento" value="10" min="1" max="100"
+                       class="form-control form-control-sm"
+                       style="background:#111;border-color:#333;color:#fff;">
+            </div>
+            {% endif %}
+            <div class="col-auto d-flex gap-2">
+                <button type="submit" name="accion" value="aprobado"
+                        class="btn btn-sm" style="background:#1a3a1a;color:#4caf50;border-color:#2a5a2a;">
+                    <i class="bi bi-check2-circle me-1"></i>Aprobar
+                </button>
+                <button type="submit" name="accion" value="rechazado"
+                        class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-x-circle me-1"></i>Rechazar
+                </button>
+            </div>
+        </div>
+    </form>
+    {% endif %}
+</div>
+</div>
+{% endfor %}
+</div>
+
+{% else %}
+<div class="form-card text-center py-5 text-muted">
+    <i class="bi bi-inbox" style="font-size:3rem;opacity:.3;"></i>
+    <p class="mt-2 mb-0">No hay tickets en estado «{{ estado_filter }}»</p>
+</div>
+{% endif %}
+
+{% endblock %}

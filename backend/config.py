@@ -15,8 +15,13 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # ── Admin ──────────────────────────────────────────────────
-    ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
+    ADMIN_USER     = os.environ.get('ADMIN_USER',     'admin')
     ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin1234')
+
+    # Sistema multi-usuario
+    DEFAULT_INVITE_LIMIT   = int(os.environ.get('DEFAULT_INVITE_LIMIT',    10))
+    ONLINE_TIMEOUT_MINUTES = int(os.environ.get('ONLINE_TIMEOUT_MINUTES',   5))
+    SESSION_LIFETIME_DAYS  = int(os.environ.get('SESSION_LIFETIME_DAYS',   30))
 
     # ── Descarga de listas M3U ─────────────────────────────────
     # Tiempo máximo TOTAL para descargar el archivo M3U (segundos).

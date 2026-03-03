@@ -3,7 +3,8 @@ CinemaCity — Flask Application Factory
 """
 import json
 import os
-from flask import Flask, render_template, send_from_directory
+from datetime import timedelta
+from flask import Flask, render_template, send_from_directory, session, g
 
 from config import Config
 from models import db
@@ -20,8 +21,19 @@ def create_app(config_class=Config):
     )
     app.config.from_object(config_class)
 
+    # Duración de la sesión permanente
+    app.permanent_session_lifetime = timedelta(
+        days=app.config.get('SESSION_LIFETIME_DAYS', 30)
+    )
+
     # ── Extensiones ────────────────────────────────────────────
     db.init_app(app)
+
+    # ── Blueprints ─────────────────────────────────────────────
+    from routes_auth import auth_bp
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(api_bp)
+    app.register_blueprint(admin_bp)
 
     # ── Filtros Jinja2 personalizados ──────────────────────────
     @app.template_filter('fromjson')
@@ -31,9 +43,15 @@ def create_app(config_class=Config):
         except (ValueError, TypeError):
             return []
 
-    # ── Blueprints ─────────────────────────────────────────────
-    app.register_blueprint(api_bp)
-    app.register_blueprint(admin_bp)
+    # ── Context processor: inyectar current_user en todas las plantillas ──
+    @app.context_processor
+    def inject_current_user():
+        from models import User
+        user_id = session.get('user_id')
+        if user_id:
+            user = User.query.get(user_id)
+            return {'current_user': user}
+        return {'current_user': None}
 
     # ── BD: crear tablas + migraciones seguras ─────────────────
     with app.app_context():
@@ -44,9 +62,9 @@ def create_app(config_class=Config):
         db.create_all()
         _migrate_db()
         _fix_sqlite_pragmas()
+        _ensure_superadmin(app)
 
     # ── Scheduler (solo si no estamos en testing y AUTO_SCAN=1) ─
-    # Poner AUTO_SCAN=0 en .env para deshabilitar el escaneo automático.
     if not app.testing and app.config.get('AUTO_SCAN', 1):
         init_scheduler(app)
 
@@ -81,8 +99,7 @@ def create_app(config_class=Config):
 def _fix_sqlite_pragmas():
     """
     PythonAnywhere usa NFS para el home directory.
-    SQLite en modo WAL (default en versiones modernas) no funciona bien en NFS
-    y produce 'disk I/O error'. Forzamos journal_mode=DELETE que es seguro en NFS.
+    SQLite en modo WAL no funciona bien en NFS → forzamos journal_mode=DELETE.
     """
     try:
         from sqlalchemy import text
@@ -91,24 +108,48 @@ def _fix_sqlite_pragmas():
             conn.execute(text('PRAGMA synchronous=NORMAL'))
             conn.commit()
     except Exception:
-        pass   # Si no es SQLite o ya está bien, ignorar
+        pass
 
 
 def _migrate_db():
     """Agrega columnas nuevas a tablas existentes sin perder datos (SQLite safe)."""
     from sqlalchemy import text
+    stmts = [
+        # Columnas pre-existentes
+        'ALTER TABLE listas ADD COLUMN incluir_live         BOOLEAN NOT NULL DEFAULT 0',
+        'ALTER TABLE listas ADD COLUMN usar_proxy           BOOLEAN NOT NULL DEFAULT 0',
+        'ALTER TABLE listas ADD COLUMN grupos_seleccionados TEXT',
+        'ALTER TABLE listas ADD COLUMN grupos_tipos         TEXT',
+        # Multi-usuario
+        'ALTER TABLE listas ADD COLUMN owner_id    INTEGER REFERENCES users(id)',
+        'ALTER TABLE listas ADD COLUMN visibilidad TEXT NOT NULL DEFAULT \'global\'',
+        'ALTER TABLE fuentes_rss ADD COLUMN owner_id    INTEGER REFERENCES users(id)',
+        'ALTER TABLE fuentes_rss ADD COLUMN visibilidad TEXT NOT NULL DEFAULT \'global\'',
+    ]
     with db.engine.connect() as conn:
-        for stmt in (
-            'ALTER TABLE listas ADD COLUMN incluir_live         BOOLEAN NOT NULL DEFAULT 0',
-            'ALTER TABLE listas ADD COLUMN usar_proxy           BOOLEAN NOT NULL DEFAULT 0',
-            'ALTER TABLE listas ADD COLUMN grupos_seleccionados TEXT',
-            'ALTER TABLE listas ADD COLUMN grupos_tipos         TEXT',
-        ):
+        for stmt in stmts:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
             except Exception:
                 pass   # columna ya existe → ignorar
+
+
+def _ensure_superadmin(app):
+    """
+    Si no existe ningún usuario en la BD, crea el superadmin con las
+    credenciales definidas en ADMIN_USER / ADMIN_PASSWORD.
+    """
+    from models import User
+    if User.query.count() == 0:
+        admin = User(
+            username=app.config.get('ADMIN_USER', 'admin'),
+            role='superadmin',
+            invite_limit=9999,
+        )
+        admin.set_password(app.config.get('ADMIN_PASSWORD', 'admin1234'))
+        db.session.add(admin)
+        db.session.commit()
 
 
 # ── Punto de entrada para desarrollo local ─────────────────────

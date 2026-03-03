@@ -126,12 +126,15 @@
         </a>
         <a href="{{ url_for('admin.listas') }}"
            class="{% if 'listas' in request.endpoint %}active{% endif %}">
-            <i class="bi bi-collection-play-fill"></i> Listas M3U
+            <i class="bi bi-collection-play-fill"></i>
+            {% if current_user and not current_user.is_superadmin %}Mis Listas{% else %}Listas M3U{% endif %}
         </a>
         <a href="{{ url_for('admin.rss') }}"
            class="{% if 'rss' in request.endpoint %}active{% endif %}">
-            <i class="bi bi-rss-fill"></i> Fuentes RSS
+            <i class="bi bi-rss-fill"></i>
+            {% if current_user and not current_user.is_superadmin %}Mis Fuentes RSS{% else %}Fuentes RSS{% endif %}
         </a>
+        {% if current_user and current_user.is_superadmin %}
         <a href="{{ url_for('admin.contenido') }}"
            class="{% if 'contenido' in request.endpoint %}active{% endif %}">
             <i class="bi bi-film"></i> Contenido
@@ -140,11 +143,39 @@
            class="{% if 'proxies' in request.endpoint %}active{% endif %}">
             <i class="bi bi-shield-lock-fill"></i> Proxies HTTP
         </a>
+        <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
+        <a href="{{ url_for('admin.users') }}"
+           class="{% if 'users' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-people-fill"></i> Usuarios
+        </a>
+        <a href="{{ url_for('admin.tickets') }}"
+           class="{% if 'tickets' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-ticket-perforated-fill"></i> Tickets
+            {# badge de tickets pendientes #}
+        </a>
+        {% endif %}
+        <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
+        <a href="{{ url_for('auth.mi_cuenta') }}">
+            <i class="bi bi-person-circle"></i> Mi cuenta
+        </a>
         <a href="{{ url_for('index') }}" target="_blank">
             <i class="bi bi-box-arrow-up-right"></i> Ver web
         </a>
     </nav>
     <div class="sidebar-footer">
+        <div class="mb-1">
+            {% if current_user %}
+            <span class="text-secondary" style="font-size:.78rem;">
+                <i class="bi bi-person me-1"></i>{{ current_user.username }}
+                <span class="badge ms-1"
+                      style="font-size:.65rem;
+                             {% if current_user.is_superadmin %}background:#3a0a0a;color:#ef4444;
+                             {% else %}background:#3a2800;color:#f59e0b;{% endif %}">
+                    {{ current_user.role }}
+                </span>
+            </span>
+            {% endif %}
+        </div>
         <a href="{{ url_for('admin.logout') }}" class="text-danger text-decoration-none">
             <i class="bi bi-box-arrow-left"></i> Cerrar sesión
         </a>

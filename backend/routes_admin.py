@@ -15,7 +15,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -35,36 +35,76 @@ _temp_uploads: dict[str, bytes] = {}
 
 # ── Auth ───────────────────────────────────────────────────────
 
+def _get_panel_user():
+    """Devuelve el User activo de la sesión actual (premium o superadmin), o None."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return None
+    u = User.query.get(user_id)
+    return u if (u and u.activo and u.is_premium) else None
+
+
 def login_required(f):
+    """Requiere que el usuario sea premium o superadmin."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get('admin_logged_in'):
+        if not _get_panel_user():
             return redirect(url_for('admin.login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def superadmin_required(f):
+    """Requiere rol superadmin."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        u = _get_panel_user()
+        if not u or not u.is_superadmin:
+            flash('Acceso restringido al superadmin.', 'danger')
+            return redirect(url_for('admin.dashboard'))
         return f(*args, **kwargs)
     return decorated
 
 
 @admin_bp.get('/login')
 def login():
+    if _get_panel_user():
+        return redirect(url_for('admin.dashboard'))
     return render_template('admin/login.html')
 
 
 @admin_bp.post('/login')
 def login_post():
-    user = request.form.get('usuario', '').strip()
-    pwd = request.form.get('password', '')
-    if (user == current_app.config['ADMIN_USER']
-            and pwd == current_app.config['ADMIN_PASSWORD']):
-        session['admin_logged_in'] = True
-        session.permanent = True
-        return redirect(url_for('admin.dashboard'))
-    flash('Usuario o contraseña incorrectos', 'danger')
-    return redirect(url_for('admin.login'))
+    username = request.form.get('usuario', '').strip()
+    pwd      = request.form.get('password', '')
+    user = User.query.filter_by(username=username).first()
+    if not user or not user.check_password(pwd) or not user.activo:
+        flash('Usuario o contraseña incorrectos', 'danger')
+        return redirect(url_for('admin.login'))
+    if not user.is_premium:
+        flash('No tienes acceso al panel de administración.', 'danger')
+        return redirect(url_for('admin.login'))
+
+    from routes_auth import _refresh_user_session
+    session.clear()
+    session['user_id']   = user.id
+    session['user_role'] = user.role
+    session['username']  = user.username
+    session.permanent = True
+    _refresh_user_session(user)
+    return redirect(url_for('admin.dashboard'))
 
 
 @admin_bp.get('/logout')
 @login_required
 def logout():
+    from routes_auth import _refresh_user_session
+    sk = session.get('session_key')
+    if sk:
+        us = UserSession.query.filter_by(session_key=sk).first()
+        if us:
+            db.session.delete(us)
+            db.session.commit()
     session.clear()
     return redirect(url_for('admin.login'))
 
@@ -74,21 +114,54 @@ def logout():
 @admin_bp.get('/')
 @login_required
 def dashboard():
-    stats = {
-        'peliculas':   Contenido.query.filter_by(tipo='pelicula', activo=True).count(),
-        'series':      Contenido.query.filter_by(tipo='serie', activo=True).count(),
-        'live':        Contenido.query.filter_by(tipo='live', activo=True).count(),
-        'inactivos':   Contenido.query.filter_by(activo=False).count(),
-        'listas_m3u':  Lista.query.count(),
-        'fuentes_rss': FuenteRSS.query.count(),
-        'total_m3u':   Contenido.query.filter_by(fuente='m3u', activo=True).count(),
-        'total_rss':   Contenido.query.filter_by(fuente='rss', activo=True).count(),
-    }
-    listas = Lista.query.order_by(Lista.fecha_creacion.desc()).all()
-    fuentes = FuenteRSS.query.order_by(FuenteRSS.fecha_creacion.desc()).all()
-    return render_template('admin/dashboard.html',
-                           stats=stats, listas=listas,
-                           fuentes=fuentes, scan_state=_scan_state)
+    panel_user = _get_panel_user()
+
+    if panel_user.is_superadmin:
+        stats = {
+            'peliculas':   Contenido.query.filter_by(tipo='pelicula', activo=True).count(),
+            'series':      Contenido.query.filter_by(tipo='serie', activo=True).count(),
+            'live':        Contenido.query.filter_by(tipo='live', activo=True).count(),
+            'inactivos':   Contenido.query.filter_by(activo=False).count(),
+            'listas_m3u':  Lista.query.count(),
+            'fuentes_rss': FuenteRSS.query.count(),
+            'total_m3u':   Contenido.query.filter_by(fuente='m3u', activo=True).count(),
+            'total_rss':   Contenido.query.filter_by(fuente='rss', activo=True).count(),
+            'usuarios':    User.query.count(),
+            'tickets_pendientes': Ticket.query.filter_by(estado='pendiente').count(),
+        }
+        listas  = Lista.query.order_by(Lista.fecha_creacion.desc()).limit(6).all()
+        fuentes = FuenteRSS.query.order_by(FuenteRSS.fecha_creacion.desc()).limit(6).all()
+    else:
+        # Usuario premium: solo sus listas privadas
+        mis_ids = [l.id for l in panel_user.listas]
+        q_cont  = Contenido.query.filter(
+            Contenido.lista_id.in_(mis_ids), Contenido.activo == True
+        ) if mis_ids else Contenido.query.filter(False)
+        stats = {
+            'peliculas':   q_cont.filter_by(tipo='pelicula').count(),
+            'series':      q_cont.filter_by(tipo='serie').count(),
+            'live':        q_cont.filter_by(tipo='live').count(),
+            'inactivos':   0,
+            'listas_m3u':  panel_user.listas.count(),
+            'fuentes_rss': panel_user.fuentes_rss.count(),
+            'total_m3u':   q_cont.count(),
+            'total_rss':   0,
+        }
+        listas  = panel_user.listas.order_by(Lista.fecha_creacion.desc()).limit(6).all()
+        fuentes = panel_user.fuentes_rss.order_by(FuenteRSS.fecha_creacion.desc()).limit(6).all()
+
+    # Usuarios en línea (activos en los últimos N minutos)
+    from datetime import timedelta
+    timeout = current_app.config.get('ONLINE_TIMEOUT_MINUTES', 5)
+    cutoff  = datetime.utcnow() - timedelta(minutes=timeout)
+    online_count = UserSession.query.filter(UserSession.last_seen >= cutoff).count()
+
+    return render_template(
+        'admin/dashboard.html',
+        stats=stats, listas=listas, fuentes=fuentes,
+        scan_state=_scan_state, online_count=online_count,
+        panel_user=panel_user,
+    )
 
 
 # ── Reclasificación de contenido ──────────────────────────────
@@ -152,8 +225,12 @@ def reclassify_content():
 @admin_bp.get('/listas')
 @login_required
 def listas():
-    all_listas = Lista.query.order_by(Lista.fecha_creacion.desc()).all()
-    return render_template('admin/lists.html', listas=all_listas)
+    panel_user = _get_panel_user()
+    if panel_user.is_superadmin:
+        all_listas = Lista.query.order_by(Lista.fecha_creacion.desc()).all()
+    else:
+        all_listas = panel_user.listas.order_by(Lista.fecha_creacion.desc()).all()
+    return render_template('admin/lists.html', listas=all_listas, panel_user=panel_user)
 
 
 @admin_bp.post('/listas/agregar')
@@ -189,14 +266,17 @@ def agregar_lista():
         except (ValueError, TypeError):
             grupos_tipos_json = None
 
+    panel_user = _get_panel_user()
     lista = Lista(
         nombre=nombre,
         url=url,
         filtrar_español=filtrar,
-        incluir_live=True,    # con group selection el live lo controla el grupo elegido
+        incluir_live=True,
         usar_proxy=usar_proxy,
         grupos_seleccionados=grupos_json,
         grupos_tipos=grupos_tipos_json,
+        owner_id=None if panel_user.is_superadmin else panel_user.id,
+        visibilidad='global' if panel_user.is_superadmin else 'private',
     )
     db.session.add(lista)
     db.session.commit()
@@ -218,6 +298,11 @@ def refresh_lista(lista_id):
 @login_required
 def eliminar_lista(lista_id):
     lista = Lista.query.get_or_404(lista_id)
+    panel_user = _get_panel_user()
+    # Los premium solo pueden borrar sus propias listas
+    if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
+        flash('No tienes permiso para eliminar esta lista.', 'danger')
+        return redirect(url_for('admin.listas'))
     nombre = lista.nombre
     db.session.delete(lista)
     db.session.commit()
@@ -240,8 +325,12 @@ def toggle_lista(lista_id):
 @admin_bp.get('/rss')
 @login_required
 def rss():
-    fuentes = FuenteRSS.query.order_by(FuenteRSS.fecha_creacion.desc()).all()
-    return render_template('admin/rss.html', fuentes=fuentes)
+    panel_user = _get_panel_user()
+    if panel_user.is_superadmin:
+        fuentes = FuenteRSS.query.order_by(FuenteRSS.fecha_creacion.desc()).all()
+    else:
+        fuentes = panel_user.fuentes_rss.order_by(FuenteRSS.fecha_creacion.desc()).all()
+    return render_template('admin/rss.html', fuentes=fuentes, panel_user=panel_user)
 
 
 @admin_bp.post('/rss/agregar')
@@ -391,6 +480,32 @@ def lista_status(lista_id):
 @login_required
 def rss_status(fuente_id):
     return jsonify(FuenteRSS.query.get_or_404(fuente_id).to_dict())
+
+
+@admin_bp.get('/api/online')
+@login_required
+def online_users():
+    """Devuelve la lista de usuarios activos en los últimos N minutos."""
+    from datetime import timedelta
+    timeout = current_app.config.get('ONLINE_TIMEOUT_MINUTES', 5)
+    cutoff  = datetime.utcnow() - timedelta(minutes=timeout)
+    sessions = (
+        UserSession.query
+        .filter(UserSession.last_seen >= cutoff)
+        .order_by(UserSession.last_seen.desc())
+        .all()
+    )
+    result = []
+    for s in sessions:
+        u = User.query.get(s.user_id)
+        result.append({
+            'user_id':    s.user_id,
+            'username':   u.username if u else '?',
+            'role':       u.role if u else '?',
+            'ip':         s.ip_address,
+            'last_seen':  s.last_seen.isoformat(),
+        })
+    return jsonify({'online': len(result), 'sessions': result})
 
 
 # ── Gestión de proxies HTTP ────────────────────────────────
@@ -883,3 +998,128 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                     db.session.commit()
             except Exception:
                 pass
+
+
+# ═══════════════════════════════════════════════════════════
+# GESTIÓN DE USUARIOS  (solo superadmin)
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get('/users')
+@superadmin_required
+def users():
+    all_users = User.query.order_by(User.fecha_creacion.desc()).all()
+    return render_template('admin/users.html', users=all_users)
+
+
+@admin_bp.post('/users/<int:user_id>/toggle')
+@superadmin_required
+def toggle_user(user_id):
+    u = User.query.get_or_404(user_id)
+    if u.is_superadmin:
+        flash('No puedes desactivar al superadmin.', 'danger')
+    else:
+        u.activo = not u.activo
+        db.session.commit()
+        flash(f'Usuario {u.username} {"activado" if u.activo else "desactivado"}.', 'info')
+    return redirect(url_for('admin.users'))
+
+
+@admin_bp.post('/users/<int:user_id>/set-role')
+@superadmin_required
+def set_user_role(user_id):
+    u = User.query.get_or_404(user_id)
+    if u.is_superadmin:
+        flash('No puedes cambiar el rol del superadmin.', 'danger')
+        return redirect(url_for('admin.users'))
+    nuevo_rol = request.form.get('role', 'user')
+    if nuevo_rol not in ('user', 'premium'):
+        nuevo_rol = 'user'
+    u.role = nuevo_rol
+    db.session.commit()
+    flash(f'Rol de {u.username} cambiado a {nuevo_rol}.', 'success')
+    return redirect(url_for('admin.users'))
+
+
+@admin_bp.post('/users/<int:user_id>/set-invite-limit')
+@superadmin_required
+def set_invite_limit(user_id):
+    u = User.query.get_or_404(user_id)
+    limit = request.form.get('limit', 10, type=int)
+    limit = max(0, min(limit, 9999))
+    u.invite_limit = limit
+    db.session.commit()
+    flash(f'Límite de invitaciones de {u.username} actualizado a {limit}.', 'success')
+    return redirect(url_for('admin.users'))
+
+
+@admin_bp.post('/users/<int:user_id>/eliminar')
+@superadmin_required
+def eliminar_user(user_id):
+    u = User.query.get_or_404(user_id)
+    if u.is_superadmin:
+        flash('No puedes eliminar al superadmin.', 'danger')
+        return redirect(url_for('admin.users'))
+    # Reasignar sus listas a global antes de borrar
+    Lista.query.filter_by(owner_id=u.id).update({
+        'owner_id': None, 'visibilidad': 'global'
+    })
+    FuenteRSS.query.filter_by(owner_id=u.id).update({
+        'owner_id': None, 'visibilidad': 'global'
+    })
+    db.session.delete(u)
+    db.session.commit()
+    flash(f'Usuario {u.username} eliminado.', 'success')
+    return redirect(url_for('admin.users'))
+
+
+# ═══════════════════════════════════════════════════════════
+# GESTIÓN DE TICKETS  (solo superadmin)
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get('/tickets')
+@superadmin_required
+def tickets():
+    estado_filter = request.args.get('estado', 'pendiente')
+    query = Ticket.query
+    if estado_filter in ('pendiente', 'aprobado', 'rechazado'):
+        query = query.filter_by(estado=estado_filter)
+    all_tickets = query.order_by(Ticket.fecha_creacion.desc()).all()
+    pendientes = Ticket.query.filter_by(estado='pendiente').count()
+    return render_template(
+        'admin/tickets.html',
+        tickets=all_tickets,
+        estado_filter=estado_filter,
+        pendientes=pendientes,
+    )
+
+
+@admin_bp.post('/tickets/<int:ticket_id>/responder')
+@superadmin_required
+def responder_ticket(ticket_id):
+    ticket    = Ticket.query.get_or_404(ticket_id)
+    accion    = request.form.get('accion', 'rechazado')
+    respuesta = request.form.get('respuesta', '').strip()
+
+    if accion not in ('aprobado', 'rechazado'):
+        accion = 'rechazado'
+
+    ticket.estado          = accion
+    ticket.respuesta       = respuesta
+    ticket.fecha_respuesta = datetime.utcnow()
+
+    # Si es aprobado y el tipo es 'mas_invitaciones', aumentar el límite
+    if accion == 'aprobado' and ticket.tipo == 'mas_invitaciones':
+        incremento = request.form.get('incremento', 10, type=int)
+        incremento = max(1, min(incremento, 100))
+        u = User.query.get(ticket.user_id)
+        if u:
+            u.invite_limit += incremento
+            flash(
+                f'Ticket aprobado. Se han añadido {incremento} invitaciones a {u.username}.',
+                'success'
+            )
+    else:
+        flash(f'Ticket marcado como {accion}.', 'info')
+
+    db.session.commit()
+    return redirect(url_for('admin.tickets'))

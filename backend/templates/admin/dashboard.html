@@ -80,6 +80,64 @@
     </div>
 </div>
 
+<!-- Widget Usuarios Online (superadmin) -->
+{% if current_user and current_user.is_superadmin %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card d-flex align-items-center gap-3">
+            <div class="stat-icon" style="background:#0a3a0a;flex-shrink:0;">
+                <i class="bi bi-people-fill text-success"></i>
+            </div>
+            <div>
+                <div class="stat-value" id="onlineCount">{{ online_count }}</div>
+                <div class="stat-label">Usuarios en línea</div>
+                <div style="font-size:.72rem;color:#555;">últimos 5 min</div>
+            </div>
+            <a href="#" class="ms-auto btn btn-sm btn-outline-secondary"
+               onclick="loadOnlineUsers();return false;" title="Actualizar">
+                <i class="bi bi-arrow-clockwise"></i>
+            </a>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card d-flex align-items-center gap-3">
+            <div class="stat-icon" style="background:#2a1a00;flex-shrink:0;">
+                <i class="bi bi-people text-warning"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.usuarios }}</div>
+                <div class="stat-label">Usuarios registrados</div>
+            </div>
+            <a href="{{ url_for('admin.users') }}" class="ms-auto btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-right"></i>
+            </a>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card d-flex align-items-center gap-3">
+            <div class="stat-icon" style="background:#3a2800;flex-shrink:0;">
+                <i class="bi bi-ticket-perforated-fill text-warning"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.tickets_pendientes }}</div>
+                <div class="stat-label">Tickets pendientes</div>
+            </div>
+            {% if stats.tickets_pendientes > 0 %}
+            <a href="{{ url_for('admin.tickets') }}" class="ms-auto btn btn-sm btn-outline-warning">
+                <i class="bi bi-exclamation-circle"></i>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Lista de sesiones activas -->
+<div class="form-card mb-4" id="onlineCard" style="display:none;">
+    <h6 class="mb-3"><i class="bi bi-activity me-2 text-success"></i>Sesiones activas ahora</h6>
+    <div id="onlineList"></div>
+</div>
+{% endif %}
+
 <!-- Listas M3U + Fuentes RSS -->
 <div class="row g-3 mb-4">
     <div class="col-md-6">
@@ -194,6 +252,41 @@
         .catch(() => setTimeout(poll, 8000));
 })();
 {% endif %}
+
+// ── Usuarios online ───────────────────────────────────────
+function loadOnlineUsers() {
+    fetch('/admin/api/online')
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById('onlineCount').textContent = d.online;
+            const card = document.getElementById('onlineCard');
+            const list = document.getElementById('onlineList');
+            if (!d.sessions || d.sessions.length === 0) {
+                list.innerHTML = '<p class="text-muted small mb-0">Sin sesiones activas.</p>';
+            } else {
+                const roleBadge = r => r.role === 'superadmin'
+                    ? '<span class="badge" style="background:#3a0a0a;color:#ef4444;">superadmin</span>'
+                    : r.role === 'premium'
+                    ? '<span class="badge" style="background:#3a2800;color:#f59e0b;">premium</span>'
+                    : '<span class="badge" style="background:#0d2233;color:#38bdf8;">user</span>';
+                list.innerHTML = d.sessions.map(s =>
+                    `<div class="d-flex align-items-center gap-2 py-1" style="border-bottom:1px solid #2a2a2a">
+                        <i class="bi bi-circle-fill text-success" style="font-size:.5rem;"></i>
+                        <strong style="font-size:.88rem;">${s.username}</strong>
+                        ${roleBadge(s)}
+                        <span class="text-muted ms-auto" style="font-size:.75rem;">${s.ip || ''}</span>
+                        <span class="text-muted" style="font-size:.75rem;">${s.last_seen.slice(11,16)}</span>
+                    </div>`
+                ).join('');
+            }
+            card.style.display = '';
+        })
+        .catch(err => console.error(err));
+}
+// Cargar automáticamente al entrar al dashboard
+loadOnlineUsers();
+// Refrescar cada 30s
+setInterval(loadOnlineUsers, 30000);
 
 // Botón "Reclasificar contenido"
 document.getElementById('btnReclassify')?.addEventListener('click', function() {

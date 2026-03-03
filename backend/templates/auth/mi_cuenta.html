@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi cuenta — CineCadiz</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --cc-red: #e50914; --cc-dark: #141414; --cc-card: #1f1f1f; }
+        body { background: var(--cc-dark); min-height: 100vh; padding: 2rem 1rem; }
+        .page-card {
+            background: var(--cc-card); border: 1px solid #2a2a2a;
+            border-radius: 16px; padding: 1.5rem;
+        }
+        .brand { color: var(--cc-red); font-size: 1.3rem; font-weight: 800; }
+        .role-badge { border-radius: 20px; padding: .2rem .75rem; font-size: .8rem; font-weight: 600; }
+        .role-superadmin { background:#3a0a0a; color:#ef4444; }
+        .role-premium    { background:#3a2800; color:#f59e0b; }
+        .role-user       { background:#0d2233; color:#38bdf8; }
+        .form-control { background:#111; border-color:#333; color:#fff; }
+        .form-control:focus { background:#111; border-color:var(--cc-red); color:#fff; box-shadow:0 0 0 .2rem rgba(229,9,20,.25); }
+        .btn-cc { background:var(--cc-red); border-color:var(--cc-red); color:#fff; }
+        .btn-cc:hover { background:#c50812; border-color:#c50812; color:#fff; }
+        .invite-link {
+            font-family: monospace; font-size:.8rem;
+            background:#111; border:1px solid #333; border-radius:6px;
+            padding:.4rem .75rem; word-break:break-all; color:#aaa;
+        }
+        .table th { border-color:#2a2a2a; font-size:.75rem; color:#888; text-transform:uppercase; }
+        .table td { border-color:#2a2a2a; vertical-align:middle; font-size:.88rem; }
+    </style>
+</head>
+<body>
+<div class="container" style="max-width:860px;">
+
+    <!-- Header -->
+    <div class="d-flex align-items-center gap-3 mb-4">
+        <a href="{{ url_for('index') }}" class="text-decoration-none brand">
+            <i class="bi bi-camera-reels-fill"></i> CineCadiz
+        </a>
+        <div class="ms-auto d-flex gap-2">
+            {% if user.is_premium %}
+            <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-grid-1x2 me-1"></i>Panel
+            </a>
+            {% endif %}
+            <a href="{{ url_for('auth.logout') }}" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-box-arrow-left me-1"></i>Salir
+            </a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <div class="row g-4">
+
+        <!-- Perfil -->
+        <div class="col-md-4">
+            <div class="page-card h-100">
+                <div class="text-center mb-3">
+                    <div style="width:72px;height:72px;background:#2a2a2a;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;">
+                        <i class="bi bi-person-fill" style="font-size:2rem;color:#555;"></i>
+                    </div>
+                    <h5 class="fw-bold mb-1">{{ user.username }}</h5>
+                    {% if user.role == 'superadmin' %}
+                    <span class="role-badge role-superadmin"><i class="bi bi-shield-fill me-1"></i>Superadmin</span>
+                    {% elif user.role == 'premium' %}
+                    <span class="role-badge role-premium"><i class="bi bi-star-fill me-1"></i>Premium</span>
+                    {% else %}
+                    <span class="role-badge role-user"><i class="bi bi-person-fill me-1"></i>Usuario</span>
+                    {% endif %}
+                </div>
+                <hr style="border-color:#2a2a2a;">
+                <div class="small text-muted mb-1">Miembro desde</div>
+                <div class="small mb-3">{{ user.fecha_creacion.strftime('%d/%m/%Y') if user.fecha_creacion else '—' }}</div>
+                {% if user.is_premium %}
+                <div class="small text-muted mb-1">Invitaciones</div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <div class="progress flex-grow-1" style="height:6px;background:#2a2a2a;">
+                        {% set pct = (user.invites_used / user.invite_limit * 100) if user.invite_limit > 0 else 0 %}
+                        <div class="progress-bar" style="width:{{ pct }}%;background:var(--cc-red);"></div>
+                    </div>
+                    <small>{{ user.invites_used }}/{{ user.invite_limit }}</small>
+                </div>
+                {% if user.can_invite %}
+                <small class="text-success"><i class="bi bi-check-circle me-1"></i>{{ user.invites_remaining }} disponibles</small>
+                {% else %}
+                <small class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Sin invitaciones</small>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Contenido derecho -->
+        <div class="col-md-8">
+
+            <!-- Cambiar contraseña -->
+            <div class="page-card mb-4">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-key me-2 text-secondary"></i>Cambiar contraseña</h6>
+                <form method="POST" action="{{ url_for('auth.cambiar_password') }}">
+                    <div class="row g-2">
+                        <div class="col-12">
+                            <input type="password" name="password_actual" class="form-control form-control-sm"
+                                   placeholder="Contraseña actual" required>
+                        </div>
+                        <div class="col-sm-6">
+                            <input type="password" name="password_nueva" class="form-control form-control-sm"
+                                   placeholder="Nueva contraseña (min 6)" minlength="6" required>
+                        </div>
+                        <div class="col-sm-6">
+                            <input type="password" name="password_nueva2" class="form-control form-control-sm"
+                                   placeholder="Repite nueva contraseña" minlength="6" required>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-sm btn-cc">
+                                <i class="bi bi-check2 me-1"></i>Actualizar contraseña
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Invitaciones (solo premium/superadmin) -->
+            {% if user.is_premium %}
+            <div class="page-card mb-4">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-person-plus me-2 text-secondary"></i>Invitaciones</h6>
+
+                {% if user.can_invite %}
+                <form method="POST" action="{{ url_for('auth.crear_invitacion') }}" class="mb-3">
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <select name="role" class="form-select form-select-sm" style="width:160px;background:#111;border-color:#333;color:#fff;">
+                            <option value="user">Usuario normal</option>
+                            {% if current_user and current_user.is_superadmin %}
+                            <option value="premium">Premium</option>
+                            {% endif %}
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-cc">
+                            <i class="bi bi-plus-lg me-1"></i>Crear invitación
+                        </button>
+                        <small class="text-muted">Quedan <strong>{{ user.invites_remaining }}</strong></small>
+                    </div>
+                </form>
+                {% else %}
+                <div class="alert alert-warning py-2 mb-3" style="font-size:.85rem;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Has agotado tus invitaciones. Puedes solicitar más al administrador.
+                </div>
+                {% endif %}
+
+                <!-- Invitaciones pendientes -->
+                {% if tokens %}
+                <div class="mb-1 text-secondary" style="font-size:.8rem;">Pendientes ({{ tokens|length }})</div>
+                <div class="list-group list-group-flush mb-3" style="background:transparent;">
+                    {% for t in tokens %}
+                    <div class="list-group-item d-flex align-items-center gap-2 px-0 py-2" style="background:transparent;border-color:#2a2a2a;">
+                        <div class="flex-grow-1">
+                            <div class="invite-link">{{ request.host_url }}registro/{{ t.token }}</div>
+                            <small class="text-muted">
+                                Creada el {{ t.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}
+                                • Rol: <strong>{{ t.role_asignado }}</strong>
+                            </small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary copy-btn"
+                                data-url="{{ request.host_url }}registro/{{ t.token }}"
+                                title="Copiar enlace">
+                            <i class="bi bi-clipboard"></i>
+                        </button>
+                        <form method="POST"
+                              action="{{ url_for('auth.eliminar_invitacion', token_id=t.id) }}"
+                              class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Eliminar">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <!-- Invitaciones usadas -->
+                {% if used_tokens %}
+                <div class="mb-1 text-secondary" style="font-size:.8rem;">Usadas recientemente</div>
+                <table class="table table-sm table-dark">
+                    <thead><tr><th>Usuario</th><th>Rol</th><th>Fecha</th></tr></thead>
+                    <tbody>
+                    {% for t in used_tokens %}
+                    <tr>
+                        <td>{{ t.used_by.username if t.used_by else '—' }}</td>
+                        <td><small>{{ t.role_asignado }}</small></td>
+                        <td><small>{{ t.fecha_uso.strftime('%d/%m/%Y') if t.fecha_uso else '—' }}</small></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+
+            <!-- Ticket de soporte -->
+            <div class="page-card mb-4">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-ticket-perforated me-2 text-secondary"></i>Solicitar al administrador</h6>
+                <form method="POST" action="{{ url_for('auth.enviar_ticket') }}">
+                    <div class="mb-2">
+                        <select name="tipo" class="form-select form-select-sm mb-2"
+                                style="background:#111;border-color:#333;color:#fff;">
+                            <option value="mas_invitaciones">Más invitaciones</option>
+                            <option value="otro">Otro motivo</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <textarea name="mensaje" class="form-control form-control-sm" rows="3"
+                                  placeholder="Describe tu solicitud…" required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-send me-1"></i>Enviar solicitud
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Mis tickets -->
+            {% if tickets %}
+            <div class="page-card">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-clock-history me-2 text-secondary"></i>Mis solicitudes</h6>
+                {% for t in tickets %}
+                <div class="mb-3 p-3 rounded" style="background:#111;border:1px solid #2a2a2a;">
+                    <div class="d-flex justify-content-between mb-1">
+                        <small class="text-secondary">{{ t.tipo.replace('_', ' ').title() }}</small>
+                        {% if t.estado == 'pendiente' %}
+                        <span class="badge" style="background:#3a2800;color:#f59e0b;">Pendiente</span>
+                        {% elif t.estado == 'aprobado' %}
+                        <span class="badge" style="background:#1a3a1a;color:#4caf50;">Aprobado</span>
+                        {% else %}
+                        <span class="badge" style="background:#3a1a1a;color:#f44336;">Rechazado</span>
+                        {% endif %}
+                    </div>
+                    <p class="mb-1 small">{{ t.mensaje }}</p>
+                    {% if t.respuesta %}
+                    <hr style="border-color:#2a2a2a;margin:.5rem 0;">
+                    <p class="mb-0 small text-muted"><i class="bi bi-reply me-1"></i>{{ t.respuesta }}</p>
+                    {% endif %}
+                    <small class="text-muted">{{ t.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}</small>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+        </div><!-- col -->
+    </div><!-- row -->
+</div><!-- container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.url).then(() => {
+            btn.innerHTML = '<i class="bi bi-check2"></i>';
+            setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard"></i>', 2000);
+        });
+    });
+});
+</script>
+</body>
+</html>

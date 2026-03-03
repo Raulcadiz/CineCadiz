@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crear cuenta — CineCadiz</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --cc-red: #e50914; }
+        body {
+            background: #0a0a0a;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .reg-card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 16px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 440px;
+        }
+        .brand { color: var(--cc-red); font-size: 1.5rem; font-weight: 800; }
+        .btn-primary { background: var(--cc-red); border-color: var(--cc-red); }
+        .btn-primary:hover { background: #c50812; border-color: #c50812; }
+        .form-control {
+            background: #111; border-color: #333; color: #fff;
+        }
+        .form-control:focus {
+            background: #111; border-color: var(--cc-red); color: #fff;
+            box-shadow: 0 0 0 .2rem rgba(229,9,20,.25);
+        }
+        .role-badge {
+            display: inline-block;
+            padding: .25rem .65rem;
+            border-radius: 20px;
+            font-size: .8rem;
+            font-weight: 600;
+        }
+        .role-premium { background: #3a2800; color: #f59e0b; }
+        .role-user    { background: #0d2233; color: #38bdf8; }
+    </style>
+</head>
+<body>
+<div class="reg-card">
+    <div class="text-center mb-4">
+        <div class="brand"><i class="bi bi-camera-reels-fill"></i> CineCadiz</div>
+        <p class="text-muted mt-1 mb-0" style="font-size:.85rem">Crear nueva cuenta</p>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} py-2">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <!-- Info de la invitación -->
+    <div class="mb-4 p-3 rounded" style="background:#111;border:1px solid #2a2a2a;">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-envelope-check-fill text-success"></i>
+            <div>
+                <div class="text-white fw-semibold" style="font-size:.9rem">Invitación válida</div>
+                {% if creator %}
+                <div class="text-muted" style="font-size:.8rem">
+                    Invitado por <strong>{{ creator.username }}</strong>
+                </div>
+                {% endif %}
+            </div>
+            <div class="ms-auto">
+                {% if role == 'premium' %}
+                <span class="role-badge role-premium"><i class="bi bi-star-fill me-1"></i>Premium</span>
+                {% else %}
+                <span class="role-badge role-user"><i class="bi bi-person-fill me-1"></i>Usuario</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('auth.registro_post', token=token) }}">
+        <div class="mb-3">
+            <label class="form-label text-secondary small">Nombre de usuario</label>
+            <input type="text" name="usuario" class="form-control"
+                   placeholder="elige un nombre (min. 3 caracteres)"
+                   minlength="3" maxlength="50" required autofocus>
+        </div>
+        <div class="mb-3">
+            <label class="form-label text-secondary small">Contraseña</label>
+            <input type="password" name="password" class="form-control"
+                   placeholder="mínimo 6 caracteres" minlength="6" required>
+        </div>
+        <div class="mb-4">
+            <label class="form-label text-secondary small">Repetir contraseña</label>
+            <input type="password" name="password2" class="form-control"
+                   placeholder="repite la contraseña" minlength="6" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100 fw-semibold">
+            <i class="bi bi-person-plus-fill me-1"></i> Crear cuenta
+        </button>
+    </form>
+
+    <div class="text-center mt-3">
+        <a href="{{ url_for('auth.login') }}" class="text-secondary text-decoration-none" style="font-size:.85rem">
+            <i class="bi bi-arrow-left me-1"></i> Ya tengo cuenta
+        </a>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

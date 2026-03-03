@@ -6,7 +6,8 @@ import re as _re
 import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
-from models import db, Contenido, Lista
+from flask import session as _session
+from models import db, Contenido, Lista, FuenteRSS
 from sqlalchemy import or_, and_, nulls_last
 import requests
 
@@ -50,6 +51,40 @@ def paginate_query(query, page, per_page):
     }
 
 
+def _build_visible_query():
+    """
+    Construye una query base de Contenido que respeta la visibilidad:
+    - Contenido global (lista.visibilidad='global' o sin lista) → visible para todos
+    - Contenido privado → solo visible para el propietario de la lista
+    El JOIN con Lista es LEFT OUTER para incluir contenido RSS (lista_id=NULL).
+    """
+    user_id = _session.get('user_id')
+    q = (
+        Contenido.query
+        .filter_by(activo=True)
+        .outerjoin(Lista, Contenido.lista_id == Lista.id)
+    )
+    if user_id:
+        q = q.filter(
+            or_(
+                Contenido.lista_id.is_(None),            # contenido RSS
+                Lista.visibilidad == 'global',           # lista global
+                and_(
+                    Lista.owner_id == user_id,
+                    Lista.visibilidad == 'private',      # lista privada del usuario
+                ),
+            )
+        )
+    else:
+        q = q.filter(
+            or_(
+                Contenido.lista_id.is_(None),
+                Lista.visibilidad == 'global',
+            )
+        )
+    return q
+
+
 # ── Endpoints ──────────────────────────────────────────────────
 
 @api_bp.get('/contenido')
@@ -70,10 +105,10 @@ def get_contenido():
         100
     )
 
-    query = Contenido.query.filter_by(activo=True)
+    query = _build_visible_query()
 
     if tipo in ('pelicula', 'serie', 'live'):
-        query = query.filter_by(tipo=tipo)
+        query = query.filter(Contenido.tipo == tipo)
 
     if genero:
         # ilike en ambos campos: SQLAlchemy genera lower(col) LIKE lower(pattern),
