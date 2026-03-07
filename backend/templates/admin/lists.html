@@ -64,6 +64,11 @@
                         </div>
                     </div>
 
+                    <!-- Filtro rápido de grupos -->
+                    <input type="text" id="search-url"
+                           class="form-control form-control-sm mb-2 bg-dark text-light border-secondary"
+                           placeholder="🔍 Buscar grupo...">
+
                     <!-- Grid de grupos (renderizado por JS) -->
                     <div id="grupos-url" class="row g-0"></div>
 
@@ -129,6 +134,11 @@
                             <button type="button" class="btn btn-outline-secondary" id="sel-none-file" title="Desmarcar todo">✕</button>
                         </div>
                     </div>
+
+                    <!-- Filtro rápido de grupos -->
+                    <input type="text" id="search-file"
+                           class="form-control form-control-sm mb-2 bg-dark text-light border-secondary"
+                           placeholder="🔍 Buscar grupo...">
 
                     <div id="grupos-file" class="row g-0"></div>
 
@@ -361,18 +371,27 @@ function renderGrupos(mode, groups, ctx) {
     document.getElementById('panel-' + mode).classList.remove('d-none');
 }
 
-function _renderDisplay(mode) {
+function _renderDisplay(mode, focusUid = null) {
     const container = document.getElementById('grupos-' + mode);
     const data      = _gdata[mode] || [];
 
-    // Resumen
-    const total = data.reduce((s, g) => s + g.count, 0);
-    document.getElementById('summary-' + mode).textContent =
-        data.length + ' grupos · ' + total.toLocaleString('es') + ' items';
+    // Filtro de búsqueda
+    const searchEl = document.getElementById('search-' + mode);
+    const q        = searchEl ? searchEl.value.toLowerCase().trim() : '';
+    const filtered = q ? data.filter(g => g.name.toLowerCase().includes(q)) : data;
 
-    // Agrupar por tipo
+    // Resumen
+    const total    = filtered.reduce((s, g) => s + g.count, 0);
+    const summaryEl = document.getElementById('summary-' + mode);
+    if (summaryEl) {
+        summaryEl.textContent = q
+            ? filtered.length + ' de ' + data.length + ' grupos coinciden'
+            : data.length + ' grupos · ' + total.toLocaleString('es') + ' items';
+    }
+
+    // Agrupar por tipo (solo los filtrados)
     const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
-    data.forEach(g => byTipo[g.tipo].push(g));
+    filtered.forEach(g => byTipo[g.tipo].push(g));
 
     // Renderizar columnas
     container.innerHTML = TIPOS.map(key => {
@@ -393,7 +412,7 @@ function _renderDisplay(mode) {
             </div>
             <div class="grupos-scroll">
             ${gs.map(g => `
-                <div class="d-flex align-items-center gap-1 mb-1">
+                <div class="d-flex align-items-center gap-1 mb-1 grupo-row" data-uid="${g.uid}">
                     <input class="form-check-input flex-shrink-0 grupo-cb grupo-cb-${mode}"
                            type="checkbox" id="${g.uid}"
                            value="${escHtml(g.name)}" data-uid="${g.uid}"
@@ -433,7 +452,7 @@ function _renderDisplay(mode) {
             if (!g) return;
             const idx = TIPOS.indexOf(g.tipo);
             g.tipo = TIPOS[(idx + 1) % TIPOS.length];
-            _renderDisplay(mode);   // re-renderiza → el grupo aparece en la nueva sección
+            _renderDisplay(mode, g.uid);  // re-render y scroll al grupo movido
         });
     });
 
@@ -444,7 +463,6 @@ function _renderDisplay(mode) {
             const gs   = data.filter(g => g.tipo === tipo);
             const anyUnchecked = gs.some(g => !g.checked);
             gs.forEach(g => g.checked = anyUnchecked);
-            // Actualizar checkboxes en el DOM sin re-renderizar
             container.querySelectorAll('.grupo-cb-' + mode).forEach(cb => {
                 const g = data.find(x => x.uid === cb.dataset.uid);
                 if (g && g.tipo === tipo) cb.checked = g.checked;
@@ -455,6 +473,24 @@ function _renderDisplay(mode) {
     });
 
     updateSelCount(mode);
+
+    // ── Scroll al grupo movido (si se indicó focusUid) ───────────
+    if (focusUid) {
+        requestAnimationFrame(() => {
+            const row = container.querySelector('.grupo-row[data-uid="' + focusUid + '"]');
+            const scrollBox = row && row.closest('.grupos-scroll');
+            if (row && scrollBox) {
+                const rowRect = row.getBoundingClientRect();
+                const boxRect = scrollBox.getBoundingClientRect();
+                scrollBox.scrollTop += rowRect.top - boxRect.top
+                    - (scrollBox.clientHeight - row.clientHeight) / 2;
+            }
+            if (row) {
+                row.style.background = 'rgba(255,193,7,.2)';
+                setTimeout(() => { row.style.background = ''; }, 1200);
+            }
+        });
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -487,6 +523,12 @@ document.getElementById('sel-none-file')?.addEventListener('click', () => {
     updateSelCount('file');
 });
 
+// ── Filtro de búsqueda en tiempo real ────────────────────────────
+['url', 'file'].forEach(mode => {
+    document.getElementById('search-' + mode)
+        ?.addEventListener('input', () => _renderDisplay(mode));
+});
+
 // ════════════════════════════════════════════════════════════════
 // Preview URL
 // ════════════════════════════════════════════════════════════════
@@ -498,7 +540,7 @@ document.getElementById('btn-preview-url').addEventListener('click', async () =>
     if (!nombre) { showAlert('url', 'Introduce un nombre para la lista.'); return; }
     if (!url)    { showAlert('url', 'Introduce la URL de la lista M3U.');  return; }
 
-    setBtn('btn-preview-url', true, 'Descargando...');
+    setBtn('btn-preview-url', true, 'Analizando lista M3U...');
 
     const fd = new FormData();
     fd.append('url', url);
@@ -508,6 +550,8 @@ document.getElementById('btn-preview-url').addEventListener('click', async () =>
         const r = await fetch('/admin/listas/preview-url', { method: 'POST', body: fd });
         const d = await r.json();
         if (!d.ok) { showAlert('url', d.error); return; }
+        const searchEl = document.getElementById('search-url');
+        if (searchEl) searchEl.value = '';
         renderGrupos('url', d.groups, { nombre, url, proxy });
     } catch(e) {
         showAlert('url', 'Error de red: ' + e.message);
@@ -535,6 +579,8 @@ document.getElementById('btn-preview-file').addEventListener('click', async () =
         const r = await fetch('/admin/listas/preview-file', { method: 'POST', body: fd });
         const d = await r.json();
         if (!d.ok) { showAlert('file', d.error); return; }
+        const searchEl = document.getElementById('search-file');
+        if (searchEl) searchEl.value = '';
         renderGrupos('file', d.groups, { nombre, temp_id: d.temp_id, size_kb: d.size_kb });
     } catch(e) {
         showAlert('file', 'Error: ' + e.message);

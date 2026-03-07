@@ -548,13 +548,86 @@ def fetch_groups_preview(
     proxy: str | None = None,
 ) -> tuple[list, str | None]:
     """
-    Descarga una lista M3U y devuelve los grupos únicos para previsualización,
-    sin aplicar ningún filtro. Útil para el paso de selección de grupos en el admin.
+    Descarga la M3U en streaming y devuelve los grupos únicos para previsualización.
+    No necesita bufferar el archivo completo: extrae solo los group-title de líneas
+    #EXTINF y para cuando lleva GRACE_ITEMS ítems consecutivos sin grupos nuevos
+    (early-stop) o alcanza MAX_ITEMS.
     Devuelve (groups, error_msg).
     """
-    raw_bytes, error = _download_m3u(url, config, proxy)
-    if error:
-        return [], error
+    MAX_ITEMS   = 20_000   # hard cap de ítems a escanear
+    GRACE_ITEMS = 3_000    # ítems sin grupo nuevo → parar antes
+    max_secs    = _cfg(config, 'DOWNLOAD_TIMEOUT', 300)
+    req_proxies = {
+        'http':  f'http://{proxy}',
+        'https': f'http://{proxy}',
+    } if proxy else {}
 
-    content = decode_m3u_bytes(raw_bytes)
-    return get_groups_preview(content), None
+    try:
+        start = time.monotonic()
+        resp  = requests.get(
+            url, timeout=(10, 30), headers=HEADERS,
+            stream=True, proxies=req_proxies,
+        )
+        resp.raise_for_status()
+
+        groups: dict[str, dict] = {}
+        buf        = b''
+        items_seen = 0
+        since_new  = 0
+        stop       = False
+
+        for chunk in resp.iter_content(chunk_size=65_536):
+            if not chunk:
+                continue
+            if time.monotonic() - start > max_secs:
+                break
+            buf += chunk
+            while b'\n' in buf:
+                raw_line, buf = buf.split(b'\n', 1)
+                line = raw_line.decode('utf-8', errors='replace').strip()
+                if not line or line.lstrip('\ufeff') == '#EXTM3U':
+                    continue
+                if not line.upper().startswith('#EXTINF'):
+                    continue
+
+                g_name = _attr(line, 'group-title') or '(sin grupo)'
+                gl     = _normalize(g_name)
+                if any(kw in gl for kw in _DEFAULT_LIVE_GROUPS):
+                    tipo = 'live'
+                elif any(kw in gl for kw in _SERIE_GROUPS):
+                    tipo = 'serie'
+                elif any(kw in gl for kw in _PELICULA_GROUPS):
+                    tipo = 'pelicula'
+                else:
+                    tipo = 'otro'
+
+                is_new = g_name not in groups
+                if is_new:
+                    groups[g_name] = {'name': g_name, 'tipo': tipo, 'count': 0}
+                    since_new = 0
+                else:
+                    since_new += 1
+                groups[g_name]['count'] += 1
+                items_seen += 1
+
+                if items_seen >= MAX_ITEMS or (since_new >= GRACE_ITEMS and groups):
+                    stop = True
+                    break
+            if stop:
+                break
+
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+        return sorted(groups.values(), key=lambda x: (-x['count'], x['name'])), None
+
+    except requests.exceptions.Timeout:
+        return [], 'Timeout de conexión: el servidor no respondió en 10s'
+    except requests.exceptions.ConnectionError as e:
+        return [], f'Error de conexión: {e}'
+    except requests.exceptions.HTTPError as e:
+        return [], f'Error HTTP {e.response.status_code}'
+    except Exception as e:
+        return [], str(e)
