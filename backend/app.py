@@ -84,6 +84,16 @@ def create_app(config_class=Config):
             mimetype='application/javascript',
         )
 
+    # ── Descarga APK ───────────────────────────────────────────
+    @app.route('/app/<path:filename>')
+    def serve_apk(filename):
+        apk_dir = os.path.join(app.static_folder, 'app')
+        return send_from_directory(apk_dir, filename, as_attachment=True)
+
+    @app.route('/instalar')
+    def instalar():
+        return render_template('instalar.html')
+
     # ── Errores ────────────────────────────────────────────────
     @app.errorhandler(404)
     def not_found(e):

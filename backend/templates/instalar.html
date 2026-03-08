@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instalar App - CineCadiz</title>
+    <meta name="theme-color" content="#141414">
+    <link rel="icon" type="image/png" href="/static/images/icon-192.png">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: #141414;
+            color: #e5e5e5;
+            font-family: 'Roboto', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem 4rem;
+        }
+
+        header {
+            width: 100%;
+            max-width: 860px;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .logo {
+            font-size: 1.6rem;
+            font-weight: 900;
+            color: #e50914;
+            text-decoration: none;
+            letter-spacing: -0.5px;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+        }
+
+        .subtitle {
+            color: #aaa;
+            font-size: 1rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            width: 100%;
+            max-width: 860px;
+        }
+
+        @media (max-width: 640px) {
+            .card-grid { grid-template-columns: 1fr; }
+        }
+
+        .card {
+            background: #1f1f1f;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 1.8rem;
+        }
+
+        .card h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #fff;
+        }
+
+        .card h2 i {
+            color: #e50914;
+            font-size: 1.3rem;
+        }
+
+        /* QR card */
+        .qr-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        #qrcode {
+            background: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: inline-block;
+        }
+
+        .apk-url {
+            font-size: 0.78rem;
+            color: #888;
+            word-break: break-all;
+            margin-bottom: 1rem;
+        }
+
+        .btn-download {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: #e50914;
+            color: #fff;
+            text-decoration: none;
+            font-weight: 700;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: background 0.2s;
+        }
+
+        .btn-download:hover { background: #c40812; }
+
+        /* Steps */
+        .steps { list-style: none; }
+        .steps li {
+            display: flex;
+            gap: 0.9rem;
+            align-items: flex-start;
+            padding: 0.65rem 0;
+            border-bottom: 1px solid #2a2a2a;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            color: #ccc;
+        }
+        .steps li:last-child { border-bottom: none; }
+        .step-num {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            background: #e50914;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #fff;
+            margin-top: 1px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            color: #e5e5e5;
+        }
+
+        .tip {
+            margin-top: 1rem;
+            background: #1a1a2e;
+            border: 1px solid #2a2a5a;
+            border-radius: 8px;
+            padding: 0.9rem 1rem;
+            font-size: 0.85rem;
+            color: #8888cc;
+            display: flex;
+            gap: 0.6rem;
+            align-items: flex-start;
+        }
+
+        .full-width { grid-column: 1 / -1; }
+    </style>
+</head>
+<body>
+
+<header>
+    <a href="/" class="logo">🎬 CINECADIZ</a>
+</header>
+
+<div style="width:100%;max-width:860px;margin-bottom:2rem;">
+    <h1><i class="bi bi-android2" style="color:#3ddc84;"></i> Instalar en Android TV</h1>
+    <p class="subtitle">Instala la app directamente en tu televisor sin necesidad de Google Play</p>
+</div>
+
+<div class="card-grid">
+
+    <!-- QR / descarga -->
+    <div class="card qr-card">
+        <h2><i class="bi bi-qr-code-scan"></i> Descarga la APK</h2>
+        <div id="qrcode"></div>
+        <p class="apk-url" id="apk-url-text"></p>
+        <a id="btn-download" href="#" class="btn-download">
+            <i class="bi bi-download"></i> Descargar APK
+        </a>
+    </div>
+
+    <!-- Instrucciones TV con navegador -->
+    <div class="card">
+        <h2><i class="bi bi-tv"></i> Instalación por navegador</h2>
+        <ol class="steps">
+            <li>
+                <span class="step-num">1</span>
+                <span>Activa <strong>Instalar apps desconocidas</strong> en tu TV:<br>
+                <span class="badge">Ajustes → Seguridad → Fuentes desconocidas</span></span>
+            </li>
+            <li>
+                <span class="step-num">2</span>
+                <span>Abre el <strong>navegador</strong> de tu Android TV / Google TV</span>
+            </li>
+            <li>
+                <span class="step-num">3</span>
+                <span>Introduce esta URL y descarga el archivo <span class="badge">.apk</span></span>
+            </li>
+            <li>
+                <span class="step-num">4</span>
+                <span>Cuando termine, pulsa el archivo descargado e instala</span>
+            </li>
+            <li>
+                <span class="step-num">5</span>
+                <span>¡Listo! Abre <strong>CineCadiz</strong> desde el menú de apps</span>
+            </li>
+        </ol>
+    </div>
+
+    <!-- Instrucciones QR -->
+    <div class="card full-width">
+        <h2><i class="bi bi-phone"></i> Instalación por QR (más fácil)</h2>
+        <ol class="steps" style="display:grid;grid-template-columns:1fr 1fr;gap:0 2rem;">
+            <li>
+                <span class="step-num">1</span>
+                <span>Activa <strong>Fuentes desconocidas</strong> en la TV (ver arriba)</span>
+            </li>
+            <li>
+                <span class="step-num">2</span>
+                <span>Escanea el <strong>código QR</strong> de esta página con tu móvil</span>
+            </li>
+            <li>
+                <span class="step-num">3</span>
+                <span>Descarga la APK en el móvil y compártela con la TV mediante USB o app de transferencia</span>
+            </li>
+            <li>
+                <span class="step-num">4</span>
+                <span>También puedes usar <strong>Send Files to TV</strong> desde Google Play para enviar la APK directamente</span>
+            </li>
+        </ol>
+        <div class="tip">
+            <i class="bi bi-lightbulb-fill" style="color:#f5c518;flex-shrink:0;margin-top:2px;"></i>
+            <span>Si tu TV tiene <strong>Downloader</strong> instalado, introduce el código numérico del código QR directamente en esa app para una instalación aún más rápida.</span>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    (function () {
+        // Construye la URL de la APK dinámicamente según el host actual
+        const apkUrl = window.location.origin + '/app/cinecadiz.apk';
+
+        document.getElementById('apk-url-text').textContent = apkUrl;
+        document.getElementById('btn-download').href = apkUrl;
+
+        new QRCode(document.getElementById('qrcode'), {
+            text: apkUrl,
+            width: 180,
+            height: 180,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M,
+        });
+    })();
+</script>
+</body>
+</html>
