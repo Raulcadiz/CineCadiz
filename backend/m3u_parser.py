@@ -164,7 +164,9 @@ def parse_m3u_content(content: str) -> list[dict]:
 # Filtro de idioma español
 # ──────────────────────────────────────────────────────────────
 
-_DEFAULT_LANGUAGES = ['spanish', 'español', 'castellano', 'espanol', 'castella', 'spa']
+# "es" es el código ISO 639-1 oficial pero requiere match exacto/subtag
+# porque "es" aparece como subcadena en "portuguese", "chinese", etc.
+_DEFAULT_LANGUAGES = ['es', 'spa', 'spanish', 'español', 'castellano', 'espanol', 'castella']
 _DEFAULT_COUNTRIES = ['es', 'esp', 'spain', 'españa', 'espana']
 
 # Indicadores claros de español en group-title.
@@ -227,6 +229,26 @@ def _cfg(config, key: str, default: list) -> list:
     return getattr(config, key, default)
 
 
+def _lang_is_spanish(lang: str, config) -> bool:
+    """
+    True si el tag tvg-language (ya en minúsculas) corresponde a español.
+
+    Para códigos cortos (≤ 3 chars, ej. "es", "spa") usa match exacto o subtag
+    ("es-es", "es-mx", "es_419") para evitar falsos positivos en "portuguese",
+    "chinese", etc. que contienen "es" como subcadena.
+    Para códigos largos ("spanish", "español"...) usa substring normal.
+    """
+    for kw in _cfg(config, 'SPANISH_LANGUAGES', _DEFAULT_LANGUAGES):
+        kw = kw.lower()
+        if len(kw) <= 3:
+            if lang == kw or lang.startswith(kw + '-') or lang.startswith(kw + '_'):
+                return True
+        else:
+            if kw in lang:
+                return True
+    return False
+
+
 def _word_in(text: str, word: str) -> bool:
     """True si `word` existe como palabra completa en `text` (case-sensitive ya vendrá en lower)."""
     return bool(re.search(rf'(?<![a-z]){re.escape(word)}(?![a-z])', text))
@@ -239,13 +261,13 @@ def is_explicitly_non_spanish(item: dict, config) -> bool:
 
     Esto permite importar listas españolas que no etiquetan el idioma,
     mientras excluye items claramente marcados como English, French, etc.
+    Usa _lang_is_spanish() para evitar falsos positivos con "es" en "portuguese".
     """
     lang = (item.get('idioma') or '').lower().strip()
     if not lang:
         return False   # sin etiqueta → no excluir
-    for kw in _cfg(config, 'SPANISH_LANGUAGES', _DEFAULT_LANGUAGES):
-        if kw in lang:
-            return False   # es español → no excluir
+    if _lang_is_spanish(lang, config):
+        return False   # es español → no excluir
     return True   # tiene idioma explícito y no es español → excluir
 
 
@@ -254,14 +276,14 @@ def is_spanish(item: dict, config) -> bool:
     Filtro ESTRICTO — True si el item es claramente en español.
     Primero busca tag de idioma/país explícito, luego el group-title.
     """
-    lang    = _normalize(item.get('idioma')      or '')
-    country = _normalize(item.get('pais')        or '')
-    group   = _normalize(item.get('group_title') or '')
+    lang_raw = (item.get('idioma') or '').lower().strip()
+    lang     = _normalize(lang_raw)
+    country  = _normalize(item.get('pais')        or '')
+    group    = _normalize(item.get('group_title') or '')
 
-    # 1. Tag tvg-language explícito
-    for kw in _cfg(config, 'SPANISH_LANGUAGES', _DEFAULT_LANGUAGES):
-        if kw in lang:
-            return True
+    # 1. Tag tvg-language explícito (usa helper con match exacto para códigos cortos)
+    if lang_raw and _lang_is_spanish(lang_raw, config):
+        return True
 
     # 2. Tag tvg-country explícito
     for kw in _cfg(config, 'SPANISH_COUNTRIES', _DEFAULT_COUNTRIES):

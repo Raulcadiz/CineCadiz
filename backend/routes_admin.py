@@ -858,15 +858,20 @@ def _import_lista(app, lista_id: int):
                     .filter(Contenido.url_hash.in_(chunk)).all()
                 existing_hashes.update(r[0] for r in rows)
 
+            # seen_in_batch evita duplicados DENTRO del propio M3U
+            # (existing_hashes solo cubre lo que ya hay en DB)
+            seen_in_batch: set[str] = set()
             nuevos = 0
             for it in items:
-                if it['url_hash'] in existing_hashes:
+                h = it['url_hash']
+                if h in existing_hashes or h in seen_in_batch:
                     continue
+                seen_in_batch.add(h)
                 c = Contenido(
                     titulo=it['titulo'] or 'Sin título',
                     tipo=it['tipo'],
                     url_stream=it['url_stream'],
-                    url_hash=it['url_hash'],
+                    url_hash=h,
                     servidor=it.get('servidor', ''),
                     imagen=it.get('imagen', ''),
                     año=it.get('año'),
@@ -892,7 +897,8 @@ def _import_lista(app, lista_id: int):
             db.session.commit()
 
             app.logger.info(
-                f'[Import M3U] {lista.nombre}: {nuevos} nuevos / {lista.total_items} total'
+                f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
+                f'({len(seen_in_batch) - nuevos} dupl. en M3U) / {lista.total_items} total'
             )
 
         except Exception as exc:
@@ -953,15 +959,18 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                     .filter(Contenido.url_hash.in_(chunk)).all()
                 existing_hashes.update(r[0] for r in rows)
 
+            seen_in_batch: set[str] = set()
             nuevos = 0
             for it in items:
-                if it['url_hash'] in existing_hashes:
+                h = it['url_hash']
+                if h in existing_hashes or h in seen_in_batch:
                     continue
+                seen_in_batch.add(h)
                 c = Contenido(
                     titulo=it['titulo'] or 'Sin título',
                     tipo=it['tipo'],
                     url_stream=it['url_stream'],
-                    url_hash=it['url_hash'],
+                    url_hash=h,
                     servidor=it.get('servidor', ''),
                     imagen=it.get('imagen', ''),
                     año=it.get('año'),
@@ -986,7 +995,10 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
             lista.ultima_actualizacion = datetime.utcnow()
             db.session.commit()
 
-            app.logger.info(f'[Import M3U] {lista.nombre}: {nuevos} nuevos / {lista.total_items} total')
+            app.logger.info(
+                f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
+                f'({len(seen_in_batch) - nuevos} dupl. en M3U) / {lista.total_items} total'
+            )
 
         except Exception as exc:
             app.logger.exception(f'[Import M3U] Excepción en archivo lista {lista_id}: {exc}')
