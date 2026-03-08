@@ -783,6 +783,61 @@ def preview_file_grupos():
 
 # ── Importador M3U (interno) ───────────────────────────────────
 
+_BULK_CHUNK = 2000   # filas por INSERT masivo
+
+
+def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[int, int]:
+    """
+    Construye dicts planos y los inserta en bulk usando SQL Core.
+    Mucho más rápido que ORM add() para listas grandes (12k+ items pasan
+    de ~5 min a <15 s en SQLite/Windows).
+
+    Devuelve (nuevos_insertados, duplicados_en_el_propio_m3u).
+    """
+    now = datetime.utcnow()
+    seen: set[str] = set()
+    dupl_m3u = 0
+    rows: list[dict] = []
+
+    for it in items:
+        h = it['url_hash']
+        if h in existing_hashes:
+            continue
+        if h in seen:
+            dupl_m3u += 1
+            continue
+        seen.add(h)
+        rows.append({
+            'titulo':              it.get('titulo') or 'Sin título',
+            'tipo':                it.get('tipo', 'pelicula'),
+            'url_stream':          it['url_stream'],
+            'url_hash':            h,
+            'fuente':              'm3u',
+            'servidor':            it.get('servidor') or '',
+            'imagen':              it.get('imagen') or '',
+            'descripcion':         None,
+            'año':                 it.get('año'),
+            'genero':              it.get('genero') or '',
+            'group_title':         it.get('group_title') or '',
+            'idioma':              it.get('idioma') or '',
+            'pais':                it.get('pais') or '',
+            'temporada':           it.get('temporada'),
+            'episodio':            it.get('episodio'),
+            'activo':              True,
+            'fecha_agregado':      now,
+            'ultima_verificacion': None,
+            'lista_id':            lista_id,
+            'fuente_rss_id':       None,
+        })
+
+    # INSERT en chunks — evita el límite de parámetros de SQLite
+    for i in range(0, len(rows), _BULK_CHUNK):
+        db.session.execute(Contenido.__table__.insert(), rows[i:i + _BULK_CHUNK])
+        db.session.commit()
+
+    return len(rows), dupl_m3u
+
+
 def _import_lista_async(app, lista_id: int):
     t = threading.Thread(target=_import_lista, args=(app, lista_id), daemon=True)
     t.start()
@@ -858,38 +913,8 @@ def _import_lista(app, lista_id: int):
                     .filter(Contenido.url_hash.in_(chunk)).all()
                 existing_hashes.update(r[0] for r in rows)
 
-            # seen_in_batch evita duplicados DENTRO del propio M3U
-            # (existing_hashes solo cubre lo que ya hay en DB)
-            seen_in_batch: set[str] = set()
-            nuevos = 0
-            for it in items:
-                h = it['url_hash']
-                if h in existing_hashes or h in seen_in_batch:
-                    continue
-                seen_in_batch.add(h)
-                c = Contenido(
-                    titulo=it['titulo'] or 'Sin título',
-                    tipo=it['tipo'],
-                    url_stream=it['url_stream'],
-                    url_hash=h,
-                    servidor=it.get('servidor', ''),
-                    imagen=it.get('imagen', ''),
-                    año=it.get('año'),
-                    genero=it.get('genero', ''),
-                    group_title=it.get('group_title', ''),
-                    idioma=it.get('idioma', ''),
-                    pais=it.get('pais', ''),
-                    temporada=it.get('temporada'),
-                    episodio=it.get('episodio'),
-                    fuente='m3u',
-                    lista_id=lista_id,
-                )
-                db.session.add(c)
-                nuevos += 1
-                if nuevos % 500 == 0:
-                    db.session.commit()
+            nuevos, dupl_m3u = _do_bulk_insert(items, existing_hashes, lista_id)
 
-            db.session.commit()
             lista.error = None
             lista.total_items = Contenido.query.filter_by(lista_id=lista_id).count()
             lista.items_activos = Contenido.query.filter_by(lista_id=lista_id, activo=True).count()
@@ -898,7 +923,7 @@ def _import_lista(app, lista_id: int):
 
             app.logger.info(
                 f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
-                f'({len(seen_in_batch) - nuevos} dupl. en M3U) / {lista.total_items} total'
+                f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total'
             )
 
         except Exception as exc:
@@ -959,36 +984,8 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                     .filter(Contenido.url_hash.in_(chunk)).all()
                 existing_hashes.update(r[0] for r in rows)
 
-            seen_in_batch: set[str] = set()
-            nuevos = 0
-            for it in items:
-                h = it['url_hash']
-                if h in existing_hashes or h in seen_in_batch:
-                    continue
-                seen_in_batch.add(h)
-                c = Contenido(
-                    titulo=it['titulo'] or 'Sin título',
-                    tipo=it['tipo'],
-                    url_stream=it['url_stream'],
-                    url_hash=h,
-                    servidor=it.get('servidor', ''),
-                    imagen=it.get('imagen', ''),
-                    año=it.get('año'),
-                    genero=it.get('genero', ''),
-                    group_title=it.get('group_title', ''),
-                    idioma=it.get('idioma', ''),
-                    pais=it.get('pais', ''),
-                    temporada=it.get('temporada'),
-                    episodio=it.get('episodio'),
-                    fuente='m3u',
-                    lista_id=lista_id,
-                )
-                db.session.add(c)
-                nuevos += 1
-                if nuevos % 500 == 0:
-                    db.session.commit()
+            nuevos, dupl_m3u = _do_bulk_insert(items, existing_hashes, lista_id)
 
-            db.session.commit()
             lista.error = None
             lista.total_items   = Contenido.query.filter_by(lista_id=lista_id).count()
             lista.items_activos = Contenido.query.filter_by(lista_id=lista_id, activo=True).count()
@@ -997,7 +994,7 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
 
             app.logger.info(
                 f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
-                f'({len(seen_in_batch) - nuevos} dupl. en M3U) / {lista.total_items} total'
+                f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total'
             )
 
         except Exception as exc:
