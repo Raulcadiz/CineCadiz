@@ -2,6 +2,7 @@
 Panel de administración — /admin/
 """
 import json
+import re as _re
 import threading
 import uuid
 from datetime import datetime
@@ -785,6 +786,38 @@ def preview_file_grupos():
 
 _BULK_CHUNK = 2000   # filas por INSERT masivo
 
+# Marcadores de calidad/idioma/formato que se eliminan al normalizar el título
+# para deduplicar variantes del mismo film ("Bambi 4K", "Bambi VOSE", "Bambi Castellano")
+_TITLE_NOISE_RE = _re.compile(
+    r'\b(?:vose?i?|vos|vo\b|subs?|sub[-.]?titulad[ao]s?|'
+    r'doblad[ao]|cast(?:ellano)?|español|espanol|english|latino|'
+    r'fran[cç]ais|french|arabic|arabic|german|deutsch|'
+    r'4k|uhd|2160p|fhd|1080p|hd|720p|sd|480p|'
+    r'cam(?:rip)?|\bts\b|web[-.]?dl|blu[-.]?ray|bdrip|dvdrip|hdtv|'
+    r'hevc|x\.?264|x\.?265|h\.?264|h\.?265|avc|xvid|'
+    r'remux|repack|proper)\b',
+    _re.IGNORECASE,
+)
+
+
+def _title_key(titulo: str) -> str:
+    """
+    Genera una clave normalizada para deduplicar películas.
+    Elimina marcadores de calidad/idioma/formato, acentos y puntuación.
+    "Bambi VOSE", "Bambi 4K", "Bambi Castellano" → todos dan "bambi".
+    Solo se usa para tipo='pelicula'; series y live NO se deducan por título.
+    """
+    if not titulo:
+        return ''
+    t = titulo.lower()
+    t = _TITLE_NOISE_RE.sub(' ', t)                       # quitar ruido
+    t = _re.sub(r'[\(\[\{]\s*\d{4}\s*[\)\]\}]', ' ', t)  # (2024), [2024]
+    t = _re.sub(r'\s*\d{4}\s*$', '', t)                   # año al final sin paréntesis
+    for src, dst in [('á','a'),('é','e'),('í','i'),('ó','o'),('ú','u'),('ü','u'),('ñ','n')]:
+        t = t.replace(src, dst)
+    t = _re.sub(r'[^a-z0-9\s]', '', t)
+    return ' '.join(t.split())
+
 
 def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[int, int]:
     """
@@ -792,21 +825,58 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[i
     Mucho más rápido que ORM add() para listas grandes (12k+ items pasan
     de ~5 min a <15 s en SQLite/Windows).
 
-    Devuelve (nuevos_insertados, duplicados_en_el_propio_m3u).
+    Para películas deduplica además por título normalizado: si el M3U tiene
+    "Bambi 4K", "Bambi VOSE" y "Bambi Castellano" solo inserta la mejor
+    (preferencia: tiene imagen > tiene año > primera encontrada).
+    Series y canales live NO se deducan por título.
+
+    Devuelve (nuevos_insertados, duplicados_descartados_del_m3u).
     """
     now = datetime.utcnow()
-    seen: set[str] = set()
-    dupl_m3u = 0
-    rows: list[dict] = []
+
+    # ── Fase 1: elegir la mejor variante por título (películas) ────────
+    best_pelicula: dict[str, dict] = {}   # title_key → mejor item
+    other_items:   list[dict]      = []   # series + live
+    url_seen:      set[str]        = set()
 
     for it in items:
         h = it['url_hash']
         if h in existing_hashes:
             continue
-        if h in seen:
-            dupl_m3u += 1
+        tipo = it.get('tipo', 'pelicula')
+        if tipo == 'pelicula':
+            tk = _title_key(it.get('titulo') or '')
+            if not tk:
+                if h not in url_seen:
+                    url_seen.add(h)
+                    other_items.append(it)
+                continue
+            if tk not in best_pelicula:
+                best_pelicula[tk] = it
+            else:
+                cur = best_pelicula[tk]
+                # Prefiere: tiene imagen > tiene año > primera encontrada
+                if it.get('imagen') and not cur.get('imagen'):
+                    best_pelicula[tk] = it
+                elif it.get('año') and not cur.get('año'):
+                    best_pelicula[tk] = it
+        else:
+            if h not in url_seen:
+                url_seen.add(h)
+                other_items.append(it)
+
+    # ── Fase 2: construir filas a insertar ──────────────────────────────
+    candidates = list(best_pelicula.values()) + other_items
+    n_existing  = sum(1 for it in items if it['url_hash'] in existing_hashes)
+    dupl_m3u    = max(0, len(items) - n_existing - len(candidates))
+
+    inserted: set[str] = set()
+    rows: list[dict] = []
+    for it in candidates:
+        h = it['url_hash']
+        if h in inserted:
             continue
-        seen.add(h)
+        inserted.add(h)
         rows.append({
             'titulo':              it.get('titulo') or 'Sin título',
             'tipo':                it.get('tipo', 'pelicula'),
@@ -830,7 +900,7 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[i
             'fuente_rss_id':       None,
         })
 
-    # INSERT en chunks — evita el límite de parámetros de SQLite
+    # ── Fase 3: Bulk INSERT en chunks ───────────────────────────────────
     for i in range(0, len(rows), _BULK_CHUNK):
         db.session.execute(Contenido.__table__.insert(), rows[i:i + _BULK_CHUNK])
         db.session.commit()
@@ -1007,6 +1077,51 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                     db.session.commit()
             except Exception:
                 pass
+
+
+# ═══════════════════════════════════════════════════════════
+# LIMPIEZA DE DUPLICADOS
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.post('/api/dedup-peliculas')
+@login_required
+def dedup_peliculas():
+    """
+    Elimina películas duplicadas de la BD (mismo título normalizado).
+    Conserva la que tiene mejor metadata (imagen > año > id más bajo).
+    Solo afecta a tipo='pelicula'.
+    """
+    peliculas = Contenido.query.filter_by(tipo='pelicula', activo=True).all()
+
+    best: dict[str, Contenido] = {}   # title_key → mejor objeto
+    to_delete: list[int] = []
+
+    for p in peliculas:
+        tk = _title_key(p.titulo)
+        if not tk:
+            continue
+        if tk not in best:
+            best[tk] = p
+        else:
+            cur = best[tk]
+            # Prefiere: tiene imagen > tiene año > id más pequeño (primero insertado)
+            if p.imagen and not cur.imagen:
+                to_delete.append(cur.id)
+                best[tk] = p
+            elif p.año and not cur.año and not (p.imagen and not cur.imagen):
+                to_delete.append(cur.id)
+                best[tk] = p
+            else:
+                to_delete.append(p.id)
+
+    if to_delete:
+        # Eliminar en chunks de 900 (límite SQLite IN)
+        for i in range(0, len(to_delete), 900):
+            chunk = to_delete[i:i + 900]
+            Contenido.query.filter(Contenido.id.in_(chunk)).delete(synchronize_session=False)
+        db.session.commit()
+
+    return jsonify({'ok': True, 'eliminados': len(to_delete)})
 
 
 # ═══════════════════════════════════════════════════════════

@@ -2,9 +2,13 @@
 {% block title %}Listas M3U{% endblock %}
 
 {% block content %}
-<div class="topbar">
+<div class="topbar d-flex align-items-center justify-content-between flex-wrap gap-2">
     <h1><i class="bi bi-collection-play-fill me-2 text-danger"></i>Listas M3U</h1>
+    <button id="btn-dedup" class="btn btn-sm btn-outline-warning">
+        <i class="bi bi-intersect me-1"></i>Limpiar películas duplicadas
+    </button>
 </div>
+<div id="dedup-alert" class="alert alert-success py-2 small d-none mb-3"></div>
 
 <style>
 .grupos-scroll { max-height: 230px; overflow-y: auto; padding-right: 2px; }
@@ -671,5 +675,29 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
     }
     setTimeout(pollStatus, 7500);
 })();
+
+// ── Limpiar duplicados ───────────────────────────────────────────
+document.getElementById('btn-dedup')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-dedup');
+    const alert = document.getElementById('dedup-alert');
+    if (!confirm('¿Eliminar películas duplicadas? Se conservará la mejor versión de cada título.')) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando...';
+    try {
+        const r = await fetch('/admin/api/dedup-peliculas', { method: 'POST' });
+        const d = await r.json();
+        alert.className = 'alert alert-success py-2 small mb-3';
+        alert.textContent = `✓ Limpieza completada: ${d.eliminados} películas duplicadas eliminadas.`;
+        alert.classList.remove('d-none');
+        setTimeout(() => location.reload(), 2500);
+    } catch {
+        alert.className = 'alert alert-danger py-2 small mb-3';
+        alert.textContent = 'Error al limpiar duplicados.';
+        alert.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-intersect me-1"></i>Limpiar películas duplicadas';
+    }
+});
 </script>
 {% endblock %}
