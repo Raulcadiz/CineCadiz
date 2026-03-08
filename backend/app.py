@@ -65,7 +65,7 @@ def create_app(config_class=Config):
         _ensure_superadmin(app)
 
     # ── Scheduler (solo si no estamos en testing y AUTO_SCAN=1) ─
-    if not app.testing and app.config.get('AUTO_SCAN', 1):
+    if not app.testing and app.config.get('AUTO_SCAN', 0):
         init_scheduler(app)
 
     # ── Rutas frontend ─────────────────────────────────────────
@@ -165,4 +165,4 @@ def _ensure_superadmin(app):
 # ── Punto de entrada para desarrollo local ─────────────────────
 if __name__ == '__main__':
     app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=8000)
+    app.run(debug=True, host='0.0.0.0', port=80)

@@ -107,6 +107,28 @@ body {
 .desktop-nav a:hover::after,
 .desktop-nav a.active::after { width:100%; }
 
+/* Botón App TV */
+.btn-instalar-tv {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .42rem .9rem;
+    background: #3ddc84;
+    color: #000;
+    font-weight: 700;
+    font-size: .82rem;
+    border-radius: 20px;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background var(--transition), transform var(--transition);
+    letter-spacing: .01em;
+}
+
+.btn-instalar-tv i { font-size: 1rem; }
+.btn-instalar-tv:hover { background: #2db96c; transform: translateY(-1px); }
+
+@media (max-width: 600px) { .btn-instalar-tv { display: none; } }
+
 /* Search */
 .header-right { display:flex; align-items:center; gap:1rem; }
 
