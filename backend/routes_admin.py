@@ -4,6 +4,7 @@ Panel de administración — /admin/
 import json
 import re as _re
 import threading
+import time as _time
 import uuid
 from datetime import datetime
 from functools import wraps
@@ -15,7 +16,6 @@ from flask import (
 
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
-from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
 
 from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession
 from m3u_parser import (
@@ -903,12 +903,14 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int, conflict_i
 
     # ── Fase 3: Bulk INSERT en chunks ───────────────────────────────────
     if conflict_ignore:
-        # INSERT OR IGNORE: un único COMMIT al final → 1 fsync en lugar de N.
-        # Mucho más rápido para archivos grandes (miles de filas).
-        _stmt = _sqlite_insert(Contenido.__table__).on_conflict_do_nothing(index_elements=['url_hash'])
-        for i in range(0, len(rows), _BULK_CHUNK):
-            db.session.execute(_stmt, rows[i:i + _BULK_CHUNK])
-        db.session.commit()  # ← único commit al final
+        # INSERT OR IGNORE via engine.connect() (evita insertmanyvalues de SQLAlchemy 2.x
+        # que añade RETURNING y es lento con on_conflict_do_nothing).
+        # Un único COMMIT al final → 1 fsync total.
+        _stmt = Contenido.__table__.insert().prefix_with('OR IGNORE')
+        with db.engine.connect() as _conn:
+            for i in range(0, len(rows), _BULK_CHUNK):
+                _conn.execute(_stmt, rows[i:i + _BULK_CHUNK])
+            _conn.commit()
     else:
         _stmt = Contenido.__table__.insert()
         for i in range(0, len(rows), _BULK_CHUNK):
@@ -1026,9 +1028,11 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
             if not lista:
                 return
 
-            app.logger.info(f'[Import M3U] Procesando archivo: {lista.nombre} ({len(raw_bytes)//1024} KB)')
+            t0 = _time.monotonic()
+            app.logger.info(f'[Import archivo] {lista.nombre}: iniciando ({len(raw_bytes)//1024} KB)')
 
             content = decode_m3u_bytes(raw_bytes)
+            app.logger.info(f'[Import archivo] decodificado en {_time.monotonic()-t0:.1f}s')
 
             grupos_set = None
             if lista.grupos_seleccionados:
@@ -1044,6 +1048,7 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                 except (ValueError, TypeError):
                     pass
 
+            t1 = _time.monotonic()
             items = parse_and_filter(
                 content, app.config,
                 filter_spanish=lista.filtrar_español,
@@ -1051,13 +1056,19 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                 grupos=grupos_set,
                 tipos_override=tipos_override,
             )
+            app.logger.info(
+                f'[Import archivo] parse_and_filter: {len(items)} items '
+                f'en {_time.monotonic()-t1:.1f}s'
+            )
 
-            app.logger.info(f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros')
-
-            # Para archivos subidos usamos INSERT OR IGNORE: la BD gestiona los
-            # duplicados por url_hash de forma nativa, mucho más rápido que
-            # pre-consultar en N/900 chunks antes de insertar.
+            # Para archivos subidos: INSERT OR IGNORE via engine.connect() —
+            # sin pre-query de hashes, sin insertmanyvalues overhead.
+            t2 = _time.monotonic()
             nuevos, dupl_m3u = _do_bulk_insert(items, set(), lista_id, conflict_ignore=True)
+            app.logger.info(
+                f'[Import archivo] bulk_insert: {nuevos} nuevos '
+                f'en {_time.monotonic()-t2:.1f}s'
+            )
 
             lista.error = None
             lista.total_items   = Contenido.query.filter_by(lista_id=lista_id).count()
@@ -1066,8 +1077,9 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
             db.session.commit()
 
             app.logger.info(
-                f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
-                f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total'
+                f'[Import archivo] {lista.nombre}: COMPLETADO — {nuevos} nuevos '
+                f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total '
+                f'| total {_time.monotonic()-t0:.1f}s'
             )
 
         except Exception as exc:
