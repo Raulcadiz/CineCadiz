@@ -15,6 +15,7 @@ from flask import (
 
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
+from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
 
 from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession
 from m3u_parser import (
@@ -819,7 +820,7 @@ def _title_key(titulo: str) -> str:
     return ' '.join(t.split())
 
 
-def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[int, int]:
+def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int, conflict_ignore: bool = False) -> tuple[int, int]:
     """
     Construye dicts planos y los inserta en bulk usando SQL Core.
     Mucho más rápido que ORM add() para listas grandes (12k+ items pasan
@@ -901,8 +902,12 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int) -> tuple[i
         })
 
     # ── Fase 3: Bulk INSERT en chunks ───────────────────────────────────
+    if conflict_ignore:
+        _stmt = _sqlite_insert(Contenido.__table__).on_conflict_do_nothing(index_elements=['url_hash'])
+    else:
+        _stmt = Contenido.__table__.insert()
     for i in range(0, len(rows), _BULK_CHUNK):
-        db.session.execute(Contenido.__table__.insert(), rows[i:i + _BULK_CHUNK])
+        db.session.execute(_stmt, rows[i:i + _BULK_CHUNK])
         db.session.commit()
 
     return len(rows), dupl_m3u
@@ -1044,17 +1049,10 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
 
             app.logger.info(f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros')
 
-            # ── Deduplicación en 1 query (chunked para SQLite) ──────────
-            candidate_hashes = {it['url_hash'] for it in items}
-            existing_hashes: set[str] = set()
-            chunk_list = list(candidate_hashes)
-            for i in range(0, len(chunk_list), 900):
-                chunk = chunk_list[i:i + 900]
-                rows = db.session.query(Contenido.url_hash)\
-                    .filter(Contenido.url_hash.in_(chunk)).all()
-                existing_hashes.update(r[0] for r in rows)
-
-            nuevos, dupl_m3u = _do_bulk_insert(items, existing_hashes, lista_id)
+            # Para archivos subidos usamos INSERT OR IGNORE: la BD gestiona los
+            # duplicados por url_hash de forma nativa, mucho más rápido que
+            # pre-consultar en N/900 chunks antes de insertar.
+            nuevos, dupl_m3u = _do_bulk_insert(items, set(), lista_id, conflict_ignore=True)
 
             lista.error = None
             lista.total_items   = Contenido.query.filter_by(lista_id=lista_id).count()
