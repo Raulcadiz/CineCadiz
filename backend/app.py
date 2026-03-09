@@ -108,14 +108,18 @@ def create_app(config_class=Config):
 
 def _fix_sqlite_pragmas():
     """
-    PythonAnywhere usa NFS para el home directory.
-    SQLite en modo WAL no funciona bien en NFS → forzamos journal_mode=DELETE.
+    WAL (Write-Ahead Logging) permite lecturas concurrentes mientras se escribe,
+    ideal para imports largos en background + peticiones HTTP simultáneas.
+    synchronous=NORMAL es seguro con WAL y mucho más rápido que FULL.
+    cache_size=-65536 → 64 MB de caché en memoria para queries frecuentes.
     """
     try:
         from sqlalchemy import text
         with db.engine.connect() as conn:
-            conn.execute(text('PRAGMA journal_mode=DELETE'))
+            conn.execute(text('PRAGMA journal_mode=WAL'))
             conn.execute(text('PRAGMA synchronous=NORMAL'))
+            conn.execute(text('PRAGMA cache_size=-65536'))
+            conn.execute(text('PRAGMA temp_store=MEMORY'))
             conn.commit()
     except Exception:
         pass

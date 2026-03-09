@@ -903,12 +903,17 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int, conflict_i
 
     # ── Fase 3: Bulk INSERT en chunks ───────────────────────────────────
     if conflict_ignore:
+        # INSERT OR IGNORE: un único COMMIT al final → 1 fsync en lugar de N.
+        # Mucho más rápido para archivos grandes (miles de filas).
         _stmt = _sqlite_insert(Contenido.__table__).on_conflict_do_nothing(index_elements=['url_hash'])
+        for i in range(0, len(rows), _BULK_CHUNK):
+            db.session.execute(_stmt, rows[i:i + _BULK_CHUNK])
+        db.session.commit()  # ← único commit al final
     else:
         _stmt = Contenido.__table__.insert()
-    for i in range(0, len(rows), _BULK_CHUNK):
-        db.session.execute(_stmt, rows[i:i + _BULK_CHUNK])
-        db.session.commit()
+        for i in range(0, len(rows), _BULK_CHUNK):
+            db.session.execute(_stmt, rows[i:i + _BULK_CHUNK])
+            db.session.commit()
 
     return len(rows), dupl_m3u
 
