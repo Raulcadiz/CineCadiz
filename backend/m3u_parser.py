@@ -132,11 +132,20 @@ def parse_extinf(line: str) -> dict:
     return info
 
 
-def parse_m3u_content(content: str) -> list[dict]:
-    """Parsea el texto de una lista M3U y devuelve una lista de items."""
+def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]:
+    """
+    Parsea el texto de una lista M3U y devuelve una lista de items.
+
+    grupos_set: si se indica, se aplica un pre-filtro rápido por group-title
+    ANTES de ejecutar parse_extinf (que es costoso). Esto evita parsear entradas
+    que luego se descartarían, reduciendo drásticamente el tiempo en archivos grandes.
+    """
     items   = []
     lines   = content.splitlines()
     current = None
+
+    # Regex compilada una vez para el pre-filtro de group-title
+    _gt_re = re.compile(r'group-title="([^"]*)"', re.IGNORECASE)
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -144,6 +153,14 @@ def parse_m3u_content(content: str) -> list[dict]:
             continue
 
         if line.upper().startswith('#EXTINF'):
+            # Pre-filtro rápido: si hay grupos seleccionados, verificar group-title
+            # antes de llamar a parse_extinf (ahorra 8+ regex + SHA256 por entrada)
+            if grupos_set is not None:
+                m = _gt_re.search(line)
+                grp = m.group(1).strip() if m else ''
+                if grp not in grupos_set:
+                    current = None
+                    continue
             current = parse_extinf(line)
 
         elif current is not None and re.match(r'[a-zA-Z][a-zA-Z0-9+\-.]*://', line):
@@ -394,7 +411,8 @@ def parse_and_filter(
     tipos_override: mapa {group_title: tipo} con la clasificación manual del admin.
             Cuando está definido, su clasificación tiene prioridad sobre is_vod_content().
     """
-    all_items = parse_m3u_content(content)
+    # Pasar grupos al parser para el pre-filtro rápido por group-title
+    all_items = parse_m3u_content(content, grupos_set=grupos)
 
     vod_items, live_items = [], []
     for it in all_items:
