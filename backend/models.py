@@ -310,6 +310,11 @@ class Contenido(db.Model):
     lista_id      = db.Column(db.Integer, db.ForeignKey('listas.id'),      nullable=True)
     fuente_rss_id = db.Column(db.Integer, db.ForeignKey('fuentes_rss.id'), nullable=True)
 
+    reports = db.relationship(
+        'ChannelReport', backref='contenido',
+        lazy='dynamic', cascade='all, delete-orphan',
+    )
+
     def to_dict(self):
         _type_map = {'pelicula': 'movie', 'serie': 'series', 'live': 'live'}
         return {
@@ -332,3 +337,93 @@ class Contenido(db.Model):
                 self.ultima_verificacion.isoformat() if self.ultima_verificacion else None
             ),
         }
+
+
+# ═══════════════════════════════════════════════════════════
+# REPORTES DE CANALES
+# ═══════════════════════════════════════════════════════════
+
+class ChannelReport(db.Model):
+    """Reporte enviado por el usuario cuando un canal no funciona."""
+    __tablename__ = 'channel_reports'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    contenido_id   = db.Column(db.Integer, db.ForeignKey('contenidos.id'), nullable=False)
+    ip_address     = db.Column(db.String(45), nullable=True)
+    estado         = db.Column(db.String(20), nullable=False, default='pendiente')  # pendiente|revisado|resuelto
+    nota_admin     = db.Column(db.Text, nullable=True)
+    fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
+    fecha_revision = db.Column(db.DateTime, nullable=True)
+
+
+# ═══════════════════════════════════════════════════════════
+# IPTV — USUARIOS Y SESIONES
+# ═══════════════════════════════════════════════════════════
+
+class IptvUser(db.Model):
+    """
+    Usuario del servicio IPTV externo.
+    Recibe una URL personalizada con su usuario/contraseña para acceder
+    al contenido con su plan y límite de conexiones simultáneas.
+    """
+    __tablename__ = 'iptv_users'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    username        = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash   = db.Column(db.String(255), nullable=False)
+    plan            = db.Column(db.String(10), nullable=False, default='1m')  # 1m|3m|6m|1y
+    max_connections = db.Column(db.Integer, nullable=False, default=1)        # 1|2|3|5
+    activo          = db.Column(db.Boolean, nullable=False, default=True)
+    expires_at      = db.Column(db.DateTime, nullable=True)
+    fecha_creacion  = db.Column(db.DateTime, default=datetime.utcnow)
+    nota            = db.Column(db.String(255), nullable=True)
+
+    sessions = db.relationship(
+        'IptvSession', backref='iptv_user', lazy='dynamic',
+        cascade='all, delete-orphan',
+    )
+
+    def set_password(self, password: str) -> None:
+        from werkzeug.security import generate_password_hash
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        from werkzeug.security import check_password_hash
+        return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        return datetime.utcnow() > self.expires_at
+
+    @property
+    def plan_label(self) -> str:
+        return {'1m': '1 mes', '3m': '3 meses', '6m': '6 meses', '1y': '1 año'}.get(self.plan, self.plan)
+
+    def to_dict(self) -> dict:
+        return {
+            'id':              self.id,
+            'username':        self.username,
+            'plan':            self.plan,
+            'plan_label':      self.plan_label,
+            'max_connections': self.max_connections,
+            'activo':          self.activo,
+            'expires_at':      self.expires_at.isoformat() if self.expires_at else None,
+            'fecha_creacion':  self.fecha_creacion.isoformat() if self.fecha_creacion else None,
+            'nota':            self.nota,
+        }
+
+
+class IptvSession(db.Model):
+    """Sesión IPTV activa — usada para controlar conexiones simultáneas."""
+    __tablename__ = 'iptv_sessions'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    iptv_user_id   = db.Column(db.Integer, db.ForeignKey('iptv_users.id'), nullable=False)
+    session_token  = db.Column(db.String(64), unique=True, nullable=False,
+                               default=lambda: secrets.token_hex(32))
+    contenido_id   = db.Column(db.Integer, db.ForeignKey('contenidos.id'), nullable=True)
+    ip_address     = db.Column(db.String(45), nullable=True)
+    last_heartbeat = db.Column(db.DateTime, default=datetime.utcnow)
+    fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)

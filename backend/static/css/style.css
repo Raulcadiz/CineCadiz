@@ -751,6 +751,8 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
 .err-btn:hover { background:rgba(255,255,255,.24); }
 .err-btn-primary { background:var(--primary); border-color:var(--primary); }
 .err-btn-primary:hover { background:var(--primary-dark); }
+.err-btn-report { background:rgba(229,9,20,.15); border-color:rgba(229,9,20,.5); }
+.err-btn-report:hover { background:rgba(229,9,20,.3); }
 
 /* Spinner de carga dentro del player */
 .player-loading {

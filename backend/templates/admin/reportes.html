@@ -1,0 +1,158 @@
+{% extends "admin/base.html" %}
+{% block title %}Reportes de canales{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-flag-fill me-2" style="color:var(--cc-red)"></i>Reportes de canales</h1>
+</div>
+
+<!-- Filtro de estado -->
+<div class="d-flex gap-2 mb-4">
+    {% for est, label in [('pendiente','Pendientes'),('revisado','Revisados'),('resuelto','Resueltos')] %}
+    <a href="{{ url_for('admin.reportes', estado=est) }}"
+       class="btn btn-sm {{ 'btn-danger' if estado_filtro == est else 'btn-outline-secondary' }}">
+        {{ label }}
+    </a>
+    {% endfor %}
+</div>
+
+<div class="form-card p-0">
+    {% if reportes %}
+    <table class="table table-dark table-hover mb-0">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Canal</th>
+                <th>Tipo</th>
+                <th>IP</th>
+                <th>Fecha</th>
+                <th>Estado</th>
+                <th style="width:260px">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in reportes %}
+        <tr>
+            <td class="text-secondary">{{ r.id }}</td>
+            <td>
+                <span class="fw-semibold" style="font-size:.9rem">{{ r.contenido.titulo }}</span>
+                {% if r.nota_admin %}
+                <br><small class="text-secondary">{{ r.nota_admin }}</small>
+                {% endif %}
+            </td>
+            <td>
+                <span class="badge
+                    {% if r.contenido.tipo == 'live' %}bg-info text-dark
+                    {% elif r.contenido.tipo == 'serie' %}bg-warning text-dark
+                    {% else %}bg-secondary{% endif %}">
+                    {{ r.contenido.tipo }}
+                </span>
+            </td>
+            <td><code style="font-size:.8rem">{{ r.ip_address or '—' }}</code></td>
+            <td style="font-size:.82rem;white-space:nowrap">{{ r.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td>
+                <span class="badge
+                    {% if r.estado == 'pendiente' %}badge-status-warn
+                    {% elif r.estado == 'revisado' %}badge-status-warn
+                    {% else %}badge-status-ok{% endif %}">
+                    {{ r.estado }}
+                </span>
+            </td>
+            <td>
+                <div class="d-flex gap-1 flex-wrap">
+                    <!-- Verificar stream -->
+                    <button class="btn btn-sm btn-outline-info btn-verificar"
+                            data-id="{{ r.id }}"
+                            data-url="{{ url_for('admin.verificar_canal', report_id=r.id) }}"
+                            title="Comprobar si el stream responde">
+                        <i class="bi bi-wifi"></i>
+                    </button>
+
+                    <!-- Marcar revisado -->
+                    <form method="post" action="{{ url_for('admin.resolver_reporte', report_id=r.id) }}" class="d-inline">
+                        <input type="hidden" name="accion" value="revisado">
+                        <input type="hidden" name="volver" value="{{ estado_filtro }}">
+                        <button class="btn btn-sm btn-outline-warning" title="Marcar revisado">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </form>
+
+                    <!-- Desactivar canal -->
+                    <form method="post" action="{{ url_for('admin.resolver_reporte', report_id=r.id) }}" class="d-inline">
+                        <input type="hidden" name="accion" value="eliminar_canal">
+                        <input type="hidden" name="volver" value="{{ estado_filtro }}">
+                        <button class="btn btn-sm btn-outline-danger" title="Desactivar canal"
+                                onclick="return confirm('¿Desactivar el canal «{{ r.contenido.titulo }}»?')">
+                            <i class="bi bi-slash-circle"></i>
+                        </button>
+                    </form>
+
+                    <!-- Resolver -->
+                    <form method="post" action="{{ url_for('admin.resolver_reporte', report_id=r.id) }}" class="d-inline">
+                        <input type="hidden" name="accion" value="resuelto">
+                        <input type="hidden" name="volver" value="{{ estado_filtro }}">
+                        <button class="btn btn-sm btn-outline-success" title="Marcar resuelto">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                    </form>
+
+                    <!-- Eliminar reporte -->
+                    <form method="post" action="{{ url_for('admin.eliminar_reporte', report_id=r.id) }}" class="d-inline">
+                        <button class="btn btn-sm btn-outline-secondary" title="Eliminar reporte"
+                                onclick="return confirm('¿Eliminar este reporte?')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-secondary py-5">
+        <i class="bi bi-check-circle" style="font-size:2rem"></i>
+        <p class="mt-2">No hay reportes con estado «{{ estado_filtro }}»</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Toast de verificación -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+    <div id="verToast" class="toast text-bg-dark border-secondary" role="alert">
+        <div class="toast-header bg-dark text-light border-secondary">
+            <i class="bi bi-wifi me-2"></i>
+            <strong class="me-auto">Verificación de stream</strong>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="verToastBody">—</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.btn-verificar').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        try {
+            const res = await fetch(btn.dataset.url);
+            const d   = await res.json();
+            const body = document.getElementById('verToastBody');
+            if (d.ok) {
+                body.innerHTML = `<span class="text-success">✓ Online</span> — <strong>${d.titulo}</strong><br><small class="text-secondary">${d.url}</small>`;
+            } else {
+                body.innerHTML = `<span class="text-danger">✗ Sin respuesta</span> — <strong>${d.titulo}</strong><br><small class="text-secondary">${d.error || 'HTTP ' + d.status}</small>`;
+            }
+            new bootstrap.Toast(document.getElementById('verToast')).show();
+        } catch(e) {
+            alert('Error al verificar: ' + e);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-wifi"></i>';
+        }
+    });
+});
+</script>
+{% endblock %}

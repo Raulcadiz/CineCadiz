@@ -151,7 +151,15 @@
         <a href="{{ url_for('admin.tickets') }}"
            class="{% if 'tickets' in request.endpoint %}active{% endif %}">
             <i class="bi bi-ticket-perforated-fill"></i> Tickets
-            {# badge de tickets pendientes #}
+        </a>
+        <a href="{{ url_for('admin.reportes') }}"
+           class="{% if 'reportes' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-flag-fill"></i> Reportes
+        </a>
+        <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
+        <a href="{{ url_for('admin.iptv_panel') }}"
+           class="{% if 'iptv' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-broadcast-pin"></i> Panel IPTV
         </a>
         {% endif %}
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">

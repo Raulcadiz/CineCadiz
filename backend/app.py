@@ -10,6 +10,7 @@ from config import Config
 from models import db
 from routes_api import api_bp
 from routes_admin import admin_bp
+from routes_iptv import iptv_bp
 from scheduler import init_scheduler
 
 
@@ -34,6 +35,7 @@ def create_app(config_class=Config):
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(iptv_bp)
 
     # ── Filtros Jinja2 personalizados ──────────────────────────
     @app.template_filter('fromjson')
@@ -139,6 +141,9 @@ def _migrate_db():
         'ALTER TABLE listas ADD COLUMN visibilidad TEXT NOT NULL DEFAULT \'global\'',
         'ALTER TABLE fuentes_rss ADD COLUMN owner_id    INTEGER REFERENCES users(id)',
         'ALTER TABLE fuentes_rss ADD COLUMN visibilidad TEXT NOT NULL DEFAULT \'global\'',
+        # Reportes y IPTV — creadas por db.create_all() en BD nueva;
+        # en BD existente se crean aquí solo las columnas que falten
+        # (las tablas completas las crea db.create_all si no existen)
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

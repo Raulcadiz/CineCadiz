@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from flask import session as _session
-from models import db, Contenido, Lista, FuenteRSS
+from models import db, Contenido, Lista, FuenteRSS, ChannelReport
 from sqlalchemy import or_, and_, nulls_last
 import requests
 
@@ -680,3 +680,31 @@ def get_stats():
         'listas': total_listas,
         'total': total_peliculas + total_series + total_live,
     })
+
+
+# ── Reportes de canales ────────────────────────────────────
+
+@api_bp.post('/reportar/<int:contenido_id>')
+def reportar_canal(contenido_id):
+    """El usuario reporta que un canal no funciona."""
+    c = Contenido.query.get_or_404(contenido_id)
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+
+    # Evitar duplicados recientes (misma IP + mismo canal en los últimos 10 min)
+    from datetime import timedelta
+    from sqlalchemy import and_ as _and_
+    hace_10 = __import__('datetime').datetime.utcnow() - timedelta(minutes=10)
+    existe = ChannelReport.query.filter(
+        _and_(
+            ChannelReport.contenido_id == contenido_id,
+            ChannelReport.ip_address == ip,
+            ChannelReport.fecha_creacion >= hace_10,
+        )
+    ).first()
+    if existe:
+        return jsonify({'ok': True, 'duplicate': True})
+
+    report = ChannelReport(contenido_id=contenido_id, ip_address=ip)
+    db.session.add(report)
+    db.session.commit()
+    return jsonify({'ok': True})

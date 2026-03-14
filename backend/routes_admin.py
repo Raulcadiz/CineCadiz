@@ -17,7 +17,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -1262,3 +1262,194 @@ def responder_ticket(ticket_id):
 
     db.session.commit()
     return redirect(url_for('admin.tickets'))
+
+
+# ═══════════════════════════════════════════════════════════
+# REPORTES DE CANALES
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get('/reportes')
+@superadmin_required
+def reportes():
+    estado = request.args.get('estado', 'pendiente')
+    q = (
+        ChannelReport.query
+        .join(Contenido, ChannelReport.contenido_id == Contenido.id)
+        .filter(ChannelReport.estado == estado)
+        .order_by(ChannelReport.fecha_creacion.desc())
+    )
+    items = q.all()
+    return render_template(
+        'admin/reportes.html',
+        reportes=items,
+        estado_filtro=estado,
+    )
+
+
+@admin_bp.post('/reportes/<int:report_id>/resolver')
+@superadmin_required
+def resolver_reporte(report_id):
+    r     = ChannelReport.query.get_or_404(report_id)
+    accion = request.form.get('accion', 'revisado')  # revisado|resuelto|eliminar_canal
+
+    if accion == 'eliminar_canal':
+        c = Contenido.query.get(r.contenido_id)
+        if c:
+            c.activo = False
+        r.estado         = 'resuelto'
+        r.nota_admin     = 'Canal desactivado'
+        r.fecha_revision = datetime.utcnow()
+        db.session.commit()
+        flash('Canal desactivado y reporte cerrado.', 'success')
+    elif accion == 'resuelto':
+        r.estado         = 'resuelto'
+        r.nota_admin     = request.form.get('nota', '').strip()
+        r.fecha_revision = datetime.utcnow()
+        db.session.commit()
+        flash('Reporte marcado como resuelto.', 'success')
+    else:
+        r.estado         = 'revisado'
+        r.nota_admin     = request.form.get('nota', '').strip()
+        r.fecha_revision = datetime.utcnow()
+        db.session.commit()
+        flash('Reporte marcado como revisado.', 'info')
+
+    return redirect(url_for('admin.reportes', estado=request.form.get('volver', 'pendiente')))
+
+
+@admin_bp.post('/reportes/<int:report_id>/eliminar')
+@superadmin_required
+def eliminar_reporte(report_id):
+    r = ChannelReport.query.get_or_404(report_id)
+    db.session.delete(r)
+    db.session.commit()
+    flash('Reporte eliminado.', 'success')
+    return redirect(url_for('admin.reportes'))
+
+
+@admin_bp.get('/reportes/<int:report_id>/verificar')
+@superadmin_required
+def verificar_canal(report_id):
+    """Comprueba si el stream del canal reportado responde (HEAD request)."""
+    r = ChannelReport.query.get_or_404(report_id)
+    c = Contenido.query.get(r.contenido_id)
+    if not c:
+        return jsonify({'ok': False, 'error': 'Canal no encontrado'})
+    try:
+        resp = _requests.head(c.url_stream, timeout=8, allow_redirects=True,
+                              headers={'User-Agent': 'VLC/3.0'})
+        return jsonify({'ok': resp.status_code < 400, 'status': resp.status_code,
+                        'url': c.url_stream, 'titulo': c.titulo})
+    except Exception as ex:
+        return jsonify({'ok': False, 'error': str(ex), 'url': c.url_stream, 'titulo': c.titulo})
+
+
+# ═══════════════════════════════════════════════════════════
+# PANEL IPTV — GESTIÓN DE USUARIOS IPTV
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get('/iptv')
+@superadmin_required
+def iptv_panel():
+    usuarios = IptvUser.query.order_by(IptvUser.fecha_creacion.desc()).all()
+    # Contar sesiones activas por usuario (heartbeat < 2 min)
+    from datetime import timedelta
+    _limite = datetime.utcnow() - timedelta(minutes=2)
+    activas = {}
+    for u in usuarios:
+        activas[u.id] = IptvSession.query.filter(
+            IptvSession.iptv_user_id == u.id,
+            IptvSession.last_heartbeat >= _limite,
+        ).count()
+    return render_template('admin/iptv.html', usuarios=usuarios, activas=activas)
+
+
+@admin_bp.post('/iptv/crear')
+@superadmin_required
+def iptv_crear():
+    from datetime import timedelta
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    plan     = request.form.get('plan', '1m')
+    max_con  = int(request.form.get('max_connections', 1))
+    nota     = request.form.get('nota', '').strip()
+
+    if not username or not password:
+        flash('Usuario y contraseña son obligatorios.', 'danger')
+        return redirect(url_for('admin.iptv_panel'))
+    if IptvUser.query.filter_by(username=username).first():
+        flash('Ya existe un usuario con ese nombre.', 'danger')
+        return redirect(url_for('admin.iptv_panel'))
+
+    duraciones = {'1m': 30, '3m': 90, '6m': 180, '1y': 365}
+    dias = duraciones.get(plan, 30)
+    expires_at = datetime.utcnow() + timedelta(days=dias)
+
+    u = IptvUser(username=username, plan=plan,
+                 max_connections=max(1, min(max_con, 5)),
+                 expires_at=expires_at, nota=nota or None)
+    u.set_password(password)
+    db.session.add(u)
+    db.session.commit()
+    flash(f'Usuario IPTV "{username}" creado con plan {u.plan_label}.', 'success')
+    return redirect(url_for('admin.iptv_panel'))
+
+
+@admin_bp.post('/iptv/<int:uid>/editar')
+@superadmin_required
+def iptv_editar(uid):
+    from datetime import timedelta
+    u = IptvUser.query.get_or_404(uid)
+    plan    = request.form.get('plan', u.plan)
+    max_con = int(request.form.get('max_connections', u.max_connections))
+    activo  = request.form.get('activo') == '1'
+    nota    = request.form.get('nota', '').strip()
+    renovar = request.form.get('renovar') == '1'
+    nueva_pass = request.form.get('password', '').strip()
+
+    u.plan            = plan
+    u.max_connections = max(1, min(max_con, 5))
+    u.activo          = activo
+    u.nota            = nota or None
+    if nueva_pass:
+        u.set_password(nueva_pass)
+    if renovar:
+        duraciones = {'1m': 30, '3m': 90, '6m': 180, '1y': 365}
+        dias = duraciones.get(plan, 30)
+        base = max(datetime.utcnow(), u.expires_at or datetime.utcnow())
+        u.expires_at = base + timedelta(days=dias)
+        flash(f'Suscripción renovada hasta {u.expires_at.strftime("%d/%m/%Y")}.', 'success')
+    db.session.commit()
+    flash(f'Usuario "{u.username}" actualizado.', 'success')
+    return redirect(url_for('admin.iptv_panel'))
+
+
+@admin_bp.post('/iptv/<int:uid>/eliminar')
+@superadmin_required
+def iptv_eliminar(uid):
+    u = IptvUser.query.get_or_404(uid)
+    nombre = u.username
+    db.session.delete(u)
+    db.session.commit()
+    flash(f'Usuario IPTV "{nombre}" eliminado.', 'success')
+    return redirect(url_for('admin.iptv_panel'))
+
+
+@admin_bp.get('/iptv/api/online')
+@superadmin_required
+def iptv_online():
+    """Devuelve JSON con sesiones IPTV activas (heartbeat < 2 min)."""
+    from datetime import timedelta
+    limite = datetime.utcnow() - timedelta(minutes=2)
+    sesiones = (
+        IptvSession.query
+        .filter(IptvSession.last_heartbeat >= limite)
+        .join(IptvUser, IptvSession.iptv_user_id == IptvUser.id)
+        .all()
+    )
+    return jsonify([{
+        'usuario':      s.iptv_user.username,
+        'ip':           s.ip_address,
+        'contenido_id': s.contenido_id,
+        'last_hb':      s.last_heartbeat.isoformat(),
+    } for s in sesiones])

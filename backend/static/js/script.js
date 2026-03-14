@@ -447,46 +447,47 @@ function _destroyHls() {
     _setPlayerLoading(false);
 }
 
-/** Muestra overlay de error dentro del reproductor con opciones de acción. */
+/** Muestra overlay de error dentro del reproductor con mensaje amigable + botón Reportar. */
 function _showPlayerError(msg) {
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
-    const itemId  = el.player?.dataset.itemId  || '';
-    const rawUrl  = el.player?.dataset.streamUrl || '';
-    const errDiv  = document.createElement('div');
+    const itemId = el.player?.dataset.itemId || '';
+    const errDiv = document.createElement('div');
     errDiv.className = 'player-error';
     errDiv.innerHTML = `
-        <div style="font-size:2.5rem;margin-bottom:.7rem">⚠️</div>
-        <p style="margin:.3rem 0;font-size:1rem">${msg}</p>
-        <p style="color:#999;font-size:.8rem;margin-top:.3rem;margin-bottom:1.2rem">
-          El stream puede haber expirado o el formato no es compatible con el navegador.
+        <div style="font-size:2.5rem;margin-bottom:.7rem">📺</div>
+        <p style="margin:.3rem 0;font-size:1.1rem;font-weight:600">Este canal no va, prueba otro canal</p>
+        <p style="color:#999;font-size:.82rem;margin-top:.4rem;margin-bottom:1.4rem">
+          El stream puede estar caído o no ser compatible con el navegador.
         </p>
         <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">
+            <button class="err-btn" data-action="close-player">
+                ← Volver al listado
+            </button>
             ${itemId ? `
-            <button class="err-btn err-btn-primary" data-action="open-vlc" data-id="${itemId}">
-                📺 Abrir en VLC / Kodi
+            <button class="err-btn err-btn-report" data-action="report" data-id="${itemId}">
+                🚩 Reportar canal
             </button>` : ''}
-            <button class="err-btn" data-action="copy-url">
-                📋 Copiar enlace
-            </button>
-            <button class="err-btn" data-action="try-hls">
-                🔄 Intentar HLS
-            </button>
+        </div>
+        <div class="err-report-thanks" style="display:none;margin-top:1rem;color:#4caf50;font-size:.85rem">
+            ✓ Reporte enviado, lo revisaremos pronto
         </div>`;
 
-    // Listeners de los botones de error
     errDiv.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', e => {
             e.stopPropagation();
             const action = btn.dataset.action;
-            if (action === 'open-vlc') {
-                window.open(`/api/playlist/${btn.dataset.id}.m3u`, '_blank');
-            } else if (action === 'copy-url') {
-                navigator.clipboard?.writeText(rawUrl)
-                    .then(() => showNotification('Enlace copiado'))
-                    .catch(() => showNotification('No se pudo copiar', 'error'));
-            } else if (action === 'try-hls') {
-                _destroyHls();
-                _loadHls(`/api/hls-proxy?url=${encodeURIComponent(rawUrl)}`);
+            if (action === 'close-player') {
+                document.querySelector('.btn-close-player')?.click();
+            } else if (action === 'report') {
+                const id = btn.dataset.id;
+                btn.disabled = true;
+                fetch(`/api/reportar/${id}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(() => {
+                        errDiv.querySelector('.err-report-thanks').style.display = 'block';
+                        btn.style.display = 'none';
+                    })
+                    .catch(() => showNotification('No se pudo enviar el reporte', 'error'));
             }
         });
     });
@@ -1105,36 +1106,6 @@ function setupEvents() {
         } else {
             showNotification('El vídeo aún no está listo', 'error');
         }
-    });
-
-    // Abrir en app (descarga .m3u → VLC/Kodi lo abre automáticamente)
-    document.getElementById('btnOpenApp')?.addEventListener('click', () => {
-        const id  = el.player.dataset.itemId || '';
-        const url = el.player.dataset.streamUrl || '';
-        if (id) {
-            window.open(`/api/playlist/${id}.m3u`, '_blank');
-        } else if (url) {
-            // Fallback: crear .m3u en memoria y descargar
-            const blob = new Blob([`#EXTM3U\n#EXTINF:-1,Stream\n${url}\n`], { type: 'audio/x-mpegurl' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'stream.m3u';
-            a.click();
-        }
-    });
-
-    // Copiar enlace
-    document.getElementById('btnCopyUrl')?.addEventListener('click', () => {
-        const url = el.player.dataset.streamUrl || '';
-        navigator.clipboard?.writeText(url)
-            .then(() => showNotification('Enlace copiado al portapapeles'))
-            .catch(() => {
-                const inp = document.createElement('input');
-                inp.value = url;
-                document.body.appendChild(inp);
-                inp.select(); document.execCommand('copy'); inp.remove();
-                showNotification('Enlace copiado');
-            });
     });
 
     // Velocidad de reproducción

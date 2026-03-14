@@ -1,0 +1,288 @@
+{% extends "admin/base.html" %}
+{% block title %}Panel IPTV{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <h1><i class="bi bi-broadcast-pin me-2" style="color:var(--cc-red)"></i>Panel IPTV</h1>
+    <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
+        <i class="bi bi-person-plus-fill me-1"></i> Nuevo usuario
+    </button>
+</div>
+
+<!-- Tarjetas de resumen -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#1a2a3a;color:#3b9eff">
+                <i class="bi bi-people-fill"></i>
+            </div>
+            <div class="stat-value">{{ usuarios|length }}</div>
+            <div class="stat-label">Usuarios totales</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#1a3a1a;color:#4caf50">
+                <i class="bi bi-person-check-fill"></i>
+            </div>
+            <div class="stat-value">{{ usuarios|selectattr('activo')|list|length }}</div>
+            <div class="stat-label">Activos</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#3a1a1a;color:#f44336">
+                <i class="bi bi-person-x-fill"></i>
+            </div>
+            <div class="stat-value">{{ usuarios|rejectattr('activo')|list|length }}</div>
+            <div class="stat-label">Inactivos / expirados</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon" style="background:#2a1a3a;color:#c084fc">
+                <i class="bi bi-wifi"></i>
+            </div>
+            <div class="stat-value" id="onlineCount">—</div>
+            <div class="stat-label">Sesiones activas ahora</div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabla de usuarios -->
+<div class="form-card p-0">
+    {% if usuarios %}
+    <table class="table table-dark table-hover mb-0">
+        <thead>
+            <tr>
+                <th>Usuario</th>
+                <th>Plan</th>
+                <th>Expira</th>
+                <th>Conexiones</th>
+                <th>Sesiones activas</th>
+                <th>Estado</th>
+                <th>Nota</th>
+                <th style="width:120px">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for u in usuarios %}
+        <tr>
+            <td>
+                <span class="fw-semibold">{{ u.username }}</span>
+                <br>
+                <small class="text-secondary" style="font-size:.75rem">
+                    URL: <code>/iptv/{{ u.username }}/****/playlist.m3u</code>
+                </small>
+            </td>
+            <td>
+                <span class="badge
+                    {% if u.plan == '1y' %}bg-danger
+                    {% elif u.plan == '6m' %}bg-warning text-dark
+                    {% elif u.plan == '3m' %}bg-info text-dark
+                    {% else %}bg-secondary{% endif %}">
+                    {{ u.plan_label }}
+                </span>
+            </td>
+            <td style="font-size:.85rem;white-space:nowrap">
+                {% if u.expires_at %}
+                    {% if u.is_expired %}
+                    <span class="text-danger"><i class="bi bi-x-circle-fill"></i> Expirado</span><br>
+                    {% else %}
+                    <span class="text-success"><i class="bi bi-check-circle-fill"></i></span>
+                    {% endif %}
+                    {{ u.expires_at.strftime('%d/%m/%Y') }}
+                {% else %}—{% endif %}
+            </td>
+            <td class="text-center">
+                <span class="badge bg-secondary">{{ u.max_connections }}</span>
+            </td>
+            <td class="text-center">
+                <span class="badge
+                    {% if activas.get(u.id, 0) > 0 %}bg-success{% else %}bg-secondary{% endif %}">
+                    {{ activas.get(u.id, 0) }} / {{ u.max_connections }}
+                </span>
+            </td>
+            <td>
+                {% if not u.activo %}
+                <span class="badge badge-status-err">Inactivo</span>
+                {% elif u.is_expired %}
+                <span class="badge badge-status-err">Expirado</span>
+                {% else %}
+                <span class="badge badge-status-ok">Activo</span>
+                {% endif %}
+            </td>
+            <td style="font-size:.8rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="{{ u.nota or '' }}">
+                {{ u.nota or '—' }}
+            </td>
+            <td>
+                <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-warning"
+                            data-bs-toggle="modal"
+                            data-bs-target="#modalEditar{{ u.id }}"
+                            title="Editar">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <form method="post"
+                          action="{{ url_for('admin.iptv_eliminar', uid=u.id) }}"
+                          class="d-inline">
+                        <button class="btn btn-sm btn-outline-danger" title="Eliminar"
+                                onclick="return confirm('¿Eliminar al usuario IPTV «{{ u.username }}»?')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-secondary py-5">
+        <i class="bi bi-people" style="font-size:2rem"></i>
+        <p class="mt-2">No hay usuarios IPTV todavía. Crea el primero.</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ══ MODAL CREAR ══ -->
+<div class="modal fade" id="modalCrear" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-person-plus-fill me-2"></i>Nuevo usuario IPTV</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{{ url_for('admin.iptv_crear') }}">
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Usuario</label>
+                    <input type="text" name="username" class="form-control bg-dark text-light border-secondary"
+                           placeholder="p.ej. juan123" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Contraseña</label>
+                    <input type="text" name="password" class="form-control bg-dark text-light border-secondary"
+                           placeholder="Contraseña" required>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Plan</label>
+                        <select name="plan" class="form-select bg-dark text-light border-secondary">
+                            <option value="1m">1 mes</option>
+                            <option value="3m">3 meses</option>
+                            <option value="6m">6 meses</option>
+                            <option value="1y">1 año</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Conexiones simultáneas</label>
+                        <select name="max_connections" class="form-select bg-dark text-light border-secondary">
+                            <option value="1">1 conexión</option>
+                            <option value="2">2 conexiones</option>
+                            <option value="3">3 conexiones</option>
+                            <option value="5">5 conexiones</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Nota interna (opcional)</label>
+                    <input type="text" name="nota" class="form-control bg-dark text-light border-secondary"
+                           placeholder="p.ej. Cliente premium referido por...">
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-danger">Crear usuario</button>
+            </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ══ MODALES EDITAR (uno por usuario) ══ -->
+{% for u in usuarios %}
+<div class="modal fade" id="modalEditar{{ u.id }}" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar — {{ u.username }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{{ url_for('admin.iptv_editar', uid=u.id) }}">
+            <div class="modal-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Plan</label>
+                        <select name="plan" class="form-select bg-dark text-light border-secondary">
+                            {% for val, lbl in [('1m','1 mes'),('3m','3 meses'),('6m','6 meses'),('1y','1 año')] %}
+                            <option value="{{ val }}" {% if u.plan == val %}selected{% endif %}>{{ lbl }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Conexiones</label>
+                        <select name="max_connections" class="form-select bg-dark text-light border-secondary">
+                            {% for n in [1,2,3,5] %}
+                            <option value="{{ n }}" {% if u.max_connections == n %}selected{% endif %}>{{ n }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="activo" value="1"
+                               id="activo{{ u.id }}" {% if u.activo %}checked{% endif %}>
+                        <label class="form-check-label text-secondary" for="activo{{ u.id }}">Usuario activo</label>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="renovar" value="1"
+                               id="renovar{{ u.id }}">
+                        <label class="form-check-label text-secondary" for="renovar{{ u.id }}">
+                            Renovar suscripción (añade el plan seleccionado desde la fecha actual o la de vencimiento)
+                        </label>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Nueva contraseña (dejar vacío para no cambiar)</label>
+                    <input type="text" name="password" class="form-control bg-dark text-light border-secondary"
+                           placeholder="Nueva contraseña">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">Nota interna</label>
+                    <input type="text" name="nota" class="form-control bg-dark text-light border-secondary"
+                           value="{{ u.nota or '' }}">
+                </div>
+                <div class="alert alert-secondary py-2 mb-0" style="font-size:.82rem">
+                    <strong>URL de playlist:</strong><br>
+                    <code id="urlCopy{{ u.id }}">/iptv/{{ u.username }}/<em>contraseña</em>/playlist.m3u</code>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-warning">Guardar cambios</button>
+            </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Actualizar contador de sesiones activas
+async function refreshOnline() {
+    try {
+        const r = await fetch('/admin/iptv/api/online');
+        const d = await r.json();
+        document.getElementById('onlineCount').textContent = d.length;
+    } catch {}
+}
+refreshOnline();
+setInterval(refreshOnline, 30_000);
+</script>
+{% endblock %}
