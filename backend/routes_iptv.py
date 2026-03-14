@@ -138,35 +138,43 @@ def playlist(username: str, password: str):
         abort(401)
 
     base = request.host_url.rstrip('/')
-    # Orden: live primero, luego pelicula, luego serie; dentro de cada tipo
-    # ordenar por group_title y título.
+
     from sqlalchemy import case as _case
     tipo_orden = _case(
         {'live': 0, 'pelicula': 1, 'serie': 2},
         value=Contenido.tipo,
         else_=3,
     )
-    q = (
-        Contenido.query
-        .filter_by(activo=True)
-        .order_by(tipo_orden, Contenido.group_title, Contenido.titulo)
-        .yield_per(500)   # procesa 500 filas a la vez sin cargar todo
-    )
 
     _tipo_grp = {'live': 'Directo', 'pelicula': 'Películas', 'serie': 'Series'}
 
-    def _generate():
-        yield '#EXTM3U\n'
-        for c in q:
-            img = (c.imagen or '').replace('"', '')
-            grp = (c.group_title or _tipo_grp.get(c.tipo, 'General')).replace('"', '')
-            titulo = c.titulo.replace(',', ' ')
-            stream_url = f'{base}/iptv/{username}/{password}/stream/{c.id}'
-            yield f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{titulo}\n'
-            yield f'{stream_url}\n'
+    # Obtener solo los campos necesarios como tuplas ligeras (no instancias ORM completas)
+    # para poder cerrar la sesión de BD antes de hacer el streaming de respuesta.
+    filas = (
+        db.session.query(
+            Contenido.id,
+            Contenido.titulo,
+            Contenido.tipo,
+            Contenido.imagen,
+            Contenido.group_title,
+        )
+        .filter(Contenido.activo == True)
+        .order_by(tipo_orden, Contenido.group_title, Contenido.titulo)
+        .all()
+    )
 
+    lines = ['#EXTM3U']
+    for cid, titulo, tipo, imagen, group_title in filas:
+        img = (imagen or '').replace('"', '')
+        grp = (group_title or _tipo_grp.get(tipo, 'General')).replace('"', '')
+        tit = (titulo or '').replace(',', ' ')
+        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
+        lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
+        lines.append(stream_url)
+
+    content = '\n'.join(lines) + '\n'
     return Response(
-        _generate(),
+        content,
         mimetype='audio/x-mpegurl',
         headers={'Content-Disposition': f'attachment; filename="{username}.m3u"'},
     )

@@ -1429,4 +1429,11 @@ _style.textContent = `
 `;
 document.head.appendChild(_style);
 
+// ── Heartbeat: actualiza presencia del usuario en el servidor cada 30s ─────
+(function startHeartbeat() {
+    const hb = () => fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
+    hb();
+    setInterval(hb, 30_000);
+})();
+
 document.addEventListener('DOMContentLoaded', init);

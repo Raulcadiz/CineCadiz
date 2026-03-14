@@ -182,24 +182,54 @@ def get_contenido_by_type(tipo):
 
 @api_bp.get('/trending')
 def get_trending():
-    """Novedades: año más reciente primero, luego fecha de adición.
-    Las series se deduplicán: una sola tarjeta por serie (el episodio más reciente)
-    para evitar que la misma serie ocupe 20 tarjetas en la sección Tendencias."""
+    """
+    Tendencias: contenido del último año (o los 2 más recientes si hay pocos),
+    selección aleatoria para que cambie en cada carga.
+    Series deduplicadas: una tarjeta por título base.
+    """
+    import random as _random
     limit = min(request.args.get('limit', 20, type=int), 50)
 
-    # Obtener más candidatos de los necesarios para poder deduplicar sin quedarnos cortos
+    # Determinar el año de corte (último año con contenido)
+    from sqlalchemy import func as _func
+    max_year = (
+        db.session.query(_func.max(Contenido.año))
+        .filter(Contenido.activo == True, Contenido.tipo != 'live', Contenido.año.isnot(None))
+        .scalar()
+    ) or 0
+    # Incluir también el año anterior para tener suficiente variedad
+    min_year = max(max_year - 1, max_year)
+
     candidates = (
         Contenido.query
-        .filter(Contenido.activo == True, Contenido.tipo != 'live')
+        .filter(
+            Contenido.activo == True,
+            Contenido.tipo != 'live',
+            Contenido.año >= min_year,
+            Contenido.imagen.isnot(None),
+            Contenido.imagen != '',
+        )
         .order_by(Contenido.año.desc(), Contenido.fecha_agregado.desc())
-        .limit(limit * 8)
+        .limit(limit * 20)   # pool amplio para poder mezclar y deduplicar
         .all()
     )
+
+    # Si no hay suficientes con imagen en el último año, relajar el filtro
+    if len(candidates) < limit * 3:
+        candidates = (
+            Contenido.query
+            .filter(Contenido.activo == True, Contenido.tipo != 'live')
+            .order_by(Contenido.año.desc(), Contenido.fecha_agregado.desc())
+            .limit(limit * 20)
+            .all()
+        )
+
+    # Mezclar para que cada visita muestre un orden diferente
+    _random.shuffle(candidates)
 
     seen_series: set = set()
     result: list = []
     for item in candidates:
-        # Deduplicar series: una tarjeta por título base (sin S01E01)
         if item.tipo == 'serie' or item.temporada is not None:
             base = _get_base_title(item.titulo)
             if base in seen_series:
