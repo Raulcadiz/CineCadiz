@@ -29,11 +29,51 @@ def _is_private(url: str) -> bool:
         return True   # fail-safe: si no se puede resolver, bloquear
 
 _PROXY_UA = {
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ),
+    # VLC como User-Agent principal — los servidores IPTV reconocen y sirven a VLC;
+    # bloquean peticiones de navegadores convencionales (Chrome, Firefox).
+    'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+    'Icy-MetaData': '0',
 }
+
+# Tabla de Content-Type por extensión de URL para el proxy de streams
+_EXT_CONTENT_TYPE: dict[str, str] = {
+    '.mp4':  'video/mp4',
+    '.m4v':  'video/mp4',
+    '.mkv':  'video/x-matroska',
+    '.webm': 'video/webm',
+    '.avi':  'video/x-msvideo',
+    '.mov':  'video/quicktime',
+    '.ts':   'video/mp2t',
+    '.m2ts': 'video/mp2t',
+    '.flv':  'video/x-flv',
+    '.wmv':  'video/x-ms-wmv',
+    '.mpg':  'video/mpeg',
+    '.mpeg': 'video/mpeg',
+}
+
+
+def _content_type_for_url(url: str, server_ct: str) -> str:
+    """
+    Devuelve el Content-Type correcto para el stream-proxy.
+    Si el servidor manda un tipo de vídeo válido, lo usa.
+    Si manda 'application/octet-stream' u otro tipo genérico,
+    lo infiere por la extensión de la URL en lugar de asumir MPEG-TS.
+    """
+    url_path = url.lower().split('?')[0]
+    # Content-Type útil que viene del servidor → respetarlo
+    if server_ct and server_ct.startswith('video/') and server_ct != 'video/mp2t':
+        # Conservar video/* explícito (excepto mp2t que a veces es incorrecto)
+        return server_ct
+    if server_ct and server_ct.startswith('video/mp2t'):
+        # mp2t solo es correcto para .ts/.m2ts
+        if url_path.endswith('.ts') or url_path.endswith('.m2ts'):
+            return server_ct
+    # Inferir por extensión
+    for ext, ct in _EXT_CONTENT_TYPE.items():
+        if url_path.endswith(ext):
+            return ct
+    # Sin extensión conocida (streams IPTV sin extensión) → mp2t es lo habitual
+    return server_ct or 'video/mp2t'
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -519,14 +559,7 @@ def stream_proxy():
     try:
         up = requests.get(url, stream=True, headers=hdrs, timeout=20,
                           proxies={}, allow_redirects=True)
-        ct = up.headers.get('Content-Type', 'video/mp2t')
-        # Para streams MPEG-TS, forzar content-type correcto aunque el CDN
-        # devuelva 'application/octet-stream' (el navegador no lo reproduciría)
-        url_path_lower = url.lower().split('?')[0]
-        if url_path_lower.endswith('.ts') or ct in (
-            'application/octet-stream', 'binary/octet-stream', 'application/download', ''
-        ):
-            ct = 'video/mp2t'
+        ct = _content_type_for_url(url, up.headers.get('Content-Type', ''))
 
         out_hdrs = {
             'Access-Control-Allow-Origin':  '*',
