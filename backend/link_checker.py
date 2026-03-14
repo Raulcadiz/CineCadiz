@@ -17,7 +17,19 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_HEADERS = {
+# User-Agent de VLC — los servidores IPTV reconocen y sirven a VLC;
+# bloquean o rechazan peticiones de navegadores convencionales.
+_VLC_UA = 'VLC/3.0.20 LibVLC/3.0.20'
+
+_HEADERS_VLC = {
+    'User-Agent': _VLC_UA,
+    'Range': 'bytes=0-1023',
+    'Icy-MetaData': '0',
+}
+
+# User-Agent de navegador como fallback (algunos servidores web normales
+# solo sirven a navegadores y rechazan VLC)
+_HEADERS_BROWSER = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
         'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -29,18 +41,47 @@ _HEADERS = {
 
 def check_url(url: str, timeout: int = 5) -> bool:
     """
-    True si la URL responde. Intenta HEAD; si falla, prueba GET parcial.
-    Timeout corto para no bloquear el pool.
+    True si la URL responde con código HTTP < 400.
+
+    Estrategia para streams IPTV:
+      1. GET parcial (Range) con UA de VLC — lo que usa el reproductor real.
+         HEAD se omite porque muchos servidores IPTV devuelven 405 a HEAD y
+         gastaríamos tiempo antes del fallback.
+      2. Si falla (timeout o error de red), intento rápido con UA de navegador
+         por si el servidor bloquea VLC pero admite navegadores.
+
+    El timeout se aplica a la conexión+primera respuesta (connect + read),
+    no a la descarga completa — el Range header limita a 1 KB.
     """
-    try:
-        r = requests.head(url, timeout=timeout, headers=_HEADERS, allow_redirects=True)
-        if r.status_code < 400:
-            return True
-        r2 = requests.get(url, timeout=timeout, headers=_HEADERS, stream=True)
-        r2.close()
-        return r2.status_code < 400
-    except Exception:
-        return False
+    # Aumentamos el read-timeout ligeramente respecto al connect-timeout
+    # porque los servidores IPTV tardan más en empezar a emitir que en conectar.
+    connect_t = min(timeout, 8)
+    read_t    = max(timeout, 12)   # mínimo 12s de read aunque el scan_timeout sea 5
+
+    for headers in (_HEADERS_VLC, _HEADERS_BROWSER):
+        try:
+            r = requests.get(
+                url,
+                headers=headers,
+                stream=True,
+                allow_redirects=True,
+                timeout=(connect_t, read_t),
+            )
+            r.close()
+            if r.status_code < 400:
+                return True
+            # 405 = HEAD/método no permitido, 401/403 = auth requerida →
+            # el stream existe pero requiere credenciales → lo consideramos vivo.
+            if r.status_code in (401, 403, 405):
+                return True
+        except requests.exceptions.Timeout:
+            # Timeout de red ≠ stream caído; puede ser servidor IPTV lento.
+            # Solo marcamos como caído si AMBOS intentos fallan por timeout.
+            continue
+        except Exception:
+            continue
+
+    return False
 
 
 def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:

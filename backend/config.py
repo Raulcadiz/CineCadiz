@@ -30,7 +30,7 @@ class Config:
 
     # ── Scheduler ──────────────────────────────────────────────
     SCAN_INTERVAL_HOURS = int(os.environ.get('SCAN_INTERVAL_HOURS', 24))
-    SCAN_TIMEOUT = int(os.environ.get('SCAN_TIMEOUT', 8))       # segundos por link
+    SCAN_TIMEOUT = int(os.environ.get('SCAN_TIMEOUT', 15))      # segundos por link (IPTV necesita margen)
     SCAN_BATCH_SIZE = int(os.environ.get('SCAN_BATCH_SIZE', 100))
     # AUTO_SCAN=0 → no comprobar links automáticamente (recomendado para listas grandes)
     # AUTO_SCAN=1 → habilitar escaneo automático cada SCAN_INTERVAL_HOURS horas
