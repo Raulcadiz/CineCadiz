@@ -21,7 +21,10 @@ from models import db, Contenido, IptvUser, IptvSession
 
 iptv_bp = Blueprint('iptv', __name__, url_prefix='/iptv')
 
-_SESSION_TTL_MINUTES = 2   # sesión caduca si no hay heartbeat en 2 min
+_SESSION_TTL_MINUTES = 5   # sesión caduca si no hay heartbeat en 5 min
+# Para live: las apps IPTV hacen peticiones frecuentes → caduca rápido
+# Para pelicula/serie: el cliente hace una sola petición → la sesión dura más
+_SESSION_TTL_STREAM_MINUTES = 240  # 4h para VOD (película/serie)
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -38,22 +41,70 @@ def _auth(username: str, password: str) -> IptvUser | None:
     return u
 
 
+def _session_cutoff(tipo: str | None = None) -> datetime:
+    """Devuelve el datetime límite según el tipo de contenido."""
+    if tipo in ('pelicula', 'serie'):
+        return datetime.utcnow() - timedelta(minutes=_SESSION_TTL_STREAM_MINUTES)
+    return datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
+
+
 def _purge_old_sessions(iptv_user_id: int) -> None:
-    """Elimina sesiones con heartbeat más antiguo que TTL."""
-    cutoff = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
-    IptvSession.query.filter(
-        IptvSession.iptv_user_id == iptv_user_id,
-        IptvSession.last_heartbeat < cutoff,
-    ).delete(synchronize_session=False)
+    """Elimina sesiones caducadas (live > 5 min, VOD > 4h sin actividad)."""
+    from sqlalchemy import or_ as _or, and_ as _and
+    from models import Contenido as _C
+    cutoff_live = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
+    cutoff_vod  = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_STREAM_MINUTES)
+
+    # Sesiones cuyo contenido es live (o NULL) y han caducado por TTL corto
+    dead_live = (
+        IptvSession.query
+        .outerjoin(_C, IptvSession.contenido_id == _C.id)
+        .filter(
+            IptvSession.iptv_user_id == iptv_user_id,
+            _or(_C.tipo == 'live', _C.tipo.is_(None), IptvSession.contenido_id.is_(None)),
+            IptvSession.last_heartbeat < cutoff_live,
+        )
+    )
+    # Sesiones VOD caducadas por TTL largo
+    dead_vod = (
+        IptvSession.query
+        .join(_C, IptvSession.contenido_id == _C.id)
+        .filter(
+            IptvSession.iptv_user_id == iptv_user_id,
+            _C.tipo.in_(('pelicula', 'serie')),
+            IptvSession.last_heartbeat < cutoff_vod,
+        )
+    )
+    for s in dead_live.all() + dead_vod.all():
+        db.session.delete(s)
     db.session.commit()
 
 
 def _active_sessions_count(iptv_user_id: int) -> int:
-    cutoff = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
-    return IptvSession.query.filter(
-        IptvSession.iptv_user_id == iptv_user_id,
-        IptvSession.last_heartbeat >= cutoff,
-    ).count()
+    """Cuenta sesiones vivas (respeta TTL diferenciado por tipo)."""
+    from sqlalchemy import or_ as _or
+    from models import Contenido as _C
+    cutoff_live = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
+    cutoff_vod  = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_STREAM_MINUTES)
+    live_count = (
+        IptvSession.query
+        .outerjoin(_C, IptvSession.contenido_id == _C.id)
+        .filter(
+            IptvSession.iptv_user_id == iptv_user_id,
+            _or(_C.tipo == 'live', _C.tipo.is_(None), IptvSession.contenido_id.is_(None)),
+            IptvSession.last_heartbeat >= cutoff_live,
+        ).count()
+    )
+    vod_count = (
+        IptvSession.query
+        .join(_C, IptvSession.contenido_id == _C.id)
+        .filter(
+            IptvSession.iptv_user_id == iptv_user_id,
+            _C.tipo.in_(('pelicula', 'serie')),
+            IptvSession.last_heartbeat >= cutoff_vod,
+        ).count()
+    )
+    return live_count + vod_count
 
 
 # ── Endpoints ───────────────────────────────────────────────────
@@ -75,32 +126,47 @@ def info(username: str, password: str):
 
 @iptv_bp.get('/<username>/<password>/playlist.m3u')
 def playlist(username: str, password: str):
-    """Genera una playlist M3U con todos los canales live activos."""
+    """
+    Genera una playlist M3U con todo el contenido activo, ordenado:
+      1. Directo (live)  → grupo real del canal
+      2. Películas       → grupo real o 'Películas'
+      3. Series          → grupo real o 'Series'
+    Usa streaming de respuesta para no cargar los 20k+ items en RAM.
+    """
     u = _auth(username, password)
     if not u:
         abort(401)
 
-    canales = (
+    base = request.host_url.rstrip('/')
+    # Orden: live primero, luego pelicula, luego serie; dentro de cada tipo
+    # ordenar por group_title y título.
+    from sqlalchemy import case as _case
+    tipo_orden = _case(
+        {'live': 0, 'pelicula': 1, 'serie': 2},
+        value=Contenido.tipo,
+        else_=3,
+    )
+    q = (
         Contenido.query
-        .filter_by(tipo='live', activo=True)
-        .order_by(Contenido.group_title, Contenido.titulo)
-        .all()
+        .filter_by(activo=True)
+        .order_by(tipo_orden, Contenido.group_title, Contenido.titulo)
+        .yield_per(500)   # procesa 500 filas a la vez sin cargar todo
     )
 
-    base = request.host_url.rstrip('/')
-    lines = ['#EXTM3U']
-    for c in canales:
-        img = c.imagen or ''
-        grp = c.group_title or 'General'
-        stream_url = f'{base}/iptv/{username}/{password}/stream/{c.id}'
-        lines.append(
-            f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{c.titulo}'
-        )
-        lines.append(stream_url)
+    _tipo_grp = {'live': 'Directo', 'pelicula': 'Películas', 'serie': 'Series'}
 
-    content = '\n'.join(lines) + '\n'
+    def _generate():
+        yield '#EXTM3U\n'
+        for c in q:
+            img = (c.imagen or '').replace('"', '')
+            grp = (c.group_title or _tipo_grp.get(c.tipo, 'General')).replace('"', '')
+            titulo = c.titulo.replace(',', ' ')
+            stream_url = f'{base}/iptv/{username}/{password}/stream/{c.id}'
+            yield f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{titulo}\n'
+            yield f'{stream_url}\n'
+
     return Response(
-        content,
+        _generate(),
         mimetype='audio/x-mpegurl',
         headers={'Content-Disposition': f'attachment; filename="{username}.m3u"'},
     )
@@ -122,8 +188,8 @@ def stream(username: str, password: str, contenido_id: int):
 
     ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
 
-    # Buscar sesión existente de esta IP para este usuario
-    cutoff = datetime.utcnow() - timedelta(minutes=_SESSION_TTL_MINUTES)
+    # Buscar sesión existente de esta IP para este usuario (TTL según tipo)
+    cutoff = _session_cutoff(c.tipo)
     sesion = IptvSession.query.filter(
         IptvSession.iptv_user_id == u.id,
         IptvSession.ip_address == ip,
