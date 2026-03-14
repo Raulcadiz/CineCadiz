@@ -673,7 +673,7 @@ def subir_lista():
         grupos_tipos=grupos_tipos_json,
     )
     db.session.add(lista)
-    db.session.flush()
+    db.session.commit()   # commit ANTES de lanzar el hilo para que el hilo vea la fila
 
     app = current_app._get_current_object()
     t = threading.Thread(
@@ -681,8 +681,6 @@ def subir_lista():
         daemon=True,
     )
     t.start()
-
-    db.session.commit()
     flash(
         f'Lista "{nombre}" creada. Procesando archivo ({len(raw_bytes)//1024} KB)…',
         'info',
@@ -715,7 +713,7 @@ def resubir_lista(lista_id):
     Contenido.query.filter_by(lista_id=lista_id).delete()
     lista.ultima_actualizacion = None
     lista.error = None
-    db.session.commit()
+    db.session.commit()   # commit ANTES de lanzar el hilo
 
     app = current_app._get_current_object()
     t = threading.Thread(

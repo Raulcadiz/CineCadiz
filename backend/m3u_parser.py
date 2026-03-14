@@ -594,8 +594,8 @@ def fetch_groups_preview(
     (early-stop) o alcanza MAX_ITEMS.
     Devuelve (groups, error_msg).
     """
-    MAX_ITEMS   = 20_000   # hard cap de ítems a escanear
-    GRACE_ITEMS = 3_000    # ítems sin grupo nuevo → parar antes
+    MAX_ITEMS   = 150_000  # hard cap — soporta M3U de hasta ~150k entradas
+    GRACE_ITEMS = 30_000   # ítems consecutivos sin grupo NUEVO antes de parar
     max_secs    = _cfg(config, 'DOWNLOAD_TIMEOUT', 300)
     req_proxies = {
         'http':  f'http://{proxy}',
