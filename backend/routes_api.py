@@ -553,6 +553,9 @@ def stream_proxy():
         return '', 403
 
     hdrs = {**_PROXY_UA}
+    # Referer = origen del servidor IPTV; valida sesión de segmentos HLS (/hlsr/)
+    _p = _urlparse(url)
+    hdrs['Referer'] = f'{_p.scheme}://{_p.netloc}/'
     if request.headers.get('Range'):          # soporte parcial de contenido (seeking)
         hdrs['Range'] = request.headers['Range']
 
@@ -602,11 +605,15 @@ def hls_proxy():
         return '', 403
 
     try:
-        resp = requests.get(url, headers=_PROXY_UA, timeout=5,
+        parsed   = _urlparse(url)
+        mfst_hdrs = {
+            **_PROXY_UA,
+            'Referer': f'{parsed.scheme}://{parsed.netloc}/',
+        }
+        resp = requests.get(url, headers=mfst_hdrs, timeout=5,
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
 
-        parsed   = _urlparse(url)
         base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
         ps = request.host_url.rstrip('/') + '/api/stream-proxy'
         ph = request.host_url.rstrip('/') + '/api/hls-proxy'
