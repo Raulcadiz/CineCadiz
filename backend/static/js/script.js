@@ -654,13 +654,12 @@ function _loadHlsDirect(url) {
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         _destroyHls();
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            // CORS u otro error de red → intentar a través del proxy del VPS
-            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
-        } else {
-            // Error de parseo: el stream no es HLS → probar como vídeo nativo
-            _tryNative(url);
-        }
+        // _loadHlsDirect solo se llama para URLs HLS (ver _isLikelyHls).
+        // Cualquier error fatal → proxy del VPS:
+        //   NETWORK_ERROR = CORS / timeout / IP bloqueada
+        //   MEDIA_ERROR   = servidor devolvió respuesta no-HLS para este User-Agent
+        //                   (habitual en servidores IPTV que bloquean UA de Android Chrome)
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
     });
 }
 
