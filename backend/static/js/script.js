@@ -495,7 +495,7 @@ function _showPlayerError(msg) {
     el.player?.querySelector('.player-body')?.appendChild(errDiv);
 }
 
-/** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native. */
+/** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
 function _loadHls(url) {
     _hls = new Hls({
         maxBufferLength:   30,
@@ -510,12 +510,16 @@ function _loadHls(url) {
     _hls.on(Hls.Events.ERROR, (_e, data) => {
         if (data.fatal) {
             _destroyHls();
-            // El proxy también falló → último recurso: reproducción nativa HTML5
             const originalUrl = el.player.dataset.streamUrl;
-            if (originalUrl) {
+            // Si la URL original es HLS ya probamos: directo → hls-proxy → sin más.
+            // Usar stream-proxy con un .m3u8 devuelve el manifest en crudo y el browser
+            // intenta resolver los segmentos relativos contra nuestro servidor → 404.
+            if (originalUrl && !_isLikelyHls(originalUrl)) {
+                // No es HLS → quizás sea un formato nativo (mp4/mkv que llegó aquí por error)
                 _tryNative(originalUrl);
             } else {
-                _showPlayerError('Stream HLS no disponible — puede ser un problema de CORS o el stream expiró');
+                _setPlayerLoading(false);
+                _showPlayerError('Stream no disponible o canal caído');
             }
         }
     });
