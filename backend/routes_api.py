@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from flask import session as _session
-from models import db, Contenido, Lista, FuenteRSS, ChannelReport
+from models import db, Contenido, Lista, FuenteRSS, ChannelReport, WatchHistory
 from sqlalchemy import or_, and_, nulls_last
 import requests
 
@@ -211,10 +211,13 @@ def get_live():
 
 def get_contenido_by_type(tipo):
     page = max(1, request.args.get('page', 1, type=int))
-    per_page = current_app.config['ITEMS_PER_PAGE']
+    per_page = min(
+        request.args.get('limit', current_app.config['ITEMS_PER_PAGE'], type=int),
+        200,
+    )
     query = (
-        Contenido.query
-        .filter_by(activo=True, tipo=tipo)
+        _build_visible_query()
+        .filter(Contenido.tipo == tipo)
         .order_by(Contenido.fecha_agregado.desc())
     )
     return jsonify(paginate_query(query, page, per_page))
@@ -749,6 +752,182 @@ def get_stats():
         'inactivos': total_inactivos,
         'listas': total_listas,
         'total': total_peliculas + total_series + total_live,
+    })
+
+
+# ── Watch history y recomendaciones ────────────────────────
+
+@api_bp.post('/watch')
+def record_watch():
+    """
+    Registra una reproducción para alimentar el motor de recomendaciones.
+    Acepta:
+      session_key  — ID de sesión anónima (generado en el cliente)
+      contenido_id — ID del ítem reproducido
+    """
+    data = request.get_json(silent=True) or {}
+    session_key  = (data.get('session_key') or '').strip()[:64]
+    contenido_id = data.get('contenido_id')
+
+    if not session_key or not contenido_id:
+        return jsonify({'ok': False}), 400
+
+    item = Contenido.query.filter_by(id=contenido_id, activo=True).first()
+    if not item:
+        return jsonify({'ok': False}), 404
+
+    user_id = _session.get('user_id')
+
+    # Deduplica: no registrar el mismo item dos veces en 30 minutos
+    from datetime import timedelta
+    from sqlalchemy import and_ as _and_
+    cutoff = __import__('datetime').datetime.utcnow() - timedelta(minutes=30)
+    exists = WatchHistory.query.filter(
+        _and_(
+            WatchHistory.session_key == session_key,
+            WatchHistory.contenido_id == contenido_id,
+            WatchHistory.played_at >= cutoff,
+        )
+    ).first()
+
+    if not exists:
+        genres_snap = item.genero or ''
+        w = WatchHistory(
+            session_key=session_key,
+            user_id=user_id,
+            contenido_id=contenido_id,
+            genres_snapshot=genres_snap,
+        )
+        db.session.add(w)
+        db.session.commit()
+
+    return jsonify({'ok': True})
+
+
+@api_bp.get('/recomendaciones')
+def get_recomendaciones():
+    """
+    Recomendaciones personalizadas basadas en historial de reproducción.
+
+    Parámetros:
+      session_key  — ID de sesión anónima del cliente
+      limit        — número de resultados (default 20, max 60)
+      context_id   — ID de un ítem concreto para "porque viste X"
+                     (si se indica, devuelve items del mismo género/tipo)
+
+    Algoritmo:
+      1. Recuperar los últimos 30 items vistos por esta sesión
+      2. Construir perfil de géneros ponderado (más reciente = más peso)
+      3. Puntuar todos los items activos por overlap de géneros
+      4. Excluir los ya vistos recientemente
+      5. Devolver top N mezclado con algo de aleatoriedad (no siempre el mismo orden)
+    """
+    import random as _rand
+    session_key = request.args.get('session_key', '').strip()[:64]
+    limit       = min(request.args.get('limit', 20, type=int), 60)
+    context_id  = request.args.get('context_id', type=int)
+
+    # ── 1. Perfil del usuario ───────────────────────────────
+    # Si hay context_id, usar ese item como contexto (para "porque viste X")
+    context_item = None
+    if context_id:
+        context_item = Contenido.query.filter_by(id=context_id, activo=True).first()
+
+    genre_weights: dict[str, float] = {}
+    watched_ids: set[int] = set()
+
+    if session_key:
+        recent = (
+            WatchHistory.query
+            .filter_by(session_key=session_key)
+            .order_by(WatchHistory.played_at.desc())
+            .limit(50)
+            .all()
+        )
+        for i, w in enumerate(recent):
+            watched_ids.add(w.contenido_id)
+            decay = 1.0 / (i + 1)   # más reciente = más peso
+            genres = [g.strip() for g in (w.genres_snapshot or '').split(',') if g.strip()]
+            for g in genres:
+                genre_weights[g] = genre_weights.get(g, 0) + decay
+
+    # Si hay item de contexto, sus géneros dominan
+    if context_item:
+        ctx_genres = [g.strip() for g in (context_item.genero or '').split(',') if g.strip()]
+        for g in ctx_genres:
+            genre_weights[g] = genre_weights.get(g, 0) + 5.0   # boost fuerte
+
+    # Sin perfil ni contexto → devolver trending normal
+    if not genre_weights:
+        import random as _r
+        candidates = (
+            Contenido.query
+            .filter(
+                Contenido.activo == True,
+                Contenido.tipo != 'live',
+                Contenido.imagen.isnot(None),
+                Contenido.imagen != '',
+            )
+            .order_by(Contenido.fecha_agregado.desc())
+            .limit(limit * 5)
+            .all()
+        )
+        _r.shuffle(candidates)
+        return jsonify([c.to_dict() for c in candidates[:limit]])
+
+    # ── 2. Candidatos: todo el contenido activo no visto ───
+    base_q = _build_visible_query().filter(
+        Contenido.tipo != 'live',
+    )
+    if watched_ids:
+        base_q = base_q.filter(Contenido.id.notin_(list(watched_ids)[:500]))
+    if context_item:
+        base_q = base_q.filter(Contenido.tipo == context_item.tipo)
+
+    pool = base_q.limit(2000).all()
+
+    # ── 3. Puntuar candidatos ──────────────────────────────
+    top_genres = sorted(genre_weights, key=genre_weights.get, reverse=True)[:5]
+
+    def _score(item: Contenido) -> float:
+        if not item.genero:
+            return 0.0
+        item_genres = {g.strip() for g in item.genero.split(',') if g.strip()}
+        score = sum(genre_weights.get(g, 0) for g in item_genres)
+        # Pequeño boost por imagen disponible (mejor experiencia visual)
+        if item.imagen:
+            score += 0.3
+        # Jitter aleatorio ±0.1 para evitar que el mismo orden se repita siempre
+        score += _rand.uniform(-0.1, 0.1)
+        return score
+
+    ranked = sorted(pool, key=_score, reverse=True)
+
+    # ── 4. Diversificar: no más de 3 items del mismo género ─
+    genre_quota: dict[str, int] = {}
+    result: list[Contenido] = []
+    for item in ranked:
+        if len(result) >= limit:
+            break
+        main_genre = (item.genero or '').split(',')[0].strip()
+        if genre_quota.get(main_genre, 0) >= 4:
+            continue
+        genre_quota[main_genre] = genre_quota.get(main_genre, 0) + 1
+        result.append(item)
+
+    # Rellenar si quedan huecos
+    if len(result) < limit:
+        seen_ids = {i.id for i in result}
+        for item in ranked:
+            if len(result) >= limit:
+                break
+            if item.id not in seen_ids:
+                result.append(item)
+
+    return jsonify({
+        'items':       [i.to_dict() for i in result],
+        'top_genres':  top_genres[:3],
+        'context':     context_item.to_dict() if context_item else None,
     })
 
 

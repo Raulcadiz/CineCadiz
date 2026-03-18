@@ -340,6 +340,31 @@ class Contenido(db.Model):
 
 
 # ═══════════════════════════════════════════════════════════
+# HISTORIAL DE REPRODUCCIÓN
+# ═══════════════════════════════════════════════════════════
+
+class WatchHistory(db.Model):
+    """
+    Evento de reproducción — anónimo (session_key) o vinculado a usuario.
+    Permite calcular recomendaciones personalizadas sin requerir login.
+    Un mismo contenido puede aparecer varias veces (repeticiones); el frontend
+    deduplica por contenido_id cuando construye el perfil de afinidad.
+    """
+    __tablename__ = 'watch_history'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    # Sesión anónima — generada en el cliente, persiste en localStorage
+    session_key    = db.Column(db.String(64), nullable=False, index=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    contenido_id   = db.Column(db.Integer, db.ForeignKey('contenidos.id'), nullable=False)
+    played_at      = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    # Géneros del item en el momento de la reproducción (snapshot para no requerir join)
+    genres_snapshot = db.Column(db.String(300), nullable=True)
+
+    contenido = db.relationship('Contenido', backref=db.backref('watches', lazy='dynamic'))
+
+
+# ═══════════════════════════════════════════════════════════
 # REPORTES DE CANALES
 # ═══════════════════════════════════════════════════════════
 

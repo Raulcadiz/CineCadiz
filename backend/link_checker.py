@@ -163,3 +163,82 @@ def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
     }
     logger.info(f'[Scan] Completado: {result}')
     return result
+
+
+def purge_dead_links(app, days: int = 7) -> dict:
+    """
+    Elimina permanentemente de la BD el contenido M3U que lleva más de `days` días
+    marcado como inactivo (activo=False) y ya fue verificado al menos una vez.
+
+    Solo elimina fuente='m3u' para no borrar items RSS que no pasan por el scanner.
+    """
+    from models import db, Contenido
+    from sqlalchemy import and_
+
+    cutoff = datetime.utcnow() - __import__('datetime').timedelta(days=days)
+
+    with app.app_context():
+        to_delete = (
+            Contenido.query
+            .filter(
+                and_(
+                    Contenido.activo == False,
+                    Contenido.fuente == 'm3u',
+                    Contenido.ultima_verificacion.isnot(None),
+                    Contenido.ultima_verificacion < cutoff,
+                )
+            )
+            .all()
+        )
+        count = len(to_delete)
+        for item in to_delete:
+            db.session.delete(item)
+        db.session.commit()
+
+    result = {
+        'deleted': count,
+        'days': days,
+        'timestamp': datetime.utcnow().isoformat(),
+    }
+    logger.info(f'[Purge] Eliminados {count} items inactivos (>{days}d): {result}')
+    return result
+
+
+def server_health(app) -> list:
+    """
+    Devuelve estadísticas de salud por servidor (dominio base de url_stream).
+    Útil para detectar qué proveedores tienen la mayoría de streams caídos.
+    """
+    from models import db, Contenido
+    from sqlalchemy import func, case
+    import urllib.parse
+
+    with app.app_context():
+        rows = (
+            db.session.query(Contenido.servidor, Contenido.activo,
+                             func.count(Contenido.id).label('cnt'))
+            .filter(Contenido.fuente == 'm3u', Contenido.servidor.isnot(None))
+            .group_by(Contenido.servidor, Contenido.activo)
+            .all()
+        )
+
+    # Agrupar por servidor
+    servers: dict = {}
+    for servidor, activo, cnt in rows:
+        key = servidor or 'desconocido'
+        if key not in servers:
+            servers[key] = {'servidor': key, 'alive': 0, 'dead': 0}
+        if activo:
+            servers[key]['alive'] += cnt
+        else:
+            servers[key]['dead'] += cnt
+
+    result = []
+    for s in servers.values():
+        total = s['alive'] + s['dead']
+        s['total'] = total
+        s['dead_pct'] = round(s['dead'] / total * 100, 1) if total else 0
+        result.append(s)
+
+    result.sort(key=lambda x: x['dead_pct'], reverse=True)
+    return result

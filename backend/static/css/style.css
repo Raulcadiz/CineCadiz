@@ -1384,3 +1384,23 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
     font-size: .82rem;
     padding: .3rem .85rem;
 }
+
+/* ── Secciones de recomendaciones ───────────────────────── */
+.porque-viste-badge {
+    display: inline-block;
+    background: var(--primary-color, #e50914);
+    color: #fff;
+    font-size: .65rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    padding: .15rem .5rem;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-right: .45rem;
+}
+
+.section-subtitle {
+    color: var(--text-muted, #888);
+    font-size: .82rem;
+}

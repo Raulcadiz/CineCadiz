@@ -22,7 +22,7 @@ from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
 )
-from link_checker import scan_dead_links
+from link_checker import scan_dead_links, purge_dead_links, server_health
 from rss_importer import import_rss_source, DEFAULT_RSS_SOURCES
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
@@ -434,6 +434,31 @@ def scan_status():
         'running': _scan_state['running'],
         'last_result': _scan_state['last_result'],
     })
+
+
+@admin_bp.post('/purge-dead')
+@login_required
+def admin_purge_dead():
+    """Elimina permanentemente el contenido M3U inactivo más de N días."""
+    days = request.form.get('days', 7, type=int)
+    days = max(1, min(days, 365))
+    app = current_app._get_current_object()
+    result = purge_dead_links(app, days=days)
+    flash(
+        f'Purge completado: {result["deleted"]} items eliminados '
+        f'(inactivos >{days} días).',
+        'success' if result['deleted'] > 0 else 'info',
+    )
+    return redirect(url_for('admin.dashboard'))
+
+
+@admin_bp.get('/api/server-health')
+@login_required
+def admin_server_health():
+    """JSON con estadísticas de salud por servidor (% streams caídos)."""
+    app = current_app._get_current_object()
+    data = server_health(app)
+    return jsonify(data)
 
 
 # ── Gestión de contenido ───────────────────────────────────────

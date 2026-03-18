@@ -6,6 +6,17 @@
 // Placeholder SVG inline — nunca genera 404
 const PLACEHOLDER = '/static/images/placeholder.svg';
 
+// ── Sesión anónima para recomendaciones ────────────────────
+function _getSessionKey() {
+    let key = localStorage.getItem('cc_session_key');
+    if (!key) {
+        key = 'cc_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+        localStorage.setItem('cc_session_key', key);
+    }
+    return key;
+}
+const SESSION_KEY = _getSessionKey();
+
 // ── Estado global ──────────────────────────────────────────
 const state = {
     currentPage: 1,
@@ -67,6 +78,18 @@ const api = {
     serieEpisodios: (titulo) => api.get('serie-episodios', { titulo }),
 
     item: (id) => api.get(`contenido/${id}`),
+
+    watch: (contenidoId) => fetch('/api/watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_key: SESSION_KEY, contenido_id: contenidoId }),
+    }).catch(() => {}),   // never block playback on network errors
+
+    recomendaciones: (contextId = null) => {
+        const params = { session_key: SESSION_KEY, limit: 20 };
+        if (contextId) params.context_id = contextId;
+        return api.get('recomendaciones', params);
+    },
 };
 
 // ── Proxy de imágenes RSS (bypass hotlinking/VPN) ──────────
@@ -450,7 +473,8 @@ function _destroyHls() {
 /** Muestra overlay de error dentro del reproductor con mensaje amigable + botón Reportar. */
 function _showPlayerError(msg) {
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
-    const itemId = el.player?.dataset.itemId || '';
+    const itemId   = el.player?.dataset.itemId   || '';
+    const streamUrl = el.player?.dataset.streamUrl || '';
     const errDiv = document.createElement('div');
     errDiv.className = 'player-error';
     errDiv.innerHTML = `
@@ -464,8 +488,14 @@ function _showPlayerError(msg) {
                 ← Volver al listado
             </button>
             ${itemId ? `
+            <button class="err-btn" data-action="open-app" data-id="${itemId}">
+                📲 Abrir en app
+            </button>
+            <button class="err-btn err-btn-copy" data-action="copy">
+                📋 Copiar enlace
+            </button>
             <button class="err-btn err-btn-report" data-action="report" data-id="${itemId}">
-                🚩 Reportar canal
+                🚩 Reportar
             </button>` : ''}
         </div>
         <div class="err-report-thanks" style="display:none;margin-top:1rem;color:#4caf50;font-size:.85rem">
@@ -478,6 +508,25 @@ function _showPlayerError(msg) {
             const action = btn.dataset.action;
             if (action === 'close-player') {
                 document.querySelector('.btn-close-player')?.click();
+            } else if (action === 'open-app') {
+                // Descarga el .m3u del ítem — el SO lo abre en VLC / MX Player / etc.
+                const id = btn.dataset.id;
+                const a = document.createElement('a');
+                a.href = `/api/playlist/${id}.m3u`;
+                a.download = `stream_${id}.m3u`;
+                a.click();
+            } else if (action === 'copy') {
+                const urlToCopy = streamUrl || '';
+                if (!urlToCopy) return;
+                navigator.clipboard?.writeText(urlToCopy)
+                    .then(() => {
+                        btn.textContent = '✓ Copiado';
+                        setTimeout(() => { btn.innerHTML = '📋 Copiar enlace'; }, 2000);
+                    })
+                    .catch(() => {
+                        // Fallback para navegadores sin clipboard API
+                        prompt('Copia este enlace:', urlToCopy);
+                    });
             } else if (action === 'report') {
                 const id = btn.dataset.id;
                 btn.disabled = true;
@@ -554,6 +603,11 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
     hist = hist.filter(h => h.url !== url).slice(0, 49);
     hist.unshift({ url, title, source, ts: Date.now(), id: itemId, image: imgDecoded });
     localStorage.setItem('cc_history', JSON.stringify(hist));
+
+    // Registrar en backend para recomendaciones (fire-and-forget, solo ítems M3U con ID)
+    if (source !== 'rss' && itemId) {
+        api.watch(itemId);
+    }
 
     // RSS → nueva pestaña (cinemacity.cc bloquea iframe)
     if (source === 'rss') {
@@ -839,6 +893,9 @@ function setView(type) {
     const liveSec    = document.getElementById('live');
     const contSec = document.getElementById('continueSection');
 
+    const recoSec         = document.getElementById('recoSection');
+    const porqueSecs      = document.getElementById('porqueVisteContainer');
+
     if (!type) {
         // Vista inicio: mostrar todo
         [hero, novedSec, pelSec, serSec, liveSec].forEach(s => {
@@ -849,11 +906,14 @@ function setView(type) {
             const hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
             contSec.style.display = hist.length ? '' : 'none';
         }
+        // recoSection solo si tiene contenido
+        if (recoSec && recoSec.querySelector('.movie-card')) recoSec.style.display = '';
+        if (porqueSecs) porqueSecs.style.display = '';
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
         // Vista de tipo: ocultar hero, novedades y TODOS los carruseles.
         // El grid (#movies) muestra el contenido completo del tipo seleccionado.
-        [hero, novedSec, contSec, pelSec, serSec, liveSec].forEach(s => {
+        [hero, novedSec, contSec, pelSec, serSec, liveSec, recoSec, porqueSecs].forEach(s => {
             if (s) s.style.display = 'none';
         });
         document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
@@ -1249,6 +1309,55 @@ function setupEvents() {
     });
 }
 
+// ── Recomendaciones personalizadas ─────────────────────────
+async function loadRecomendaciones() {
+    try {
+        const data = await api.recomendaciones();
+        if (!data || !data.items || !data.items.length) return;
+
+        // ── "Para ti" carousel ──
+        const sec      = document.getElementById('recoSection');
+        const carousel = document.getElementById('recoCarousel');
+        const subtitle = document.getElementById('recoSubtitle');
+        if (sec && carousel) {
+            renderCarousel(data.items, carousel);
+            sec.style.display = '';
+            if (subtitle && data.top_genres && data.top_genres.length) {
+                subtitle.textContent = 'Basado en: ' + data.top_genres.map(titleCase).join(', ');
+            }
+        }
+
+        // ── "Porque viste X" sections ──
+        // Read last 3 watched M3U items from local history that have a valid id
+        const hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
+        const recentM3u = hist.filter(h => h.source !== 'rss' && h.id).slice(0, 3);
+        if (!recentM3u.length) return;
+
+        const container = document.getElementById('porqueVisteContainer');
+        if (!container) return;
+        container.innerHTML = '';
+
+        for (const watched of recentM3u) {
+            try {
+                const reco = await api.recomendaciones(watched.id);
+                if (!reco || !reco.items || !reco.items.length) continue;
+
+                const sec = document.createElement('section');
+                sec.className = 'content-section porque-viste-sec';
+                sec.dataset.anchor = 'porqueViste_' + watched.id;
+                sec.innerHTML = `
+                    <h2 class="section-title">
+                        <span class="porque-viste-badge">Porque viste</span>
+                        ${watched.title}
+                    </h2>
+                    <div class="carousel porque-viste-carousel"></div>`;
+                container.appendChild(sec);
+                renderCarousel(reco.items.slice(0, 12), sec.querySelector('.carousel'));
+            } catch { /* ignore per-item errors */ }
+        }
+    } catch { /* silenciar si backend sin historial */ }
+}
+
 // ── Continuar viendo ───────────────────────────────────────
 function loadContinueWatching() {
     const hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
@@ -1313,7 +1422,8 @@ async function showFavoritesSection() {
     if (!sec || !grid) return;
 
     // Ocultar secciones principales (lista explícita para no romper nada)
-    ['home', 'peliculas', 'series', 'live', 'continueSection', 'movies'].forEach(id => {
+    ['home', 'peliculas', 'series', 'live', 'continueSection', 'movies',
+     'recoSection', 'porqueVisteContainer'].forEach(id => {
         const s = document.getElementById(id);
         if (s) s.style.display = 'none';
     });
@@ -1398,6 +1508,7 @@ async function init() {
 
         // Secciones adicionales (en paralelo, no bloquean el init)
         loadContinueWatching();
+        loadRecomendaciones();
 
         setupEvents();
     } catch (err) {

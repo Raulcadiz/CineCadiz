@@ -80,6 +80,21 @@
     </div>
 </div>
 
+<!-- Salud de servidores -->
+<div class="form-card mb-4" id="serverHealthCard">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h5 class="mb-0">
+            <i class="bi bi-hdd-network me-2 text-warning"></i>Salud de servidores
+        </h5>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadServerHealth()" title="Actualizar">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </div>
+    <div id="serverHealthBody">
+        <p class="text-muted small mb-0">Cargando…</p>
+    </div>
+</div>
+
 <!-- Widget Usuarios Online (superadmin) -->
 {% if current_user and current_user.is_superadmin %}
 <div class="row g-3 mb-4">
@@ -287,6 +302,72 @@ function loadOnlineUsers() {
 loadOnlineUsers();
 // Refrescar cada 30s
 setInterval(loadOnlineUsers, 30000);
+
+// ── Salud de servidores ───────────────────────────────────
+function loadServerHealth() {
+    const body = document.getElementById('serverHealthBody');
+    if (!body) return;
+    body.innerHTML = '<p class="text-muted small mb-0">Cargando…</p>';
+
+    fetch('/admin/api/server-health')
+        .then(r => r.json())
+        .then(servers => {
+            if (!servers || !servers.length) {
+                body.innerHTML = '<p class="text-muted small mb-0">Sin datos (realiza un scan primero).</p>';
+                return;
+            }
+
+            // Alertas: servidores con >80% caídos
+            const critical = servers.filter(s => s.dead_pct >= 80 && s.total >= 5);
+            let alertHtml = '';
+            if (critical.length) {
+                alertHtml = `<div class="alert alert-danger py-2 small mb-3">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    <strong>${critical.length} servidor${critical.length > 1 ? 'es' : ''} crítico${critical.length > 1 ? 's' : ''}:</strong>
+                    ${critical.map(s => `<span class="badge bg-danger ms-1">${s.servidor}</span>`).join('')}
+                    — más del 80% de sus streams están caídos.
+                </div>`;
+            }
+
+            const rows = servers.slice(0, 20).map(s => {
+                const pct   = s.dead_pct;
+                const color = pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#22c55e';
+                const badge = pct >= 80
+                    ? 'badge bg-danger'
+                    : pct >= 50 ? 'badge bg-warning text-dark' : 'badge bg-success';
+                const barFill = `background:linear-gradient(90deg,${color} ${pct}%,#2a2a2a ${pct}%)`;
+                return `<tr>
+                    <td class="text-truncate" style="max-width:220px" title="${s.servidor}">${s.servidor}</td>
+                    <td><span class="${badge}">${pct}% caídos</span></td>
+                    <td style="min-width:100px">
+                        <div style="height:6px;border-radius:3px;${barFill}"></div>
+                    </td>
+                    <td class="text-muted" style="font-size:.78rem">${s.alive}✓ / ${s.dead}✗ / ${s.total} tot.</td>
+                </tr>`;
+            }).join('');
+
+            body.innerHTML = `${alertHtml}
+                <div style="overflow-x:auto">
+                <table class="table table-dark table-hover mb-0" style="font-size:.83rem">
+                    <thead><tr>
+                        <th>Servidor</th>
+                        <th>Estado</th>
+                        <th style="min-width:100px">%</th>
+                        <th>Conteo</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                </div>
+                <p class="text-muted small mt-2 mb-0">
+                    Mostrando los ${Math.min(servers.length, 20)} peores servidores de ${servers.length} total.
+                    Los porcentajes se actualizan con cada scan.
+                </p>`;
+        })
+        .catch(() => {
+            body.innerHTML = '<p class="text-muted small mb-0">No se pudieron cargar los datos de salud.</p>';
+        });
+}
+loadServerHealth();
 
 // Botón "Reclasificar contenido"
 document.getElementById('btnReclassify')?.addEventListener('click', function() {

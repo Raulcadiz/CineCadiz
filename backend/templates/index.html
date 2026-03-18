@@ -109,6 +109,18 @@
             <div class="carousel" id="continueCarousel"></div>
         </section>
 
+        <!-- Para ti (recomendaciones personalizadas — se muestra solo si hay historial) -->
+        <section class="content-section" id="recoSection" style="display:none">
+            <div class="section-header">
+                <h2 class="section-title">✨ Para ti</h2>
+                <span class="section-subtitle" id="recoSubtitle" style="color:var(--text-muted);font-size:.85rem"></span>
+            </div>
+            <div class="carousel" id="recoCarousel"></div>
+        </section>
+
+        <!-- Porque viste X (hasta 3 secciones dinámicas, generadas por JS) -->
+        <div id="porqueVisteContainer"></div>
+
         <!-- Novedades -->
         <section class="content-section">
             <h2 class="section-title">🔥 Tendencias</h2>
@@ -279,7 +291,7 @@
     <!-- HLS.js: reproducción de streams .m3u8 en Chrome/Firefox -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="/static/js/script.js"></script>
+    <script src="/static/js/script.js?v=20260318"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js')

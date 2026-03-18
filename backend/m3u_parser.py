@@ -58,6 +58,62 @@ _PELICULA_GROUPS = [
 ]
 
 
+# ──────────────────────────────────────────────────────────────
+# Extracción de géneros a partir de group-title
+# ──────────────────────────────────────────────────────────────
+
+# Mapa: keywords normalizadas → nombre de género display
+# Orden importa: se aplica el primer match de arriba a abajo.
+_GENRE_MAP: list[tuple[list[str], str]] = [
+    (['terror', 'horror', 'miedo', 'slasher'],              'Terror'),
+    (['thriller', 'suspenso'],                               'Thriller'),
+    (['accion', 'action'],                                   'Acción'),
+    (['aventura', 'adventure'],                              'Aventura'),
+    (['comedia', 'comedy', 'humor', 'stand up'],             'Comedia'),
+    (['drama', 'dramatico'],                                 'Drama'),
+    (['anime', 'manga'],                                     'Anime'),
+    (['animacion', 'animation', 'animados', 'cartoon', 'dibujos'], 'Animación'),
+    (['infantil', 'kids', 'familia', 'family'],              'Infantil'),
+    (['romance', 'romantica', 'romantico', 'romantic'],      'Romance'),
+    (['ciencia ficcion', 'sci fi', 'scifi', 'science fiction'], 'Ciencia ficción'),
+    (['fantasia', 'fantasy'],                                'Fantasía'),
+    (['documental', 'documentary', 'documentales'],          'Documental'),
+    (['biografia', 'biography', 'biopic'],                   'Biográfica'),
+    (['historica', 'historical'],                            'Histórica'),
+    (['crimen', 'crime', 'policiaca', 'policial', 'detective', 'noir'], 'Crimen'),
+    (['belica', 'guerra', 'war', 'militar'],                 'Bélica'),
+    (['western', 'vaquero'],                                 'Western'),
+    (['musical'],                                            'Musical'),
+    (['misterio', 'mystery'],                                'Misterio'),
+    (['superheroe', 'superhero', 'marvel'],                  'Superhéroes'),
+]
+
+
+def _extract_genre_from_group(group_title: str) -> str:
+    """
+    Extrae un género real (Acción, Drama, Comedia…) del group_title M3U.
+    Devuelve '' si no reconoce ningún género.
+
+    Limpia años, códigos de país cortos y separadores IPTV antes de buscar.
+    """
+    if not group_title:
+        return ''
+    norm = _normalize(group_title)
+    # Eliminar años y códigos de país comunes que confunden el matching
+    norm = re.sub(r'\b(19|20)\d{2}\b', ' ', norm)
+    norm = re.sub(r'\b(es|esp|lat|usa|uk|us|pt|mx|ar|co|cl|pe|ve|fr|de|it|br|ru|tr)\b', ' ', norm)
+    # Normalizar separadores IPTV (|, -, [, ])
+    norm = re.sub(r'[|\[\]\-_]', ' ', norm)
+    norm = ' ' + re.sub(r'\s+', ' ', norm).strip() + ' '   # padding para word-boundary
+
+    for keywords, display in _GENRE_MAP:
+        for kw in keywords:
+            kw_padded = ' ' + kw + ' '
+            if kw_padded in norm:
+                return display
+    return ''
+
+
 def parse_extinf(line: str) -> dict:
     """Parsea una línea #EXTINF y devuelve un dict con metadatos."""
     info = {
@@ -88,6 +144,11 @@ def parse_extinf(line: str) -> dict:
     info['pais']        = _attr(line, 'tvg-country')
     info['group_title'] = _attr(line, 'group-title')
     info['genero']      = _attr(line, 'tvg-genre')
+
+    # Si tvg-genre está vacío (la mayoría de listas IPTV no lo incluyen),
+    # intentar extraer el género a partir del group-title
+    if not info['genero'] and info['group_title']:
+        info['genero'] = _extract_genre_from_group(info['group_title'])
 
     year_str = _attr(line, 'tvg-year')
     if year_str.isdigit():
