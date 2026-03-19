@@ -23,9 +23,10 @@ const state = {
     currentType: '',
     currentYear: '',
     currentGenre: '',
-    currentSort: 'recent',
+    currentSort: 'year_desc',
     favorites: JSON.parse(localStorage.getItem('cc_favorites') || '[]'),
     allItems: [],           // caché local para búsqueda rápida
+    liveGroups: [],         // caché de grupos de canales en directo
 };
 
 // ── Elementos DOM ──────────────────────────────────────────
@@ -78,6 +79,9 @@ const api = {
     serieEpisodios: (titulo) => api.get('serie-episodios', { titulo }),
 
     item: (id) => api.get(`contenido/${id}`),
+
+    liveAgrupados: (params = {}) => api.get('live-agrupados', params),
+    liveCategorias: ()            => api.get('live-categorias'),
 
     watch: (contenidoId) => fetch('/api/watch', {
         method: 'POST',
@@ -137,7 +141,7 @@ function renderCard(item) {
     const imgSrc = getImageUrl(item);
 
     return `
-    <div class="movie-card" data-id="${item.id}">
+    <div class="movie-card" data-id="${item.id}" data-type="${item.type || 'movie'}">
         <div class="card-img-wrap">
             <img src="${imgSrc}"
                  alt="${item.title}"
@@ -210,6 +214,106 @@ function renderSeriesCard(series) {
             <p class="movie-genres">${(series.genres || []).slice(0,2).join(', ') || 'Serie'}</p>
         </div>
     </div>`;
+}
+
+/** Tarjeta para un grupo de canales en directo (DAZN HD + DAZN FHD → una tarjeta). */
+function renderLiveGroupCard(group, idx) {
+    const img   = group.image || PLACEHOLDER;
+    const count = group.channelCount || 1;
+    const encTitle = encodeURIComponent(group.title || '');
+    return `
+    <div class="movie-card live-group-card" data-type="live" data-group-idx="${idx}" data-group-title="${encTitle}">
+        <div class="card-img-wrap">
+            <img src="${img}" alt="${group.title}" loading="lazy"
+                 onerror="this.src='${PLACEHOLDER}'">
+            ${count > 1 ? `<span class="live-variants-badge">📡 ${count}</span>` : ''}
+        </div>
+        <div class="movie-info">
+            <h3 class="movie-title">${group.title}</h3>
+            <div class="movie-meta">
+                <span>📡 Directo</span>
+            </div>
+        </div>
+        <div class="movie-overlay">
+            <button class="btn-watch btn-live-group-open" data-group-idx="${idx}" data-group-title="${encTitle}">
+                <i class="bi bi-${count > 1 ? 'collection-play' : 'play-fill'}"></i>
+                ${count > 1 ? 'Ver canales' : 'Ver'}
+            </button>
+        </div>
+    </div>`;
+}
+
+/** Abre el modal de grupo de canales (variantes de calidad de un canal). */
+function showLiveGroupDetail(group) {
+    const modal = document.getElementById('liveGroupModal');
+    const body  = document.getElementById('liveGroupModalBody');
+    if (!modal || !body) return;
+
+    const channels = group.channels || [];
+    if (!channels.length) return;
+
+    modal.style.display = 'flex';
+    const heroImg  = group.image || PLACEHOLDER;
+    const baseTitle = group.title || '';
+
+    // Etiqueta de calidad: eliminar el nombre base del título del canal
+    function qualityLabel(ch) {
+        const chTitle = ch.title || ch.titulo || '';
+        if (!chTitle) return '—';
+        if (!baseTitle) return chTitle;
+        const suffix = chTitle.replace(
+            new RegExp('^' + baseTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ''
+        ).trim();
+        return suffix || chTitle;
+    }
+
+    try {
+        body.innerHTML = `
+        <div class="series-hero" style="background-image:url('${heroImg}')">
+            <div class="series-hero-content">
+                <img class="series-hero-poster" src="${heroImg}" alt="${baseTitle}"
+                     onerror="this.style.display='none'">
+                <div class="series-hero-info">
+                    <h2>${baseTitle}</h2>
+                    <div class="series-stats">
+                        <span class="stat-pill">📡 En Directo</span>
+                        ${channels.length > 1 ? `<span class="stat-pill">${channels.length} calidades</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="live-channels-list">
+            ${channels.map(ch => {
+                const streamUrl = ch.streamUrl || ch.url_stream || '';
+                const encStream = encodeURIComponent(streamUrl);
+                const encImg    = encodeURIComponent(ch.image || group.image || PLACEHOLDER);
+                const qlabel    = qualityLabel(ch);
+                const chTitle   = ch.title || ch.titulo || baseTitle;
+                return `
+                <div class="live-channel-row"
+                     data-stream="${encStream}"
+                     data-source="${ch.source || ch.fuente || 'm3u'}"
+                     data-title="${chTitle}"
+                     data-id="${ch.id || ''}"
+                     data-image="${encImg}">
+                    <i class="bi bi-play-circle-fill live-row-icon"></i>
+                    <span class="live-row-label">${qlabel}</span>
+                    <span class="live-row-play">▶ Reproducir</span>
+                </div>`;
+            }).join('')}
+        </div>`;
+    } catch (err) {
+        console.error('showLiveGroupDetail error:', err);
+        body.innerHTML = '<p class="no-content">Error al cargar los canales</p>';
+    }
+
+    body.querySelectorAll('.live-channel-row').forEach(row => {
+        row.addEventListener('click', () => {
+            modal.style.display = 'none';
+            playStream(row.dataset.stream, row.dataset.title,
+                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image);
+        });
+    });
 }
 
 /** Tarjeta de episodio dentro del modal de serie. */
@@ -803,7 +907,7 @@ async function loadGrid(append = false) {
             // Series → mostrar agrupadas por título (una tarjeta por serie)
             data = await api.seriesAgrupadas({
                 genero: state.currentGenre,
-                sort:   state.currentSort === 'recent' ? 'recent' : 'title_asc',
+                sort:   state.currentSort || 'year_desc',
                 page:   state.currentPage,
                 limit:  48,
             });
@@ -896,6 +1000,8 @@ function setView(type) {
     const recoSec         = document.getElementById('recoSection');
     const porqueSecs      = document.getElementById('porqueVisteContainer');
 
+    const genreStrip = document.getElementById('genreStrip');
+
     if (!type) {
         // Vista inicio: mostrar todo
         [hero, novedSec, pelSec, serSec, liveSec].forEach(s => {
@@ -909,15 +1015,33 @@ function setView(type) {
         // recoSection solo si tiene contenido
         if (recoSec && recoSec.querySelector('.movie-card')) recoSec.style.display = '';
         if (porqueSecs) porqueSecs.style.display = '';
+        // Ocultar genre strip en la vista inicio
+        if (genreStrip) genreStrip.style.display = 'none';
+        document.body.classList.remove('has-genre-strip');
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
         // Vista de tipo: ocultar hero, novedades y TODOS los carruseles.
-        // El grid (#movies) muestra el contenido completo del tipo seleccionado.
         [hero, novedSec, contSec, pelSec, serSec, liveSec, recoSec, porqueSecs].forEach(s => {
             if (s) s.style.display = 'none';
         });
+        // Mostrar genre strip solo en la vista de directo
+        if (genreStrip) {
+            const showStrip = type === 'live';
+            genreStrip.style.display = showStrip ? 'flex' : 'none';
+            document.body.classList.toggle('has-genre-strip', showStrip);
+        }
         document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
     }
+}
+
+/** Obtiene el grupo de directo desde el elemento clicado (por índice o título). */
+function _getLiveGroup(el) {
+    const idx = parseInt(el.dataset.groupIdx, 10);
+    if (!isNaN(idx) && state.liveGroups[idx]) return state.liveGroups[idx];
+    // Fallback: buscar por título si el índice no coincide
+    const title = decodeURIComponent(el.dataset.groupTitle || '');
+    if (title) return state.liveGroups.find(g => g.title === title) || null;
+    return null;
 }
 
 // ── Eventos ────────────────────────────────────────────────
@@ -930,6 +1054,21 @@ function setupEvents() {
             e.stopPropagation();
             const t = seriesBtn.dataset.seriesTitle;
             if (t) showSeriesDetail(decodeURIComponent(t));
+            return;
+        }
+
+        // Botón/click en tarjeta de grupo de directo → abrir modal de variantes
+        const liveGroupBtn = e.target.closest('.btn-live-group-open');
+        if (liveGroupBtn) {
+            e.stopPropagation();
+            const group = _getLiveGroup(liveGroupBtn);
+            if (group) showLiveGroupDetail(group);
+            return;
+        }
+        const liveGroupCard = e.target.closest('.live-group-card');
+        if (liveGroupCard && !e.target.closest('button')) {
+            const group = _getLiveGroup(liveGroupCard);
+            if (group) showLiveGroupDetail(group);
             return;
         }
 
@@ -988,17 +1127,19 @@ function setupEvents() {
         // Cerrar cualquier modal
         if (e.target.classList.contains('close-modal')) {
             el.detailsModal.style.display = 'none';
-            const sm = document.getElementById('seriesModal');
-            if (sm) sm.style.display = 'none';
+            const sm  = document.getElementById('seriesModal');
+            const lgm = document.getElementById('liveGroupModal');
+            if (sm)  sm.style.display  = 'none';
+            if (lgm) lgm.style.display = 'none';
             return;
         }
         if (e.target === el.detailsModal) {
             el.detailsModal.style.display = 'none';
         }
         const sm = document.getElementById('seriesModal');
-        if (sm && e.target === sm) {
-            sm.style.display = 'none';
-        }
+        if (sm && e.target === sm) sm.style.display = 'none';
+        const lgm = document.getElementById('liveGroupModal');
+        if (lgm && e.target === lgm) lgm.style.display = 'none';
     });
 
     // Cerrar reproductor — botón ×
@@ -1143,8 +1284,10 @@ function setupEvents() {
             }
         } else if (!playerOpen && e.key === 'Escape') {
             el.detailsModal.style.display = 'none';
-            const sm = document.getElementById('seriesModal');
-            if (sm) sm.style.display = 'none';
+            const sm  = document.getElementById('seriesModal');
+            const lgm = document.getElementById('liveGroupModal');
+            if (sm)  sm.style.display  = 'none';
+            if (lgm) lgm.style.display = 'none';
         }
     });
 
@@ -1183,17 +1326,17 @@ function setupEvents() {
             const type = link.dataset.type;
             state.currentType  = type;
             state.currentPage  = 1;
-            // Resetear filtros al cambiar de tipo para evitar grids vacíos
+            // Resetear filtros al cambiar de tipo
             state.currentYear  = '';
             state.currentGenre = '';
-            state.currentSort  = 'recent';
+            state.currentSort  = 'year_desc';
             if (el.typeFilter)  el.typeFilter.value  = type;
             if (el.yearFilter)  el.yearFilter.value  = '';
             if (el.genreFilter) el.genreFilter.value = '';
             const sf = document.getElementById('sortFilter');
-            if (sf) sf.value = 'recent';
+            if (sf) sf.value = 'year_desc';
             document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
-            setView(type);     // ocultar hero, novedades y carruseles; mostrar sólo el grid
+            setView(type);
             loadGrid();
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
             document.querySelectorAll(`a[data-type="${type}"]`).forEach(n => n.classList.add('active'));
@@ -1208,19 +1351,35 @@ function setupEvents() {
             state.currentPage  = 1;
             state.currentYear  = '';
             state.currentGenre = '';
-            state.currentSort  = 'recent';
+            state.currentSort  = 'year_desc';
             if (el.typeFilter)  el.typeFilter.value  = '';
             if (el.yearFilter)  el.yearFilter.value  = '';
             if (el.genreFilter) el.genreFilter.value = '';
             const sf = document.getElementById('sortFilter');
-            if (sf) sf.value = 'recent';
+            if (sf) sf.value = 'year_desc';
             document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
             hideFavoritesSection();
-            setView('');       // restaurar todas las secciones
+            setView('');
             loadGrid();
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
             document.querySelectorAll('a[href="#home"]').forEach(n => n.classList.add('active'));
         });
+    });
+
+    // ── Géneros: muestra la franja de categorías de directo ──
+    document.getElementById('btnGeneros')?.addEventListener('click', e => {
+        e.preventDefault();
+        // Activar el strip
+        const strip = document.getElementById('genreStrip');
+        if (strip) {
+            strip.style.display = 'flex';
+            document.body.classList.add('has-genre-strip');
+        }
+        // Deseleccionar todas las pastillas → mostrar todos los canales
+        document.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
+        _filterLiveByCategory('');
+        // Scroll a la sección de directo
+        document.getElementById('live')?.scrollIntoView({ behavior: 'smooth' });
     });
 
 
@@ -1307,6 +1466,53 @@ function setupEvents() {
             item.classList.add('active');
         });
     });
+}
+
+// ── Género strip (pastillas de categorías de canales en directo) ────────────
+async function loadGenrePills() {
+    try {
+        const cats  = await api.liveCategorias();
+        const strip = document.getElementById('genreStrip');
+        const btnG  = document.getElementById('btnGeneros');
+
+        if (!cats || !cats.length) {
+            // Sin categorías: ocultar el botón Géneros para no confundir
+            if (btnG) btnG.style.display = 'none';
+            return;
+        }
+
+        if (!strip) return;
+
+        // Añadir pastilla "Todos" al inicio
+        strip.innerHTML =
+            `<button class="genre-strip-pill active" data-cat="">Todos</button>` +
+            cats.map(cat =>
+                `<button class="genre-strip-pill" data-cat="${encodeURIComponent(cat)}">${cat}</button>`
+            ).join('');
+
+        strip.querySelectorAll('.genre-strip-pill').forEach(pill => {
+            pill.addEventListener('click', () => {
+                strip.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
+                pill.classList.add('active');
+                const cat = decodeURIComponent(pill.dataset.cat);
+                _filterLiveByCategory(cat);
+            });
+        });
+    } catch { /* silenciar */ }
+}
+
+/** Filtra el carrusel de directo por categoría usando los grupos en memoria. */
+function _filterLiveByCategory(cat) {
+    const filtered = cat
+        ? state.liveGroups.filter(g =>
+            g.groupTitle === cat ||
+            (g.genres || []).some(gen => gen === cat)
+          )
+        : state.liveGroups;
+    if (!el.liveCarousel) return;
+    el.liveCarousel.innerHTML = filtered.length
+        ? filtered.map((g, i) => renderLiveGroupCard(g, state.liveGroups.indexOf(g))).join('')
+        : '<p class="no-content">Sin canales en esta categoría</p>';
 }
 
 // ── Recomendaciones personalizadas ─────────────────────────
@@ -1490,18 +1696,25 @@ async function init() {
 
     try {
         // Cargar secciones en paralelo
-        const [trending, peliculas, series, live] = await Promise.all([
+        const [trending, peliculas, series, liveData] = await Promise.all([
             api.trending(),
-            api.peliculas(1),
-            api.series(1),
-            api.live(1),
+            api.get('contenido', { tipo: 'pelicula', page: 1, limit: 20, sort: 'year_desc' }),
+            api.get('series-agrupadas', { page: 1, limit: 20, sort: 'year_desc' }),
+            api.liveAgrupados({ limit: 60 }),
         ]);
 
         renderHero(trending);
         renderCarousel(trending, el.novedades);
         renderCarousel(peliculas.items, el.peliculasCarousel);
         renderCarousel(series.items, el.seriesCarousel);
-        renderCarousel(live.items, el.liveCarousel);
+
+        // Canales en directo agrupados (la API devuelve un array directamente)
+        state.liveGroups = Array.isArray(liveData) ? liveData : [];
+        if (el.liveCarousel) {
+            el.liveCarousel.innerHTML = state.liveGroups.length
+                ? state.liveGroups.map((g, i) => renderLiveGroupCard(g, i)).join('')
+                : '<p class="no-content">Sin canales disponibles</p>';
+        }
 
         // Grid principal y filtros
         await Promise.all([loadGrid(), loadFilters()]);
@@ -1509,6 +1722,7 @@ async function init() {
         // Secciones adicionales (en paralelo, no bloquean el init)
         loadContinueWatching();
         loadRecomendaciones();
+        loadGenrePills();
 
         setupEvents();
     } catch (err) {

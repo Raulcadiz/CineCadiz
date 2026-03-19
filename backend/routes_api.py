@@ -463,6 +463,10 @@ def get_series_agrupadas():
 
     if sort == 'recent':
         series_list.sort(key=lambda x: x.get('addedAt') or '', reverse=True)
+    elif sort == 'year_desc':
+        series_list.sort(key=lambda x: (x.get('year') or 0), reverse=True)
+    elif sort == 'year_asc':
+        series_list.sort(key=lambda x: (x.get('year') or 9999))
     else:
         series_list.sort(key=lambda x: x['title'].lower())
 
@@ -477,6 +481,103 @@ def get_series_agrupadas():
         'pages':    max(1, (total + per_page - 1) // per_page),
         'per_page': per_page,
     })
+
+
+def _normalize_live_base(title: str) -> str:
+    """
+    Strip quality/variant suffixes so duplicate live channels can be grouped.
+    Examples:
+      "DAZN FHD 1"  → "DAZN"      "DAZN HD 2"   → "DAZN"
+      "ESPN 2 HD"   → "ESPN 2"     "La 1 HD"     → "La 1"
+      "Telecinco HD"→ "Telecinco"
+    """
+    quality = r'(?:FULL\s?HD|FHD|UHD|4K|2K|1080[pP]?|720[pP]?|480[pP]?|360[pP]?|HD\+?|SD|HQ|LQ)'
+    t = title.strip()
+    for _ in range(3):
+        prev = t
+        # "[base] [quality] [optional 1-2 digit number]"  →  "[base]"
+        t = _re.sub(rf'\s+{quality}(?:\s+\d{{1,2}})?\s*$', '', t, flags=_re.IGNORECASE).strip()
+        # "[base] [1-2 digit number] [quality]"  →  "[base]"
+        t = _re.sub(rf'\s+\d{{1,2}}\s+{quality}\s*$', '', t, flags=_re.IGNORECASE).strip()
+        if t == prev or not t:
+            break
+    return t or title.strip()
+
+
+@api_bp.get('/live-agrupados')
+def get_live_agrupados():
+    """
+    Canales en directo agrupados por nombre base (elimina sufijos de calidad/variante).
+    Devuelve cada grupo con sus canales internos para mostrar un selector de calidad.
+    """
+    q         = request.args.get('q', '').strip()
+    categoria = request.args.get('categoria', '').strip()
+
+    base_q = _build_visible_query().filter(
+        Contenido.tipo == 'live',
+        Contenido.temporada == None,   # excluir live con S01E01 (son series)
+    )
+    if q:
+        base_q = base_q.filter(Contenido.titulo.ilike(f'%{q}%'))
+    if categoria:
+        base_q = base_q.filter(Contenido.group_title.ilike(f'%{categoria}%'))
+
+    channels = base_q.order_by(Contenido.titulo.asc()).all()
+
+    groups: dict = {}
+    for ch in channels:
+        base = _normalize_live_base(ch.titulo)
+        if base not in groups:
+            groups[base] = {
+                'first_id':    ch.id,
+                'image':       ch.imagen or '',
+                'genres':      [],
+                'group_title': ch.group_title or '',
+                'channels':    [],
+                'source':      ch.fuente,
+            }
+        g = groups[base]
+        g['channels'].append(ch.to_dict())
+        if ch.imagen and not g['image']:
+            g['image'] = ch.imagen
+        if ch.genero and not g['genres']:
+            g['genres'] = [x.strip() for x in ch.genero.split(',') if x.strip()]
+
+    result = []
+    for base_title, data in sorted(groups.items(), key=lambda x: x[0].lower()):
+        best_ch = data['channels'][0]
+        result.append({
+            'id':           data['first_id'],
+            'title':        base_title,
+            'type':         'live',
+            'source':       data['source'],
+            'streamUrl':    best_ch['streamUrl'],
+            'image':        data['image'],
+            'year':         None,
+            'genres':       data['genres'],
+            'groupTitle':   data['group_title'],
+            'channelCount': len(data['channels']),
+            'channels':     data['channels'],
+        })
+
+    return jsonify(result)
+
+
+@api_bp.get('/live-categorias')
+def get_live_categorias():
+    """
+    Categorías de canales en directo.
+    Usa group_title si está disponible, si no usa genero como fallback.
+    """
+    rows = db.session.query(Contenido.group_title).filter(
+        Contenido.activo == True,
+        Contenido.tipo == 'live',
+        Contenido.group_title != None,
+        Contenido.group_title != '',
+    ).distinct().all()
+    cats = sorted({row[0].strip() for row in rows if row[0].strip()}, key=str.lower)
+
+    return jsonify(cats)
 
 
 @api_bp.get('/serie-episodios')

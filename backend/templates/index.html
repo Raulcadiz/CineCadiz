@@ -66,6 +66,7 @@
                 <a href="#movies" data-type="pelicula">Películas</a>
                 <a href="#series" data-type="serie">Series</a>
                 <a href="#live" data-type="live">En Directo</a>
+                <a href="#generos" id="btnGeneros">Géneros</a>
             </nav>
         </div>
 
@@ -86,6 +87,9 @@
             </div>
         </div>
     </header>
+
+    <!-- Genre navigation strip (below header, populated by JS) -->
+    <div class="genre-strip" id="genreStrip" style="display:none"></div>
 
     <!-- Contenido Principal -->
     <main class="main-content">
@@ -183,7 +187,7 @@
                     </select>
                     <select id="sortFilter" class="filter-select">
                         <option value="recent">Más recientes</option>
-                        <option value="year_desc">Año ↓</option>
+                        <option value="year_desc" selected>Año ↓</option>
                         <option value="year_asc">Año ↑</option>
                         <option value="title_asc">A–Z</option>
                     </select>
@@ -206,6 +210,16 @@
             <div class="modal-content series-modal-content">
                 <span class="close-modal">&times;</span>
                 <div id="seriesModalBody">
+                    <div class="no-content">Cargando…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Live Group — variantes de calidad de un canal -->
+        <div class="modal series-modal" id="liveGroupModal">
+            <div class="modal-content series-modal-content">
+                <span class="close-modal">&times;</span>
+                <div id="liveGroupModalBody">
                     <div class="no-content">Cargando…</div>
                 </div>
             </div>
@@ -291,7 +305,7 @@
     <!-- HLS.js: reproducción de streams .m3u8 en Chrome/Firefox -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="/static/js/script.js?v=20260318"></script>
+    <script src="/static/js/script.js?v=20260319c"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js')
