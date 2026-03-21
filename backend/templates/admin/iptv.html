@@ -8,9 +8,17 @@
         <span class="badge bg-secondary ms-2" style="font-size:.7rem">Mis usuarios</span>
         {% endif %}
     </h1>
-    <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
-        <i class="bi bi-person-plus-fill me-1"></i> Nuevo usuario
-    </button>
+    <div class="d-flex align-items-center gap-2">
+        {% if not panel_user.is_superadmin %}
+        <span class="text-secondary" style="font-size:.82rem;">
+            <i class="bi bi-people me-1"></i>{{ iptv_creados }} / {{ panel_user.iptv_user_limit }} usuarios
+        </span>
+        {% endif %}
+        <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear"
+                {% if not panel_user.is_superadmin and iptv_creados >= panel_user.iptv_user_limit %}disabled{% endif %}>
+            <i class="bi bi-person-plus-fill me-1"></i> Nuevo usuario
+        </button>
+    </div>
 </div>
 
 <!-- Tarjetas de resumen -->
@@ -163,7 +171,7 @@
 
 <!-- ══ MODAL CREAR ══ -->
 <div class="modal fade" id="modalCrear" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content bg-dark border-secondary">
             <div class="modal-header border-secondary">
                 <h5 class="modal-title"><i class="bi bi-person-plus-fill me-2"></i>Nuevo usuario IPTV</h5>
@@ -171,15 +179,17 @@
             </div>
             <form method="post" action="{{ url_for('admin.iptv_crear') }}">
             <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label text-secondary small">Usuario</label>
-                    <input type="text" name="username" class="form-control bg-dark text-light border-secondary"
-                           placeholder="p.ej. juan123" required>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label text-secondary small">Contraseña</label>
-                    <input type="text" name="password" class="form-control bg-dark text-light border-secondary"
-                           placeholder="Contraseña" required>
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Usuario</label>
+                        <input type="text" name="username" class="form-control bg-dark text-light border-secondary"
+                               placeholder="p.ej. juan123" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-secondary small">Contraseña</label>
+                        <input type="text" name="password" class="form-control bg-dark text-light border-secondary"
+                               placeholder="Contraseña" required>
+                    </div>
                 </div>
                 <div class="row g-2 mb-3">
                     <div class="col-6">
@@ -206,6 +216,31 @@
                     <input type="text" name="nota" class="form-control bg-dark text-light border-secondary"
                            placeholder="p.ej. Cliente premium referido por...">
                 </div>
+                {% if all_groups %}
+                <div class="mb-0">
+                    <label class="form-label text-secondary small">
+                        Grupos de contenido permitidos
+                        <span class="text-muted">(dejar todo sin marcar = acceso a todo)</span>
+                    </label>
+                    <div class="d-flex gap-2 mb-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="toggleAll('crear',true)">Marcar todo</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="toggleAll('crear',false)">Desmarcar todo</button>
+                    </div>
+                    <div style="max-height:200px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
+                        {% for grp in all_groups %}
+                        <div class="form-check">
+                            <input class="form-check-input grp-crear" type="checkbox"
+                                   name="grupos_permitidos" value="{{ grp }}"
+                                   id="cgrp_{{ loop.index }}">
+                            <label class="form-check-label text-light" style="font-size:.83rem"
+                                   for="cgrp_{{ loop.index }}">{{ grp }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
             <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -218,8 +253,9 @@
 
 <!-- ══ MODALES EDITAR (uno por usuario) ══ -->
 {% for u in usuarios %}
+{% set u_grupos = (u.grupos_permitidos | fromjson) if u.grupos_permitidos else [] %}
 <div class="modal fade" id="modalEditar{{ u.id }}" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content bg-dark border-secondary">
             <div class="modal-header border-secondary">
                 <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar — {{ u.username }}</h5>
@@ -271,9 +307,35 @@
                     <input type="text" name="nota" class="form-control bg-dark text-light border-secondary"
                            value="{{ u.nota or '' }}">
                 </div>
+                {% if all_groups %}
+                <div class="mb-3">
+                    <label class="form-label text-secondary small">
+                        Grupos de contenido permitidos
+                        <span class="text-muted">(dejar todo sin marcar = acceso a todo)</span>
+                    </label>
+                    <div class="d-flex gap-2 mb-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="toggleAll('edit{{ u.id }}',true)">Marcar todo</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="toggleAll('edit{{ u.id }}',false)">Desmarcar todo</button>
+                    </div>
+                    <div style="max-height:200px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
+                        {% for grp in all_groups %}
+                        <div class="form-check">
+                            <input class="form-check-input grp-edit{{ u.id }}" type="checkbox"
+                                   name="grupos_permitidos" value="{{ grp }}"
+                                   id="egrp_{{ u.id }}_{{ loop.index }}"
+                                   {% if grp in u_grupos %}checked{% endif %}>
+                            <label class="form-check-label text-light" style="font-size:.83rem"
+                                   for="egrp_{{ u.id }}_{{ loop.index }}">{{ grp }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
                 <div class="alert alert-secondary py-2 mb-0" style="font-size:.82rem">
                     <strong>URL de playlist:</strong><br>
-                    <code id="urlCopy{{ u.id }}">/iptv/{{ u.username }}/<em>contraseña</em>/playlist.m3u</code>
+                    <code>/iptv/{{ u.username }}/<em>contraseña</em>/playlist.m3u</code>
                 </div>
             </div>
             <div class="modal-footer border-secondary">
@@ -289,6 +351,11 @@
 
 {% block scripts %}
 <script>
+// Marcar/desmarcar todos los grupos de un modal
+function toggleAll(prefix, state) {
+    document.querySelectorAll('.grp-' + prefix).forEach(el => el.checked = state);
+}
+
 // Actualizar contador de sesiones activas
 async function refreshOnline() {
     try {

@@ -73,6 +73,9 @@ def create_app(config_class=Config):
     # ── Rutas frontend ─────────────────────────────────────────
     @app.route('/')
     def index():
+        from flask import session as _session, redirect as _redirect, url_for as _url_for
+        if not _session.get('user_id'):
+            return _redirect(_url_for('auth.login'))
         return render_template('index.html')
 
     @app.route('/manifest.json')
@@ -145,6 +148,8 @@ def _migrate_db():
         # en BD existente se crean aquí solo las columnas que falten
         # (las tablas completas las crea db.create_all si no existen)
         'ALTER TABLE iptv_users ADD COLUMN owner_id INTEGER REFERENCES users(id)',
+        'ALTER TABLE iptv_users ADD COLUMN grupos_permitidos TEXT',
+        'ALTER TABLE users ADD COLUMN iptv_user_limit INTEGER NOT NULL DEFAULT 10',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

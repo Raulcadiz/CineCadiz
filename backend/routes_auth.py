@@ -240,9 +240,18 @@ def crear_invitacion():
     role_para = request.form.get('role', 'user')
     if role_para not in ('user', 'premium'):
         role_para = 'user'
-    # Solo superadmin puede crear tokens para premiums
+    # Superadmin puede crear tokens para cualquier rol.
+    # Premium puede invitar a 1 premium (solo si no tiene ya uno creado o usado).
     if role_para == 'premium' and not user.is_superadmin:
-        role_para = 'user'
+        if not user.is_premium:
+            role_para = 'user'
+        else:
+            ya_premium = InviteToken.query.filter_by(
+                created_by_id=user.id, role_asignado='premium'
+            ).count()
+            if ya_premium >= 1:
+                flash('Solo puedes crear 1 invitación premium. Ya tienes una.', 'warning')
+                return redirect(url_for('auth.mi_cuenta'))
 
     token = InviteToken(created_by_id=user.id, role_asignado=role_para)
     db.session.add(token)

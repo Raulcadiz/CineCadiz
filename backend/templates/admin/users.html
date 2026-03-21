@@ -29,6 +29,7 @@
             <th>Usuario</th>
             <th>Rol</th>
             <th>Invitaciones</th>
+            <th>Límite IPTV</th>
             <th>Estado</th>
             <th>Último acceso</th>
             <th>Registro</th>
@@ -79,6 +80,22 @@
             </form>
             {% else %}
             <small class="text-muted">Ilimitadas</small>
+            {% endif %}
+        </td>
+        <td>
+            {% if u.role == 'premium' %}
+            <div class="d-flex align-items-center gap-2">
+                <small>{{ u.iptv_user_limit }} max</small>
+            </div>
+            <form method="POST" action="{{ url_for('admin.set_iptv_limit', user_id=u.id) }}"
+                  class="d-flex gap-1 mt-1" style="max-width:140px;">
+                <input type="number" name="limit" value="{{ u.iptv_user_limit }}" min="0" max="9999"
+                       class="form-control form-control-sm py-0" style="font-size:.75rem;height:24px;">
+                <button type="submit" class="btn btn-sm py-0 btn-outline-secondary"
+                        style="font-size:.7rem;">OK</button>
+            </form>
+            {% else %}
+            <small class="text-muted">—</small>
             {% endif %}
         </td>
         <td>

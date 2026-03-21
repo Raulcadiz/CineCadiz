@@ -139,6 +139,7 @@ def playlist(username: str, password: str):
 
     base = request.host_url.rstrip('/')
 
+    import json as _json
     from sqlalchemy import case as _case
     tipo_orden = _case(
         {'live': 0, 'pelicula': 1, 'serie': 2},
@@ -150,7 +151,7 @@ def playlist(username: str, password: str):
 
     # Obtener solo los campos necesarios como tuplas ligeras (no instancias ORM completas)
     # para poder cerrar la sesión de BD antes de hacer el streaming de respuesta.
-    filas = (
+    q = (
         db.session.query(
             Contenido.id,
             Contenido.titulo,
@@ -159,9 +160,18 @@ def playlist(username: str, password: str):
             Contenido.group_title,
         )
         .filter(Contenido.activo == True)
-        .order_by(tipo_orden, Contenido.group_title, Contenido.titulo)
-        .all()
     )
+
+    # Filtrar por grupos asignados al usuario IPTV (si tiene restricción)
+    if u.grupos_permitidos:
+        try:
+            grupos_set = set(_json.loads(u.grupos_permitidos))
+            if grupos_set:
+                q = q.filter(Contenido.group_title.in_(list(grupos_set)))
+        except (ValueError, TypeError):
+            pass
+
+    filas = q.order_by(tipo_orden, Contenido.group_title, Contenido.titulo).all()
 
     lines = ['#EXTM3U']
     for cid, titulo, tipo, imagen, group_title in filas:

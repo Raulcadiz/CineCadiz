@@ -23,8 +23,9 @@ class User(db.Model):
     username       = db.Column(db.String(50), unique=True, nullable=False)
     password_hash  = db.Column(db.String(255), nullable=False)
     role           = db.Column(db.String(20), nullable=False, default='user')
-    invite_limit   = db.Column(db.Integer, nullable=False, default=10)
-    invites_used   = db.Column(db.Integer, nullable=False, default=0)
+    invite_limit      = db.Column(db.Integer, nullable=False, default=10)
+    invites_used      = db.Column(db.Integer, nullable=False, default=0)
+    iptv_user_limit   = db.Column(db.Integer, nullable=False, default=10)
     activo         = db.Column(db.Boolean, nullable=False, default=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen      = db.Column(db.DateTime, nullable=True)
@@ -402,6 +403,8 @@ class IptvUser(db.Model):
     expires_at      = db.Column(db.DateTime, nullable=True)
     fecha_creacion  = db.Column(db.DateTime, default=datetime.utcnow)
     nota            = db.Column(db.String(255), nullable=True)
+    # Grupos permitidos: JSON list de group_title. NULL = acceso a todo el contenido.
+    grupos_permitidos = db.Column(db.Text, nullable=True)
     # Multi-admin: NULL → creado por superadmin (visible a todos los premium); FK → privado del admin
     owner_id        = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 

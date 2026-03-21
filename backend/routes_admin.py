@@ -129,6 +129,8 @@ def dashboard():
             'total_m3u':   Contenido.query.filter_by(fuente='m3u', activo=True).count(),
             'total_rss':   Contenido.query.filter_by(fuente='rss', activo=True).count(),
             'usuarios':    User.query.count(),
+            'usuarios_normales': User.query.filter_by(role='user').count(),
+            'usuarios_premium':  User.query.filter_by(role='premium').count(),
             'tickets_pendientes': Ticket.query.filter_by(estado='pendiente').count(),
         }
         listas  = Lista.query.order_by(Lista.fecha_creacion.desc()).limit(6).all()
@@ -1332,6 +1334,18 @@ def set_invite_limit(user_id):
     return redirect(url_for('admin.users'))
 
 
+@admin_bp.post('/users/<int:user_id>/set-iptv-limit')
+@superadmin_required
+def set_iptv_limit(user_id):
+    u = User.query.get_or_404(user_id)
+    limit = request.form.get('limit', 10, type=int)
+    limit = max(0, min(limit, 9999))
+    u.iptv_user_limit = limit
+    db.session.commit()
+    flash(f'Límite de usuarios IPTV de {u.username} actualizado a {limit}.', 'success')
+    return redirect(url_for('admin.users'))
+
+
 @admin_bp.post('/users/<int:user_id>/eliminar')
 @superadmin_required
 def eliminar_user(user_id):
@@ -1506,7 +1520,20 @@ def iptv_panel():
             IptvSession.iptv_user_id == u.id,
             IptvSession.last_heartbeat >= _limite,
         ).count()
-    return render_template('admin/iptv.html', usuarios=usuarios, activas=activas, panel_user=panel_user)
+    # Grupos disponibles para asignar a usuarios
+    all_groups = [
+        r[0] for r in
+        db.session.query(Contenido.group_title)
+        .filter(Contenido.activo == True, Contenido.group_title != None, Contenido.group_title != '')
+        .distinct().order_by(Contenido.group_title).all()
+    ]
+    # Límite IPTV del usuario actual y cuántos ha creado ya
+    iptv_creados = 0 if panel_user.is_superadmin else len(usuarios)
+    return render_template(
+        'admin/iptv.html',
+        usuarios=usuarios, activas=activas, panel_user=panel_user,
+        all_groups=all_groups, iptv_creados=iptv_creados,
+    )
 
 
 @admin_bp.post('/iptv/crear')
@@ -1527,13 +1554,26 @@ def iptv_crear():
         flash('Ya existe un usuario con ese nombre.', 'danger')
         return redirect(url_for('admin.iptv_panel'))
 
+    # Verificar límite de usuarios IPTV para premium
+    if not panel_user.is_superadmin:
+        current_count = IptvUser.query.filter_by(owner_id=panel_user.id).count()
+        limite = panel_user.iptv_user_limit
+        if current_count >= limite:
+            flash(f'Has alcanzado el límite de {limite} usuarios IPTV. Solicita un aumento al superadmin.', 'danger')
+            return redirect(url_for('admin.iptv_panel'))
+
     duraciones = {'1m': 30, '3m': 90, '6m': 180, '1y': 365}
     dias = duraciones.get(plan, 30)
     expires_at = datetime.utcnow() + timedelta(days=dias)
 
+    # Grupos permitidos (JSON list de group_titles seleccionados)
+    grupos_sel = request.form.getlist('grupos_permitidos')
+    grupos_json = json.dumps(grupos_sel) if grupos_sel else None
+
     u = IptvUser(username=username, plan=plan,
                  max_connections=max(1, min(max_con, 5)),
                  expires_at=expires_at, nota=nota or None,
+                 grupos_permitidos=grupos_json,
                  owner_id=None if panel_user.is_superadmin else panel_user.id)
     u.set_password(password)
     db.session.add(u)
@@ -1557,6 +1597,10 @@ def iptv_editar(uid):
     nota    = request.form.get('nota', '').strip()
     renovar = request.form.get('renovar') == '1'
     nueva_pass = request.form.get('password', '').strip()
+
+    # Grupos permitidos actualizados
+    grupos_sel = request.form.getlist('grupos_permitidos')
+    u.grupos_permitidos = json.dumps(grupos_sel) if grupos_sel else None
 
     u.plan            = plan
     u.max_connections = max(1, min(max_con, 5))

@@ -98,14 +98,14 @@
 <!-- Widget Usuarios Online (superadmin) -->
 {% if current_user and current_user.is_superadmin %}
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="stat-card d-flex align-items-center gap-3">
             <div class="stat-icon" style="background:#0a3a0a;flex-shrink:0;">
-                <i class="bi bi-people-fill text-success"></i>
+                <i class="bi bi-circle-fill text-success"></i>
             </div>
             <div>
                 <div class="stat-value" id="onlineCount">{{ online_count }}</div>
-                <div class="stat-label">Usuarios en línea</div>
+                <div class="stat-label">En línea ahora</div>
                 <div style="font-size:.72rem;color:#555;">últimos 5 min</div>
             </div>
             <a href="#" class="ms-auto btn btn-sm btn-outline-secondary"
@@ -114,21 +114,35 @@
             </a>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="stat-card d-flex align-items-center gap-3">
-            <div class="stat-icon" style="background:#2a1a00;flex-shrink:0;">
-                <i class="bi bi-people text-warning"></i>
+            <div class="stat-icon" style="background:#0d2233;flex-shrink:0;">
+                <i class="bi bi-person-fill" style="color:#38bdf8"></i>
             </div>
             <div>
-                <div class="stat-value">{{ stats.usuarios }}</div>
-                <div class="stat-label">Usuarios registrados</div>
+                <div class="stat-value">{{ stats.usuarios_normales }}</div>
+                <div class="stat-label">Usuarios normales</div>
             </div>
             <a href="{{ url_for('admin.users') }}" class="ms-auto btn btn-sm btn-outline-secondary">
                 <i class="bi bi-arrow-right"></i>
             </a>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+        <div class="stat-card d-flex align-items-center gap-3">
+            <div class="stat-icon" style="background:#2a1a00;flex-shrink:0;">
+                <i class="bi bi-star-fill text-warning"></i>
+            </div>
+            <div>
+                <div class="stat-value">{{ stats.usuarios_premium }}</div>
+                <div class="stat-label">Usuarios premium</div>
+            </div>
+            <a href="{{ url_for('admin.users') }}" class="ms-auto btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-right"></i>
+            </a>
+        </div>
+    </div>
+    <div class="col-md-3">
         <div class="stat-card d-flex align-items-center gap-3">
             <div class="stat-icon" style="background:#3a2800;flex-shrink:0;">
                 <i class="bi bi-ticket-perforated-fill text-warning"></i>
