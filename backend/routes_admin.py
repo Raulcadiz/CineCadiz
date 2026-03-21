@@ -312,6 +312,8 @@ def eliminar_lista(lista_id):
         for i in range(0, len(contenido_ids), 900):
             chunk = contenido_ids[i:i + 900]
             WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
+    # Limpiar la caché de la sesión ORM para que no intente poner contenido_id=NULL
+    db.session.expire_all()
     db.session.delete(lista)
     db.session.commit()
     flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')

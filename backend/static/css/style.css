@@ -1447,6 +1447,31 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
 }
 
 /* ── Top filter bar (type / year / genre / sort) ─────────── */
+/* ── Panel de filtros inline en la cabecera (año + género) ── */
+.header-filters-panel {
+    display: none;
+    align-items: center;
+    gap: .45rem;
+    flex-shrink: 0;
+}
+.header-filters-panel.active { display: flex; }
+
+.header-filter-select {
+    background: rgba(255,255,255,.09);
+    border: 1px solid rgba(255,255,255,.15);
+    color: #fff;
+    border-radius: 6px;
+    padding: .3rem .6rem;
+    font-size: .8rem;
+    cursor: pointer;
+    outline: none;
+    transition: border-color .2s;
+}
+.header-filter-select:focus { border-color: var(--primary); }
+.header-filter-select option { background: #1a1a1a; color: #fff; }
+
+@media (max-width: 768px) { .header-filters-panel { display: none !important; } }
+
 .top-filter-bar {
     position: fixed;
     top: var(--header-h, 58px);

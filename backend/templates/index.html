@@ -71,6 +71,15 @@
         </div>
 
         <div class="header-right">
+            <!-- Panel de filtros inline (visible al pulsar "Géneros") -->
+            <div id="headerFiltersPanel" class="header-filters-panel">
+                <select id="yearFilter" class="filter-select header-filter-select">
+                    <option value="">Todos los años</option>
+                </select>
+                <select id="genreFilter" class="filter-select header-filter-select">
+                    <option value="">Todos los géneros</option>
+                </select>
+            </div>
             <a href="/instalar" class="btn-instalar-tv" title="Instalar en TV">
                 <i class="bi bi-android2"></i>
                 <span>App TV</span>
@@ -91,19 +100,13 @@
     <!-- Genre navigation strip (below header, populated by JS) - solo canales directo -->
     <div class="genre-strip" id="genreStrip" style="display:none"></div>
 
-    <!-- Barra de filtros fija (type / year / genre / sort) -->
+    <!-- Barra de filtros fija (tipo / ordenar) -->
     <div class="top-filter-bar" id="topFilterBar">
         <select id="typeFilter" class="filter-select">
             <option value="">Todos</option>
             <option value="pelicula">Películas</option>
             <option value="serie">Series</option>
             <option value="live">En Directo</option>
-        </select>
-        <select id="yearFilter" class="filter-select">
-            <option value="">Todos los años</option>
-        </select>
-        <select id="genreFilter" class="filter-select">
-            <option value="">Todos los géneros</option>
         </select>
         <select id="sortFilter" class="filter-select">
             <option value="recent">Más recientes</option>

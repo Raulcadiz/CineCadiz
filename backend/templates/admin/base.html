@@ -157,11 +157,12 @@
             <i class="bi bi-flag-fill"></i> Reportes
         </a>
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
+        {% endif %}
         <a href="{{ url_for('admin.iptv_panel') }}"
            class="{% if 'iptv' in request.endpoint %}active{% endif %}">
-            <i class="bi bi-broadcast-pin"></i> Panel IPTV
+            <i class="bi bi-broadcast-pin"></i>
+            {% if current_user and current_user.is_superadmin %}Panel IPTV{% else %}Mis Usuarios IPTV{% endif %}
         </a>
-        {% endif %}
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
         <a href="{{ url_for('auth.mi_cuenta') }}">
             <i class="bi bi-person-circle"></i> Mi cuenta

@@ -901,6 +901,17 @@ async function loadGrid(append = false) {
         }
     }
 
+    // Vista En Directo → usar los grupos ya cargados en memoria (respeta filtro del genre strip)
+    if (state.currentType === 'live') {
+        if (!append) {
+            const activePill = document.querySelector('.genre-strip-pill.active');
+            const activeCat = activePill ? decodeURIComponent(activePill.dataset.cat || '') : '';
+            _filterLiveByCategory(activeCat);
+            el.loadMore.dataset.hasMore = 'false';
+        }
+        return;
+    }
+
     try {
         let data;
         if (state.currentType === 'serie') {
@@ -1336,6 +1347,12 @@ function setupEvents() {
             const sf = document.getElementById('sortFilter');
             if (sf) sf.value = 'year_desc';
             document.querySelectorAll('.genre-pill').forEach(p => p.classList.remove('active'));
+            // Al entrar en Directo: activar pastilla "Todos" del genre strip
+            if (type === 'live') {
+                document.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
+                const todoPill = document.querySelector('.genre-strip-pill[data-cat=""]');
+                if (todoPill) todoPill.classList.add('active');
+            }
             setView(type);
             loadGrid();
             document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
@@ -1366,26 +1383,13 @@ function setupEvents() {
         });
     });
 
-    // ── Géneros: navega a la vista En Directo con el strip de categorías ──
+    // ── Géneros: muestra/oculta el panel de filtros (año + género) en la cabecera ──
     document.getElementById('btnGeneros')?.addEventListener('click', e => {
         e.preventDefault();
-        // Cambiar a vista live (esto muestra el genre strip automáticamente)
-        state.currentType  = 'live';
-        state.currentPage  = 1;
-        state.currentYear  = '';
-        state.currentGenre = '';
-        state.currentSort  = 'year_desc';
-        if (el.typeFilter)  el.typeFilter.value  = 'live';
-        if (el.yearFilter)  el.yearFilter.value  = '';
-        if (el.genreFilter) el.genreFilter.value = '';
-        document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
-        document.querySelectorAll('a[data-type="live"]').forEach(n => n.classList.add('active'));
-        setView('live');
-        // Deseleccionar todas las pastillas → mostrar todos los canales
-        document.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
-        const todoPill = document.querySelector('.genre-strip-pill[data-cat=""]');
-        if (todoPill) todoPill.classList.add('active');
-        _filterLiveByCategory('');
+        const panel = document.getElementById('headerFiltersPanel');
+        if (!panel) return;
+        const visible = panel.classList.toggle('active');
+        e.currentTarget.classList.toggle('active', visible);
     });
 
 
@@ -1515,7 +1519,8 @@ async function loadGenrePills() {
     } catch { /* silenciar */ }
 }
 
-/** Filtra el carrusel de directo por categoría usando los grupos en memoria. */
+/** Filtra los canales en directo por categoría usando los grupos en memoria.
+ *  En vista live (grid) actualiza el grid principal; en vista inicio actualiza el carrusel. */
 function _filterLiveByCategory(cat) {
     const filtered = cat
         ? state.liveGroups.filter(g =>
@@ -1523,10 +1528,17 @@ function _filterLiveByCategory(cat) {
             (g.genres || []).some(gen => gen === cat)
           )
         : state.liveGroups;
-    if (!el.liveCarousel) return;
-    el.liveCarousel.innerHTML = filtered.length
+    const html = filtered.length
         ? filtered.map((g, i) => renderLiveGroupCard(g, state.liveGroups.indexOf(g))).join('')
         : '<p class="no-content">Sin canales en esta categoría</p>';
+    // En vista Directo (grid principal), actualizar el grid
+    if (state.currentType === 'live' && el.moviesGrid) {
+        el.moviesGrid.innerHTML = html;
+    }
+    // Siempre actualizar también el carrusel de la sección inicio (puede estar oculto)
+    if (el.liveCarousel) {
+        el.liveCarousel.innerHTML = html;
+    }
 }
 
 // ── Recomendaciones personalizadas ─────────────────────────
