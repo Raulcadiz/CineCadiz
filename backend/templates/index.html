@@ -88,8 +88,30 @@
         </div>
     </header>
 
-    <!-- Genre navigation strip (below header, populated by JS) -->
+    <!-- Genre navigation strip (below header, populated by JS) - solo canales directo -->
     <div class="genre-strip" id="genreStrip" style="display:none"></div>
+
+    <!-- Barra de filtros fija (type / year / genre / sort) -->
+    <div class="top-filter-bar" id="topFilterBar">
+        <select id="typeFilter" class="filter-select">
+            <option value="">Todos</option>
+            <option value="pelicula">Películas</option>
+            <option value="serie">Series</option>
+            <option value="live">En Directo</option>
+        </select>
+        <select id="yearFilter" class="filter-select">
+            <option value="">Todos los años</option>
+        </select>
+        <select id="genreFilter" class="filter-select">
+            <option value="">Todos los géneros</option>
+        </select>
+        <select id="sortFilter" class="filter-select">
+            <option value="recent">Más recientes</option>
+            <option value="year_desc" selected>Año ↓</option>
+            <option value="year_asc">Año ↑</option>
+            <option value="title_asc">A–Z</option>
+        </select>
+    </div>
 
     <!-- Contenido Principal -->
     <main class="main-content">
@@ -171,27 +193,7 @@
         <!-- Grid completo -->
         <section class="content-section" id="movies">
             <div class="section-header">
-                <h2 class="section-title" id="gridTitle">🎬 Todo el contenido</h2>
-                <div class="filters">
-                    <select id="typeFilter" class="filter-select">
-                        <option value="">Todo</option>
-                        <option value="pelicula">Películas</option>
-                        <option value="serie">Series</option>
-                        <option value="live">En Directo</option>
-                    </select>
-                    <select id="yearFilter" class="filter-select">
-                        <option value="">Todos los años</option>
-                    </select>
-                    <select id="genreFilter" class="filter-select">
-                        <option value="">Todos los géneros</option>
-                    </select>
-                    <select id="sortFilter" class="filter-select">
-                        <option value="recent">Más recientes</option>
-                        <option value="year_desc" selected>Año ↓</option>
-                        <option value="year_asc">Año ↑</option>
-                        <option value="title_asc">A–Z</option>
-                    </select>
-                </div>
+                <h2 class="section-title" id="gridTitle">🎬 Películas</h2>
             </div>
             <div class="movies-grid" id="moviesGrid"></div>
             <button class="btn-load-more" id="loadMore" style="display:none">Cargar más</button>
@@ -305,7 +307,7 @@
     <!-- HLS.js: reproducción de streams .m3u8 en Chrome/Firefox -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="/static/js/script.js?v=20260319c"></script>
+    <script src="/static/js/script.js?v=20260321a"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js')

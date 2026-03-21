@@ -361,7 +361,7 @@ class WatchHistory(db.Model):
     # Géneros del item en el momento de la reproducción (snapshot para no requerir join)
     genres_snapshot = db.Column(db.String(300), nullable=True)
 
-    contenido = db.relationship('Contenido', backref=db.backref('watches', lazy='dynamic'))
+    contenido = db.relationship('Contenido', backref=db.backref('watches', lazy='dynamic', cascade='all, delete-orphan'))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -402,6 +402,8 @@ class IptvUser(db.Model):
     expires_at      = db.Column(db.DateTime, nullable=True)
     fecha_creacion  = db.Column(db.DateTime, default=datetime.utcnow)
     nota            = db.Column(db.String(255), nullable=True)
+    # Multi-admin: NULL → creado por superadmin (visible a todos los premium); FK → privado del admin
+    owner_id        = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
     sessions = db.relationship(
         'IptvSession', backref='iptv_user', lazy='dynamic',

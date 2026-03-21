@@ -1446,9 +1446,34 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
     white-space: nowrap;
 }
 
-/* ── Genre navigation strip ─────────────────────────────── */
+/* ── Top filter bar (type / year / genre / sort) ─────────── */
+.top-filter-bar {
+    position: fixed;
+    top: var(--header-h, 58px);
+    left: 0; right: 0;
+    z-index: 1000;
+    background: rgba(12,12,12,.97);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid rgba(255,255,255,.07);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: 5px 20px;
+    height: 44px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.top-filter-bar::-webkit-scrollbar { display: none; }
+.top-filter-bar .filter-select {
+    font-size: .78rem;
+    padding: .25rem .65rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* ── Genre navigation strip (categorías directo) ─────────── */
 .genre-strip {
-    position: fixed; top: var(--header-h, 58px); left: 0; right: 0;
+    position: fixed; top: calc(var(--header-h, 58px) + 44px); left: 0; right: 0;
     z-index: 999;
     background: rgba(10,10,10,.95);
     backdrop-filter: blur(6px);
@@ -1477,8 +1502,8 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
     border-color: var(--primary);
     color: #fff;
 }
-/* Push main content down when genre strip is shown */
-body.has-genre-strip .main-content { padding-top: calc(var(--header-h, 58px) + 40px); }
+/* Push main content down: always account for top-filter-bar (44px) */
+body.has-genre-strip .main-content { padding-top: calc(var(--header-h, 58px) + 44px + 40px); }
 
 /* ── Secciones de recomendaciones ───────────────────────── */
 .porque-viste-badge {

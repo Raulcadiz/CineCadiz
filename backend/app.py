@@ -144,6 +144,7 @@ def _migrate_db():
         # Reportes y IPTV — creadas por db.create_all() en BD nueva;
         # en BD existente se crean aquí solo las columnas que falten
         # (las tablas completas las crea db.create_all si no existen)
+        'ALTER TABLE iptv_users ADD COLUMN owner_id INTEGER REFERENCES users(id)',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

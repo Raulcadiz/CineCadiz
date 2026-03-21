@@ -1366,20 +1366,26 @@ function setupEvents() {
         });
     });
 
-    // ── Géneros: muestra la franja de categorías de directo ──
+    // ── Géneros: navega a la vista En Directo con el strip de categorías ──
     document.getElementById('btnGeneros')?.addEventListener('click', e => {
         e.preventDefault();
-        // Activar el strip
-        const strip = document.getElementById('genreStrip');
-        if (strip) {
-            strip.style.display = 'flex';
-            document.body.classList.add('has-genre-strip');
-        }
+        // Cambiar a vista live (esto muestra el genre strip automáticamente)
+        state.currentType  = 'live';
+        state.currentPage  = 1;
+        state.currentYear  = '';
+        state.currentGenre = '';
+        state.currentSort  = 'year_desc';
+        if (el.typeFilter)  el.typeFilter.value  = 'live';
+        if (el.yearFilter)  el.yearFilter.value  = '';
+        if (el.genreFilter) el.genreFilter.value = '';
+        document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
+        document.querySelectorAll('a[data-type="live"]').forEach(n => n.classList.add('active'));
+        setView('live');
         // Deseleccionar todas las pastillas → mostrar todos los canales
         document.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
+        const todoPill = document.querySelector('.genre-strip-pill[data-cat=""]');
+        if (todoPill) todoPill.classList.add('active');
         _filterLiveByCategory('');
-        // Scroll a la sección de directo
-        document.getElementById('live')?.scrollIntoView({ behavior: 'smooth' });
     });
 
 
@@ -1495,6 +1501,14 @@ async function loadGenrePills() {
                 strip.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
                 pill.classList.add('active');
                 const cat = decodeURIComponent(pill.dataset.cat);
+                // Si no estamos en vista live, cambiar a ella primero
+                if (state.currentType !== 'live') {
+                    state.currentType = 'live';
+                    if (el.typeFilter) el.typeFilter.value = 'live';
+                    document.querySelectorAll('.nav-item, .desktop-nav a').forEach(n => n.classList.remove('active'));
+                    document.querySelectorAll('a[data-type="live"]').forEach(n => n.classList.add('active'));
+                    setView('live');
+                }
                 _filterLiveByCategory(cat);
             });
         });

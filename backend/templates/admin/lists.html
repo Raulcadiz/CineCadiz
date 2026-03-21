@@ -276,6 +276,12 @@
                             </button>
                         </form>
 
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                title="Editar grupos seleccionados"
+                                onclick="openEditGrupos({{ lista.id }}, '{{ lista.nombre|replace("'","\\'")|e }}')">
+                            <i class="bi bi-pencil-square"></i>
+                        </button>
+
                         <form action="{{ url_for('admin.eliminar_lista', lista_id=lista.id) }}"
                               method="post" class="d-inline"
                               onsubmit="return confirm('¿Eliminar lista y TODO su contenido? Esta acción no se puede deshacer.')">
@@ -306,6 +312,53 @@
     <p class="mb-0">No hay listas M3U todavía. Agrega la primera arriba.</p>
 </div>
 {% endif %}
+
+<!-- ═══════════════ MODAL EDITAR GRUPOS ════════════════════════ -->
+<div class="modal fade" id="modalEditGrupos" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Editar grupos — <span id="editGruposNombre"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="editGruposLoading" class="text-center py-4">
+                    <span class="spinner-border text-secondary"></span>
+                    <p class="mt-2 text-muted small">Cargando grupos actuales…</p>
+                </div>
+                <div id="editGruposContent" class="d-none">
+                    <!-- Cabecera: botones de selección rápida por tipo -->
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <span class="text-muted small" id="editGruposSummary">—</span>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-danger"  id="eg-sel-pelicula" title="Películas">🎬</button>
+                            <button type="button" class="btn btn-outline-info"    id="eg-sel-serie"    title="Series">📺</button>
+                            <button type="button" class="btn btn-outline-warning" id="eg-sel-live"     title="Canales">📡</button>
+                            <button type="button" class="btn btn-outline-secondary" id="eg-sel-none">✕ Ninguno</button>
+                        </div>
+                    </div>
+                    <!-- Búsqueda -->
+                    <input type="text" id="editGruposSearch"
+                           class="form-control form-control-sm mb-2 bg-dark text-light border-secondary"
+                           placeholder="🔍 Buscar grupo...">
+                    <!-- Grid de grupos -->
+                    <div id="editGruposGrid" class="row g-0"></div>
+                </div>
+                <div id="editGruposError" class="alert alert-danger d-none"></div>
+            </div>
+            <div class="modal-footer border-secondary justify-content-between">
+                <span class="text-muted small" id="editGruposSelCount">0 grupos seleccionados</span>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-danger" id="btnGuardarGrupos">
+                        <i class="bi bi-arrow-repeat me-1"></i>Guardar y re-importar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<form id="formEditGrupos" method="post" class="d-none"></form>
 
 {% endblock %}
 
@@ -675,6 +728,172 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
     }
     setTimeout(pollStatus, 7500);
 })();
+
+// ════════════════════════════════════════════════════════════════
+// Editar grupos de una lista existente
+// ════════════════════════════════════════════════════════════════
+let _egData = [];   // [{uid, name, tipo, count, checked}]
+let _egListaId = null;
+
+async function openEditGrupos(listaId, nombre) {
+    _egListaId = listaId;
+    _egData = [];
+    document.getElementById('editGruposNombre').textContent = nombre;
+    document.getElementById('editGruposLoading').classList.remove('d-none');
+    document.getElementById('editGruposContent').classList.add('d-none');
+    document.getElementById('editGruposError').classList.add('d-none');
+    document.getElementById('editGruposSearch').value = '';
+
+    const modal = new bootstrap.Modal(document.getElementById('modalEditGrupos'));
+    modal.show();
+
+    try {
+        const r = await fetch(`/admin/listas/${listaId}/grupos`);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Error al cargar grupos');
+
+        _egData = d.groups.map((g, i) => ({
+            uid: 'eg_' + i,
+            name: g.name,
+            tipo: TIPOS.includes(g.tipo) ? g.tipo : 'otro',
+            count: g.count,
+            checked: g.checked,
+        }));
+        _egRender();
+        document.getElementById('editGruposLoading').classList.add('d-none');
+        document.getElementById('editGruposContent').classList.remove('d-none');
+    } catch (err) {
+        document.getElementById('editGruposLoading').classList.add('d-none');
+        const errEl = document.getElementById('editGruposError');
+        errEl.textContent = 'Error: ' + err.message;
+        errEl.classList.remove('d-none');
+    }
+}
+
+function _egRender() {
+    const container = document.getElementById('editGruposGrid');
+    const q = document.getElementById('editGruposSearch').value.toLowerCase().trim();
+    const filtered = q ? _egData.filter(g => g.name.toLowerCase().includes(q)) : _egData;
+
+    // Resumen
+    const total = filtered.reduce((s, g) => s + g.count, 0);
+    const summaryEl = document.getElementById('editGruposSummary');
+    if (summaryEl) {
+        summaryEl.textContent = q
+            ? filtered.length + ' de ' + _egData.length + ' grupos'
+            : _egData.length + ' grupos · ' + total.toLocaleString('es') + ' items';
+    }
+
+    const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
+    filtered.forEach(g => byTipo[g.tipo].push(g));
+
+    container.innerHTML = TIPOS.map(key => {
+        const gs = byTipo[key];
+        if (!gs.length) return '';
+        const color = TIPO_COLOR[key];
+        return `
+        <div class="col-sm-6 col-xl-3 mb-3 pe-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-${color} small fw-bold">${TIPO_EMOJI[key]} ${TIPO_LABEL[key]} <span class="text-muted fw-normal">(${gs.length})</span></span>
+                <button type="button" class="btn btn-link btn-sm p-0 text-${color} eg-inner-sel"
+                        data-tipo="${key}" style="font-size:.72rem">todos</button>
+            </div>
+            <div class="grupos-scroll">
+            ${gs.map(g => `
+                <div class="d-flex align-items-center gap-1 mb-1 eg-group-row" data-uid="${g.uid}">
+                    <input class="form-check-input flex-shrink-0 eg-cb" type="checkbox"
+                           id="${g.uid}" data-uid="${g.uid}" value="${escHtml(g.name)}"
+                           ${g.checked ? 'checked' : ''}>
+                    <label class="form-check-label small flex-grow-1 d-flex justify-content-between gap-1 min-w-0"
+                           for="${g.uid}" title="${escHtml(g.name)}">
+                        <span class="text-truncate">${escHtml(g.name)}</span>
+                        <span class="text-muted flex-shrink-0" style="font-size:.7rem">${g.count.toLocaleString('es')}</span>
+                    </label>
+                    <button type="button" class="tipo-cycle-btn eg-cycle" data-uid="${g.uid}" title="Cambiar tipo">
+                        ${TIPO_EMOJI[g.tipo]}
+                    </button>
+                </div>`).join('')}
+            </div>
+        </div>`;
+    }).join('');
+
+    // Eventos
+    container.querySelectorAll('.eg-cb').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const g = _egData.find(x => x.uid === cb.dataset.uid);
+            if (g) g.checked = cb.checked;
+            _egUpdateCount();
+        });
+    });
+    container.querySelectorAll('.eg-cycle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const g = _egData.find(x => x.uid === btn.dataset.uid);
+            if (!g) return;
+            const idx = TIPOS.indexOf(g.tipo);
+            g.tipo = TIPOS[(idx + 1) % TIPOS.length];
+            _egRender();
+        });
+    });
+    container.querySelectorAll('.eg-inner-sel').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tipo = btn.dataset.tipo;
+            const gs = _egData.filter(g => g.tipo === tipo);
+            const anyUnchecked = gs.some(g => !g.checked);
+            gs.forEach(g => g.checked = anyUnchecked);
+            container.querySelectorAll('.eg-cb').forEach(cb => {
+                const g = _egData.find(x => x.uid === cb.dataset.uid);
+                if (g && g.tipo === tipo) cb.checked = g.checked;
+            });
+            btn.textContent = anyUnchecked ? 'ninguno' : 'todos';
+            _egUpdateCount();
+        });
+    });
+    _egUpdateCount();
+}
+
+function _egUpdateCount() {
+    const n = _egData.filter(g => g.checked).length;
+    const el = document.getElementById('editGruposSelCount');
+    if (el) el.textContent = n + ' grupos seleccionados';
+}
+
+// Búsqueda en tiempo real
+document.getElementById('editGruposSearch')?.addEventListener('input', _egRender);
+
+// Botones de selección global
+document.getElementById('eg-sel-none')?.addEventListener('click', () => {
+    _egData.forEach(g => g.checked = false);
+    document.querySelectorAll('.eg-cb').forEach(cb => cb.checked = false);
+    _egUpdateCount();
+});
+['pelicula', 'serie', 'live'].forEach(tipo => {
+    document.getElementById(`eg-sel-${tipo}`)?.addEventListener('click', () => {
+        const gs = _egData.filter(g => g.tipo === tipo);
+        const anyUnchecked = gs.some(g => !g.checked);
+        gs.forEach(g => g.checked = anyUnchecked);
+        document.querySelectorAll('.eg-cb').forEach(cb => {
+            const g = _egData.find(x => x.uid === cb.dataset.uid);
+            if (g && g.tipo === tipo) cb.checked = g.checked;
+        });
+        _egUpdateCount();
+    });
+});
+
+// Guardar y re-importar
+document.getElementById('btnGuardarGrupos')?.addEventListener('click', () => {
+    const checked = _egData.filter(g => g.checked);
+    if (!checked.length) {
+        alert('Selecciona al menos un grupo.'); return;
+    }
+    const form = document.getElementById('formEditGrupos');
+    form.action = `/admin/listas/${_egListaId}/edit-grupos`;
+    form.innerHTML = '';
+    addHidden(form, 'grupos_seleccionados', JSON.stringify(checked.map(g => g.name)));
+    const tiposMap = {};
+    checked.forEach(g => { tiposMap[g.name] = g.tipo; });
+    addHidden(form, 'grupos_tipos', JSON.stringify(tiposMap));
+    form.submit();
+});
 
 // ── Limpiar duplicados ───────────────────────────────────────────
 document.getElementById('btn-dedup')?.addEventListener('click', async () => {

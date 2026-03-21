@@ -3,7 +3,11 @@
 
 {% block content %}
 <div class="topbar">
-    <h1><i class="bi bi-broadcast-pin me-2" style="color:var(--cc-red)"></i>Panel IPTV</h1>
+    <h1><i class="bi bi-broadcast-pin me-2" style="color:var(--cc-red)"></i>Panel IPTV
+        {% if not panel_user.is_superadmin %}
+        <span class="badge bg-secondary ms-2" style="font-size:.7rem">Mis usuarios</span>
+        {% endif %}
+    </h1>
     <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
         <i class="bi bi-person-plus-fill me-1"></i> Nuevo usuario
     </button>
@@ -62,6 +66,7 @@
                 <th>Sesiones activas</th>
                 <th>Estado</th>
                 <th>Nota</th>
+                {% if panel_user.is_superadmin %}<th>Admin</th>{% endif %}
                 <th style="width:120px">Acciones</th>
             </tr>
         </thead>
@@ -116,6 +121,16 @@
                 title="{{ u.nota or '' }}">
                 {{ u.nota or '—' }}
             </td>
+            {% if panel_user.is_superadmin %}
+            <td style="font-size:.8rem;color:#888">
+                {% if u.owner_id %}
+                    {% set owner = u.owner_id %}
+                    <i class="bi bi-person-badge"></i> ID:{{ u.owner_id }}
+                {% else %}
+                    <span class="text-secondary">global</span>
+                {% endif %}
+            </td>
+            {% endif %}
             <td>
                 <div class="d-flex gap-1">
                     <button class="btn btn-sm btn-outline-warning"

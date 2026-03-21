@@ -17,7 +17,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -306,6 +306,12 @@ def eliminar_lista(lista_id):
         flash('No tienes permiso para eliminar esta lista.', 'danger')
         return redirect(url_for('admin.listas'))
     nombre = lista.nombre
+    # Borrar watch_history de los contenidos de esta lista para evitar violación NOT NULL
+    contenido_ids = [c.id for c in lista.contenidos]
+    if contenido_ids:
+        for i in range(0, len(contenido_ids), 900):
+            chunk = contenido_ids[i:i + 900]
+            WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
     db.session.delete(lista)
     db.session.commit()
     flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')
@@ -734,6 +740,12 @@ def resubir_lista(lista_id):
         flash('El archivo está vacío.', 'danger')
         return redirect(url_for('admin.listas'))
 
+    # Borrar watch_history de los contenidos de esta lista antes de la eliminación en bloque
+    old_ids = [r[0] for r in db.session.query(Contenido.id).filter_by(lista_id=lista_id).all()]
+    if old_ids:
+        for i in range(0, len(old_ids), 900):
+            chunk = old_ids[i:i + 900]
+            WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
     # Borrar contenido antiguo de esta lista antes de re-importar
     Contenido.query.filter_by(lista_id=lista_id).delete()
     lista.ultima_actualizacion = None
@@ -804,6 +816,106 @@ def preview_file_grupos():
         'temp_id': temp_id,
         'size_kb': len(raw_bytes) // 1024,
     })
+
+
+# ── Edición de grupos de una lista existente ───────────────────
+
+@admin_bp.get('/listas/<int:lista_id>/grupos')
+@login_required
+def lista_grupos_preview(lista_id):
+    """Devuelve los grupos de una lista ya importada con su selección actual marcada."""
+    lista = Lista.query.get_or_404(lista_id)
+    panel_user = _get_panel_user()
+    if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
+        return jsonify({'ok': False, 'error': 'Sin permiso'}), 403
+
+    # Grupos actuales de la BD
+    rows = db.session.query(
+        Contenido.group_title
+    ).filter(
+        Contenido.lista_id == lista_id,
+        Contenido.group_title != None,
+        Contenido.group_title != '',
+    ).distinct().all()
+    all_groups = sorted(set(r[0] for r in rows if r[0]))
+
+    seleccionados = set()
+    if lista.grupos_seleccionados:
+        try:
+            seleccionados = set(json.loads(lista.grupos_seleccionados))
+        except (ValueError, TypeError):
+            pass
+
+    tipos_map = {}
+    if lista.grupos_tipos:
+        try:
+            tipos_map = json.loads(lista.grupos_tipos)
+        except (ValueError, TypeError):
+            pass
+
+    # Contar items por grupo
+    count_rows = db.session.query(
+        Contenido.group_title, db.func.count(Contenido.id)
+    ).filter(
+        Contenido.lista_id == lista_id,
+        Contenido.group_title != None,
+        Contenido.group_title != '',
+    ).group_by(Contenido.group_title).all()
+    counts = {r[0]: r[1] for r in count_rows}
+
+    groups = []
+    for g in all_groups:
+        # Si hay selección guardada, marcar solo los seleccionados; si no, marcar todos
+        checked = g in seleccionados if seleccionados else True
+        tipo = tipos_map.get(g, 'otro')
+        groups.append({'name': g, 'count': counts.get(g, 0), 'tipo': tipo, 'checked': checked})
+
+    return jsonify({'ok': True, 'groups': groups, 'lista_id': lista_id, 'nombre': lista.nombre})
+
+
+@admin_bp.post('/listas/<int:lista_id>/edit-grupos')
+@login_required
+def lista_edit_grupos(lista_id):
+    """Guarda la nueva selección de grupos y re-importa la lista."""
+    lista = Lista.query.get_or_404(lista_id)
+    panel_user = _get_panel_user()
+    if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
+        flash('No tienes permiso para editar esta lista.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    grupos_json = request.form.get('grupos_seleccionados', '').strip() or None
+    if grupos_json:
+        try:
+            parsed = json.loads(grupos_json)
+            grupos_json = json.dumps(parsed) if isinstance(parsed, list) and parsed else None
+        except (ValueError, TypeError):
+            grupos_json = None
+
+    grupos_tipos_json = request.form.get('grupos_tipos', '').strip() or None
+    if grupos_tipos_json:
+        try:
+            parsed_t = json.loads(grupos_tipos_json)
+            grupos_tipos_json = json.dumps(parsed_t) if isinstance(parsed_t, dict) and parsed_t else None
+        except (ValueError, TypeError):
+            grupos_tipos_json = None
+
+    lista.grupos_seleccionados = grupos_json
+    lista.grupos_tipos = grupos_tipos_json
+    lista.ultima_actualizacion = None
+    lista.error = None
+
+    # Limpiar contenido actual y re-importar con la nueva selección
+    old_ids = [r[0] for r in db.session.query(Contenido.id).filter_by(lista_id=lista_id).all()]
+    if old_ids:
+        for i in range(0, len(old_ids), 900):
+            chunk = old_ids[i:i + 900]
+            WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
+    Contenido.query.filter_by(lista_id=lista_id).delete()
+    db.session.commit()
+
+    _import_lista_async(current_app._get_current_object(), lista.id)
+    flash(f'Selección de grupos actualizada para "{lista.nombre}". Re-importando...', 'success')
+    return redirect(url_for('admin.listas'))
 
 
 # ── Importador M3U (interno) ───────────────────────────────────
@@ -1153,6 +1265,10 @@ def dedup_peliculas():
                 to_delete.append(p.id)
 
     if to_delete:
+        # Primero borrar watch_history para evitar violación NOT NULL en FK
+        for i in range(0, len(to_delete), 900):
+            chunk = to_delete[i:i + 900]
+            WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
         # Eliminar en chunks de 900 (límite SQLite IN)
         for i in range(0, len(to_delete), 900):
             chunk = to_delete[i:i + 900]
@@ -1372,9 +1488,13 @@ def verificar_canal(report_id):
 # ═══════════════════════════════════════════════════════════
 
 @admin_bp.get('/iptv')
-@superadmin_required
+@login_required
 def iptv_panel():
-    usuarios = IptvUser.query.order_by(IptvUser.fecha_creacion.desc()).all()
+    panel_user = _get_panel_user()
+    if panel_user.is_superadmin:
+        usuarios = IptvUser.query.order_by(IptvUser.fecha_creacion.desc()).all()
+    else:
+        usuarios = IptvUser.query.filter_by(owner_id=panel_user.id).order_by(IptvUser.fecha_creacion.desc()).all()
     # Contar sesiones activas por usuario (heartbeat < 2 min)
     from datetime import timedelta
     _limite = datetime.utcnow() - timedelta(minutes=2)
@@ -1384,13 +1504,14 @@ def iptv_panel():
             IptvSession.iptv_user_id == u.id,
             IptvSession.last_heartbeat >= _limite,
         ).count()
-    return render_template('admin/iptv.html', usuarios=usuarios, activas=activas)
+    return render_template('admin/iptv.html', usuarios=usuarios, activas=activas, panel_user=panel_user)
 
 
 @admin_bp.post('/iptv/crear')
-@superadmin_required
+@login_required
 def iptv_crear():
     from datetime import timedelta
+    panel_user = _get_panel_user()
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
     plan     = request.form.get('plan', '1m')
@@ -1410,7 +1531,8 @@ def iptv_crear():
 
     u = IptvUser(username=username, plan=plan,
                  max_connections=max(1, min(max_con, 5)),
-                 expires_at=expires_at, nota=nota or None)
+                 expires_at=expires_at, nota=nota or None,
+                 owner_id=None if panel_user.is_superadmin else panel_user.id)
     u.set_password(password)
     db.session.add(u)
     db.session.commit()
@@ -1419,10 +1541,14 @@ def iptv_crear():
 
 
 @admin_bp.post('/iptv/<int:uid>/editar')
-@superadmin_required
+@login_required
 def iptv_editar(uid):
     from datetime import timedelta
+    panel_user = _get_panel_user()
     u = IptvUser.query.get_or_404(uid)
+    if not panel_user.is_superadmin and u.owner_id != panel_user.id:
+        flash('No tienes permiso para editar este usuario.', 'danger')
+        return redirect(url_for('admin.iptv_panel'))
     plan    = request.form.get('plan', u.plan)
     max_con = int(request.form.get('max_connections', u.max_connections))
     activo  = request.form.get('activo') == '1'
@@ -1448,9 +1574,13 @@ def iptv_editar(uid):
 
 
 @admin_bp.post('/iptv/<int:uid>/eliminar')
-@superadmin_required
+@login_required
 def iptv_eliminar(uid):
+    panel_user = _get_panel_user()
     u = IptvUser.query.get_or_404(uid)
+    if not panel_user.is_superadmin and u.owner_id != panel_user.id:
+        flash('No tienes permiso para eliminar este usuario.', 'danger')
+        return redirect(url_for('admin.iptv_panel'))
     nombre = u.username
     db.session.delete(u)
     db.session.commit()
@@ -1459,7 +1589,7 @@ def iptv_eliminar(uid):
 
 
 @admin_bp.get('/iptv/api/online')
-@superadmin_required
+@login_required
 def iptv_online():
     """Devuelve JSON con sesiones IPTV activas (heartbeat < 2 min)."""
     from datetime import timedelta
