@@ -84,8 +84,19 @@
             <td>
                 <span class="fw-semibold">{{ u.username }}</span>
                 <br>
-                <small class="text-secondary" style="font-size:.75rem">
-                    URL: <code>/iptv/{{ u.username }}/****/playlist.m3u</code>
+                <small class="text-secondary" style="font-size:.72rem">
+                    {% set _pass = u.password_plain or '****' %}
+                    {% set _url = request.host_url.rstrip('/') + '/get.php?username=' + u.username + '&password=' + _pass + '&type=m3u_plus&output=ts' %}
+                    <span class="d-inline-flex align-items-center gap-1 flex-wrap">
+                        <code id="url-{{ u.id }}" style="word-break:break-all">{{ _url }}</code>
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                style="font-size:.65rem;flex-shrink:0"
+                                onclick="copyUrl('url-{{ u.id }}', this)"
+                                title="Copiar URL">
+                            <i class="bi bi-clipboard"></i>
+                        </button>
+                    </span>
                 </small>
             </td>
             <td>
@@ -333,9 +344,20 @@
                     </div>
                 </div>
                 {% endif %}
-                <div class="alert alert-secondary py-2 mb-0" style="font-size:.82rem">
+                <div class="alert alert-secondary py-2 mb-0" style="font-size:.8rem">
                     <strong>URL de playlist:</strong><br>
-                    <code>/iptv/{{ u.username }}/<em>contraseña</em>/playlist.m3u</code>
+                    {% set _pass = u.password_plain or '****' %}
+                    {% set _eurl = request.host_url.rstrip('/') + '/get.php?username=' + u.username + '&password=' + _pass + '&type=m3u_plus&output=ts' %}
+                    <span class="d-inline-flex align-items-center gap-1 flex-wrap mt-1">
+                        <code id="eurl-{{ u.id }}" style="word-break:break-all;font-size:.75rem">{{ _eurl }}</code>
+                        <button type="button"
+                                class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                style="font-size:.65rem;flex-shrink:0"
+                                onclick="copyUrl('eurl-{{ u.id }}', this)"
+                                title="Copiar URL">
+                            <i class="bi bi-clipboard"></i>
+                        </button>
+                    </span>
                 </div>
             </div>
             <div class="modal-footer border-secondary">
@@ -354,6 +376,29 @@
 // Marcar/desmarcar todos los grupos de un modal
 function toggleAll(prefix, state) {
     document.querySelectorAll('.grp-' + prefix).forEach(el => el.checked = state);
+}
+
+// Copiar URL al portapapeles
+async function copyUrl(elementId, btn) {
+    const text = document.getElementById(elementId).textContent;
+    try {
+        await navigator.clipboard.writeText(text);
+        const icon = btn.querySelector('i');
+        icon.className = 'bi bi-clipboard-check';
+        btn.classList.replace('btn-outline-secondary', 'btn-outline-success');
+        setTimeout(() => {
+            icon.className = 'bi bi-clipboard';
+            btn.classList.replace('btn-outline-success', 'btn-outline-secondary');
+        }, 2000);
+    } catch {
+        // Fallback para navegadores sin permisos de clipboard
+        const range = document.createRange();
+        range.selectNode(document.getElementById(elementId));
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+    }
 }
 
 // Actualizar contador de sesiones activas

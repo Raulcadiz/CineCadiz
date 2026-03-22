@@ -403,6 +403,7 @@ class IptvUser(db.Model):
     expires_at      = db.Column(db.DateTime, nullable=True)
     fecha_creacion  = db.Column(db.DateTime, default=datetime.utcnow)
     nota            = db.Column(db.String(255), nullable=True)
+    password_plain  = db.Column(db.String(255), nullable=True)   # para mostrar URL al admin
     # Grupos permitidos: JSON list de group_title. NULL = acceso a todo el contenido.
     grupos_permitidos = db.Column(db.Text, nullable=True)
     # Multi-admin: NULL → creado por superadmin (visible a todos los premium); FK → privado del admin
@@ -416,6 +417,7 @@ class IptvUser(db.Model):
     def set_password(self, password: str) -> None:
         from werkzeug.security import generate_password_hash
         self.password_hash = generate_password_hash(password)
+        self.password_plain = password
 
     def check_password(self, password: str) -> bool:
         from werkzeug.security import check_password_hash

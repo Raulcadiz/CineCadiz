@@ -10,7 +10,7 @@ from config import Config
 from models import db
 from routes_api import api_bp
 from routes_admin import admin_bp
-from routes_iptv import iptv_bp
+from routes_iptv import iptv_bp, xtream_bp
 from scheduler import init_scheduler
 
 
@@ -36,6 +36,7 @@ def create_app(config_class=Config):
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(iptv_bp)
+    app.register_blueprint(xtream_bp)
 
     # ── Filtros Jinja2 personalizados ──────────────────────────
     @app.template_filter('fromjson')
@@ -150,6 +151,7 @@ def _migrate_db():
         'ALTER TABLE iptv_users ADD COLUMN owner_id INTEGER REFERENCES users(id)',
         'ALTER TABLE iptv_users ADD COLUMN grupos_permitidos TEXT',
         'ALTER TABLE users ADD COLUMN iptv_user_limit INTEGER NOT NULL DEFAULT 10',
+        'ALTER TABLE iptv_users ADD COLUMN password_plain TEXT',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

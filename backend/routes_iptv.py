@@ -21,6 +21,9 @@ from models import db, Contenido, IptvUser, IptvSession
 
 iptv_bp = Blueprint('iptv', __name__, url_prefix='/iptv')
 
+# Blueprint para compatibilidad Xtream Codes API (/get.php)
+xtream_bp = Blueprint('xtream', __name__)
+
 _SESSION_TTL_MINUTES = 5   # sesión caduca si no hay heartbeat en 5 min
 # Para live: las apps IPTV hacen peticiones frecuentes → caduca rápido
 # Para pelicula/serie: el cliente hace una sola petición → la sesión dura más
@@ -254,3 +257,75 @@ def heartbeat(username: str, password: str, token: str):
         sesion.last_heartbeat = datetime.utcnow()
         db.session.commit()
     return jsonify({'ok': True})
+
+
+# ── Compatibilidad Xtream Codes API ─────────────────────────────
+
+@xtream_bp.get('/get.php')
+def get_php():
+    """
+    Endpoint de compatibilidad con formato Xtream Codes.
+    Soporta: /get.php?username=USER&password=PASS&type=m3u_plus&output=ts
+    Redirige internamente a la playlist M3U del usuario.
+    """
+    username = request.args.get('username', '').strip()
+    password = request.args.get('password', '').strip()
+    type_    = request.args.get('type', 'm3u_plus')
+
+    if not username or not password:
+        abort(400)
+
+    u = _auth(username, password)
+    if not u:
+        abort(401)
+
+    if type_ not in ('m3u_plus', 'm3u'):
+        abort(400)
+
+    base = request.host_url.rstrip('/')
+
+    import json as _json
+    from sqlalchemy import case as _case
+    tipo_orden = _case(
+        {'live': 0, 'pelicula': 1, 'serie': 2},
+        value=Contenido.tipo,
+        else_=3,
+    )
+    _tipo_grp = {'live': 'Directo', 'pelicula': 'Películas', 'serie': 'Series'}
+
+    q = (
+        db.session.query(
+            Contenido.id,
+            Contenido.titulo,
+            Contenido.tipo,
+            Contenido.imagen,
+            Contenido.group_title,
+        )
+        .filter(Contenido.activo == True)
+    )
+
+    if u.grupos_permitidos:
+        try:
+            grupos_set = set(_json.loads(u.grupos_permitidos))
+            if grupos_set:
+                q = q.filter(Contenido.group_title.in_(list(grupos_set)))
+        except (ValueError, TypeError):
+            pass
+
+    filas = q.order_by(tipo_orden, Contenido.group_title, Contenido.titulo).all()
+
+    lines = ['#EXTM3U']
+    for cid, titulo, tipo, imagen, group_title in filas:
+        img = (imagen or '').replace('"', '')
+        grp = (group_title or _tipo_grp.get(tipo, 'General')).replace('"', '')
+        tit = (titulo or '').replace(',', ' ')
+        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
+        lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
+        lines.append(stream_url)
+
+    content = '\n'.join(lines) + '\n'
+    return Response(
+        content,
+        mimetype='audio/x-mpegurl',
+        headers={'Content-Disposition': f'attachment; filename="{username}.m3u"'},
+    )
