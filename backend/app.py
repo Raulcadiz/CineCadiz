@@ -152,6 +152,9 @@ def _migrate_db():
         'ALTER TABLE iptv_users ADD COLUMN grupos_permitidos TEXT',
         'ALTER TABLE users ADD COLUMN iptv_user_limit INTEGER NOT NULL DEFAULT 10',
         'ALTER TABLE iptv_users ADD COLUMN password_plain TEXT',
+        # Live channel failover
+        'ALTER TABLE contenidos ADD COLUMN live_urls_json TEXT',
+        'ALTER TABLE contenidos ADD COLUMN live_active_idx INTEGER NOT NULL DEFAULT 0',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

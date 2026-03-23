@@ -84,9 +84,188 @@ def check_url(url: str, timeout: int = 5) -> bool:
     return False
 
 
+def check_url_with_latency(url: str, timeout: int = 5) -> tuple:
+    """
+    Comprueba si una URL está viva y mide la latencia en ms.
+    Devuelve (alive: bool, latency_ms: int).
+    """
+    import time
+    connect_t = min(timeout, 8)
+    read_t    = max(timeout, 12)
+
+    for headers in (_HEADERS_VLC, _HEADERS_BROWSER):
+        try:
+            t0 = time.monotonic()
+            r = requests.get(
+                url,
+                headers=headers,
+                stream=True,
+                allow_redirects=True,
+                timeout=(connect_t, read_t),
+            )
+            latency = int((time.monotonic() - t0) * 1000)
+            r.close()
+            if r.status_code < 400 or r.status_code in (401, 403, 405):
+                return True, latency
+        except requests.exceptions.Timeout:
+            continue
+        except Exception:
+            continue
+
+    return False, 0
+
+
+def scan_live_channels(app, max_workers: int = 20) -> dict:
+    """
+    Escanea todos los canales en directo (tipo='live'):
+    - Mide latencia de cada URL del canal
+    - Failover: si la URL activa falla, avanza a la siguiente que funcione
+    - Deduplicación: elimina URLs duplicadas exactas; entre URLs con la misma
+      latencia conserva la más antigua (primera en la lista); entre URLs con
+      distinta latencia elimina la de peor calidad
+    - Registra LiveScanReport por cada URL comprobada
+    - Mantiene historial 7 días
+    """
+    import json as _json
+    from datetime import timedelta
+    from models import db, Contenido, LiveScanConfig, LiveScanReport
+
+    with app.app_context():
+        timeout = app.config.get('SCAN_TIMEOUT', 5)
+        channels = (
+            Contenido.query
+            .filter_by(tipo='live', fuente='m3u')
+            .all()
+        )
+
+        # Inicializar live_urls_json para canales que aún no lo tienen
+        for ch in channels:
+            if not ch.live_urls_json:
+                ch.live_urls_json = _json.dumps([ch.url_stream])
+        db.session.commit()
+
+        # Recoger todas las URLs únicas para verificar en paralelo
+        channel_url_map: dict[int, list] = {}
+        for ch in channels:
+            try:
+                urls = _json.loads(ch.live_urls_json)
+            except (ValueError, TypeError):
+                urls = [ch.url_stream]
+            channel_url_map[ch.id] = urls
+
+    if not channel_url_map:
+        return {'channels': 0, 'failed': 0, 'timestamp': datetime.utcnow().isoformat()}
+
+    all_unique_urls = list({u for urls in channel_url_map.values() for u in urls})
+    logger.info(f'[LiveScan] Comprobando {len(all_unique_urls)} URLs de {len(channel_url_map)} canales...')
+
+    # Verificar en paralelo
+    url_results: dict[str, tuple] = {}   # url → (alive, latency_ms)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_map = {pool.submit(check_url_with_latency, url, timeout): url for url in all_unique_urls}
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                url_results[url] = future.result()
+            except Exception:
+                url_results[url] = (False, 0)
+
+    # Actualizar BD y generar reportes
+    failed = 0
+    now = datetime.utcnow()
+    cutoff = now - __import__('datetime').timedelta(days=7)
+
+    with app.app_context():
+        channels = Contenido.query.filter_by(tipo='live', fuente='m3u').all()
+        reports = []
+
+        for ch in channels:
+            try:
+                urls = _json.loads(ch.live_urls_json or '[]') or [ch.url_stream]
+            except (ValueError, TypeError):
+                urls = [ch.url_stream]
+
+            # ── 1. Eliminar duplicados exactos (mantener primera aparición) ──
+            seen: set = set()
+            deduped = []
+            for u in urls:
+                if u not in seen:
+                    seen.add(u)
+                    deduped.append(u)
+
+            # ── 2. Resultados para este canal ──
+            # Lista de (url, alive, latency_ms)
+            results_for_ch = [(u, *url_results.get(u, (False, 0))) for u in deduped]
+
+            # Crear registros de reporte
+            for url, alive, latency in results_for_ch:
+                reports.append(LiveScanReport(
+                    contenido_id=ch.id,
+                    url_probada=url,
+                    resultado=alive,
+                    latencia_ms=latency,
+                    timestamp=now,
+                ))
+
+            # ── 3. Deduplicación por calidad: entre URLs vivas, si hay dos
+            #       con latencia muy similar (±200ms), quitar la de peor latencia
+            alive_with_lat = [(u, lat) for u, alive, lat in results_for_ch if alive]
+            dead_urls      = {u for u, alive, _ in results_for_ch if not alive}
+
+            # Eliminar URLs muertas que NO son la única URL disponible
+            if dead_urls and len(deduped) > len(dead_urls):
+                deduped = [u for u in deduped if u not in dead_urls]
+                results_for_ch = [(u, a, l) for u, a, l in results_for_ch if u not in dead_urls]
+                alive_with_lat = [(u, lat) for u, lat in alive_with_lat]
+
+            # ── 4. Actualizar índice activo ──
+            current_idx = ch.live_active_idx or 0
+            current_url = deduped[current_idx] if current_idx < len(deduped) else (deduped[0] if deduped else ch.url_stream)
+            current_alive = url_results.get(current_url, (False, 0))[0]
+
+            if alive_with_lat:
+                if not current_alive:
+                    # Failover: buscar la primera URL viva en orden
+                    for i, u in enumerate(deduped):
+                        if url_results.get(u, (False, 0))[0]:
+                            ch.live_active_idx = i
+                            logger.info(f'[LiveScan] Failover {ch.titulo}: índice {current_idx} → {i}')
+                            break
+                # else: la URL activa sigue viva, no cambiar nada
+                ch.activo = True
+            else:
+                # Todos los servidores caídos
+                ch.activo = False
+                failed += 1
+                logger.warning(f'[LiveScan] Canal totalmente caído: {ch.titulo}')
+
+            ch.live_urls_json = _json.dumps(deduped)
+            ch.ultima_verificacion = now
+
+        # Guardar reportes y purgar los viejos
+        db.session.bulk_save_objects(reports)
+        LiveScanReport.query.filter(LiveScanReport.timestamp < cutoff).delete()
+
+        # Actualizar last_scan en config
+        config = LiveScanConfig.query.first()
+        if config:
+            config.last_scan = now
+
+        db.session.commit()
+
+    result = {
+        'channels': len(channel_url_map),
+        'failed':   failed,
+        'timestamp': now.isoformat(),
+    }
+    logger.info(f'[LiveScan] Completado: {result}')
+    return result
+
+
 def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
     """
     Escanea hasta `batch_size` links M3U en paralelo.
+    Excluye canales en directo (tipo='live') — esos los gestiona scan_live_channels().
 
     Rendimiento estimado (40 workers, timeout 5s):
       - Batch de 500  → ~60-90 segundos
@@ -99,7 +278,11 @@ def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
         timeout = app.config.get('SCAN_TIMEOUT', 5)
         rows = (
             Contenido.query
-            .filter_by(activo=True, fuente='m3u')
+            .filter(
+                Contenido.activo == True,
+                Contenido.fuente == 'm3u',
+                Contenido.tipo != 'live',   # los live los gestiona scan_live_channels()
+            )
             .order_by(Contenido.ultima_verificacion.asc().nullsfirst())
             .limit(batch_size)
             .with_entities(Contenido.id, Contenido.url_stream)

@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from flask import session as _session
-from models import db, Contenido, Lista, FuenteRSS, ChannelReport, WatchHistory
+from models import db, Contenido, Lista, FuenteRSS, ChannelReport, WatchHistory, LiveScanConfig, LiveScanReport
 from sqlalchemy import or_, and_, nulls_last
 import requests
 
@@ -1058,3 +1058,159 @@ def reportar_canal(contenido_id):
     db.session.add(report)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+# ═══════════════════════════════════════════════════════════════
+# LIVE — GESTIÓN DE CANALES EN DIRECTO (failover, scan config)
+# ═══════════════════════════════════════════════════════════════
+
+def _get_or_create_scan_config():
+    """Devuelve LiveScanConfig, creándola con valores por defecto si no existe."""
+    config = LiveScanConfig.query.first()
+    if config is None:
+        config = LiveScanConfig(auto_scan_enabled=True, interval_hours=24)
+        db.session.add(config)
+        db.session.commit()
+    return config
+
+
+@api_bp.get('/live/scan-config')
+def get_live_scan_config():
+    """Devuelve la configuración del escaneo automático de canales en directo."""
+    return jsonify(_get_or_create_scan_config().to_dict())
+
+
+@api_bp.post('/live/scan-config')
+def update_live_scan_config():
+    """
+    Actualiza la configuración del escaneo automático.
+    Body JSON: { "auto_scan_enabled": bool, "interval_hours": int (24|48|72) }
+    """
+    data = request.get_json(silent=True) or {}
+    config = _get_or_create_scan_config()
+
+    if 'auto_scan_enabled' in data:
+        config.auto_scan_enabled = bool(data['auto_scan_enabled'])
+
+    if 'interval_hours' in data:
+        hours = int(data['interval_hours'])
+        if hours not in (24, 48, 72):
+            return jsonify({'error': 'interval_hours debe ser 24, 48 o 72'}), 400
+        config.interval_hours = hours
+
+    db.session.commit()
+    return jsonify(config.to_dict())
+
+
+@api_bp.post('/live/<int:channel_id>/report-down')
+def report_live_down(channel_id):
+    """
+    El cliente informa que una URL de canal en directo no responde.
+    Si coincide con la URL activa → el backend hace failover a la siguiente.
+    Responde con: { next_url, channel_still_alive }
+    """
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    reported_url = data.get('url', '').strip()
+
+    channel = Contenido.query.filter_by(id=channel_id, tipo='live', activo=True).first()
+    if channel is None:
+        return jsonify({'next_url': None, 'channel_still_alive': False})
+
+    # Obtener lista completa de URLs
+    try:
+        urls = _json.loads(channel.live_urls_json) if channel.live_urls_json else []
+    except (ValueError, TypeError):
+        urls = []
+    if not urls:
+        urls = [channel.url_stream]
+
+    current_idx = channel.live_active_idx or 0
+
+    # Comprobar si la URL reportada es la activa
+    try:
+        reported_idx = urls.index(reported_url)
+    except ValueError:
+        reported_idx = current_idx   # URL desconocida → asumir que es la activa
+
+    if reported_idx != current_idx:
+        # El cliente reporta una URL que ya no es la activa → dar la activa actual
+        active_url = urls[current_idx] if current_idx < len(urls) else None
+        return jsonify({'next_url': active_url, 'channel_still_alive': True})
+
+    # Buscar la siguiente URL disponible
+    next_idx = None
+    for i in range(current_idx + 1, len(urls)):
+        next_idx = i
+        break
+
+    if next_idx is not None:
+        channel.live_active_idx = next_idx
+        db.session.commit()
+        return jsonify({'next_url': urls[next_idx], 'channel_still_alive': True})
+    else:
+        # Sin más URLs → marcar canal como caído temporalmente
+        channel.activo = False
+        db.session.commit()
+        return jsonify({'next_url': None, 'channel_still_alive': False})
+
+
+@api_bp.post('/live/<int:channel_id>/add-url')
+def add_live_url(channel_id):
+    """
+    Añade una URL de respaldo al canal. La nueva URL se añade al FINAL
+    de la lista (no desplaza a la URL activa actual).
+    Body JSON: { "url": "rtsp://..." }
+    """
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    new_url = data.get('url', '').strip()
+    if not new_url:
+        return jsonify({'error': 'url requerida'}), 400
+
+    channel = Contenido.query.filter_by(id=channel_id, tipo='live').first_or_404()
+
+    try:
+        urls = _json.loads(channel.live_urls_json) if channel.live_urls_json else []
+    except (ValueError, TypeError):
+        urls = []
+    if not urls:
+        urls = [channel.url_stream]
+
+    if new_url in urls:
+        return jsonify({'ok': True, 'duplicate': True, 'urls': urls})
+
+    urls.append(new_url)
+    channel.live_urls_json = _json.dumps(urls)
+    db.session.commit()
+    return jsonify({'ok': True, 'urls': urls})
+
+
+@api_bp.get('/live/scan-reports')
+def get_live_scan_reports():
+    """
+    Devuelve los reportes de las últimas verificaciones.
+    Por defecto solo las URLs caídas; ?all=1 para todos.
+    """
+    show_all = request.args.get('all', '0') == '1'
+    limit = min(request.args.get('limit', 100, type=int), 500)
+
+    q = LiveScanReport.query.order_by(LiveScanReport.timestamp.desc())
+    if not show_all:
+        q = q.filter_by(resultado=False)
+    reports = q.limit(limit).all()
+    return jsonify([r.to_dict() for r in reports])
+
+
+@api_bp.post('/live/scan/run')
+def run_live_scan_now():
+    """Lanza el escaneo de canales en directo de forma inmediata (manual)."""
+    import threading
+
+    def _run():
+        from link_checker import scan_live_channels
+        scan_live_channels(current_app._get_current_object())
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return jsonify({'ok': True, 'message': 'Escaneo iniciado en background'})

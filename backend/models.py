@@ -308,6 +308,12 @@ class Contenido(db.Model):
     fecha_agregado      = db.Column(db.DateTime, default=datetime.utcnow)
     ultima_verificacion = db.Column(db.DateTime)
 
+    # ── Campos exclusivos para canales en directo (tipo='live') ──
+    # JSON array con todas las URLs de backup ordenadas por prioridad
+    live_urls_json  = db.Column(db.Text, nullable=True)
+    # Índice de la URL activa en live_urls_json (0 = primera/original)
+    live_active_idx = db.Column(db.Integer, nullable=False, default=0)
+
     lista_id      = db.Column(db.Integer, db.ForeignKey('listas.id'),      nullable=True)
     fuente_rss_id = db.Column(db.Integer, db.ForeignKey('fuentes_rss.id'), nullable=True)
 
@@ -317,12 +323,29 @@ class Contenido(db.Model):
     )
 
     def to_dict(self):
+        import json as _json
         _type_map = {'pelicula': 'movie', 'serie': 'series', 'live': 'live'}
-        return {
+
+        # Para canales live: calcular URL activa y lista completa
+        if self.tipo == 'live' and self.live_urls_json:
+            try:
+                all_urls = _json.loads(self.live_urls_json)
+                active_idx = self.live_active_idx or 0
+                active_url = all_urls[active_idx] if all_urls and active_idx < len(all_urls) else self.url_stream
+            except (ValueError, IndexError, TypeError):
+                all_urls = [self.url_stream]
+                active_idx = 0
+                active_url = self.url_stream
+        else:
+            all_urls = None
+            active_idx = 0
+            active_url = self.url_stream
+
+        d = {
             'id':          self.id,
             'title':       self.titulo,
             'type':        _type_map.get(self.tipo, self.tipo),
-            'streamUrl':   self.url_stream,
+            'streamUrl':   active_url,
             'source':      self.fuente,
             'server':      self.servidor,
             'image':       self.imagen or '',
@@ -338,6 +361,10 @@ class Contenido(db.Model):
                 self.ultima_verificacion.isoformat() if self.ultima_verificacion else None
             ),
         }
+        if self.tipo == 'live':
+            d['liveUrls'] = all_urls or [self.url_stream]
+            d['activeUrlIndex'] = active_idx
+        return d
 
 
 # ═══════════════════════════════════════════════════════════
@@ -444,6 +471,52 @@ class IptvUser(db.Model):
             'expires_at':      self.expires_at.isoformat() if self.expires_at else None,
             'fecha_creacion':  self.fecha_creacion.isoformat() if self.fecha_creacion else None,
             'nota':            self.nota,
+        }
+
+
+# ═══════════════════════════════════════════════════════════
+# LIVE SCAN — CONFIGURACIÓN Y REPORTES
+# ═══════════════════════════════════════════════════════════
+
+class LiveScanConfig(db.Model):
+    """Configuración global del escaneo automático de canales en directo."""
+    __tablename__ = 'live_scan_config'
+
+    id                = db.Column(db.Integer, primary_key=True)
+    auto_scan_enabled = db.Column(db.Boolean, nullable=False, default=True)
+    interval_hours    = db.Column(db.Integer, nullable=False, default=24)  # 24 | 48 | 72
+    last_scan         = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            'auto_scan_enabled': self.auto_scan_enabled,
+            'interval_hours':    self.interval_hours,
+            'last_scan':         self.last_scan.isoformat() if self.last_scan else None,
+        }
+
+
+class LiveScanReport(db.Model):
+    """Registro de cada verificación de URL de canal en directo."""
+    __tablename__ = 'live_scan_reports'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    contenido_id = db.Column(db.Integer, db.ForeignKey('contenidos.id'), nullable=False)
+    url_probada  = db.Column(db.Text, nullable=False)
+    resultado    = db.Column(db.Boolean, nullable=False)   # True=viva, False=caída
+    latencia_ms  = db.Column(db.Integer, nullable=True)
+    timestamp    = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    contenido = db.relationship('Contenido', backref=db.backref('scan_reports', lazy='dynamic'))
+
+    def to_dict(self):
+        return {
+            'id':           self.id,
+            'contenido_id': self.contenido_id,
+            'channel_title': self.contenido.titulo if self.contenido else '',
+            'url_probada':  self.url_probada,
+            'resultado':    self.resultado,
+            'latencia_ms':  self.latencia_ms,
+            'timestamp':    self.timestamp.isoformat() if self.timestamp else None,
         }
 
 
