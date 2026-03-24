@@ -31,7 +31,11 @@ class Config:
     # ── Scheduler ──────────────────────────────────────────────
     SCAN_INTERVAL_HOURS = int(os.environ.get('SCAN_INTERVAL_HOURS', 24))
     SCAN_TIMEOUT = int(os.environ.get('SCAN_TIMEOUT', 15))      # segundos por link (IPTV necesita margen)
-    SCAN_BATCH_SIZE = int(os.environ.get('SCAN_BATCH_SIZE', 100))
+    # SCAN_BATCH_SIZE: items por iteración. 0 = sin límite (escanea todo de una vez).
+    # Con 40 workers y timeout=15s → ~160 checks/min → 80k en ~8 horas.
+    SCAN_BATCH_SIZE = int(os.environ.get('SCAN_BATCH_SIZE', 5000))
+    # Hilos paralelos para el escáner. Más workers = más velocidad pero más CPU/RAM.
+    SCAN_MAX_WORKERS = int(os.environ.get('SCAN_MAX_WORKERS', 40))
     # AUTO_SCAN=0 → no comprobar links automáticamente (recomendado para listas grandes)
     # AUTO_SCAN=1 → habilitar escaneo automático cada SCAN_INTERVAL_HOURS horas
     AUTO_SCAN = int(os.environ.get('AUTO_SCAN', 0))

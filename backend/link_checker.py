@@ -39,24 +39,59 @@ _HEADERS_BROWSER = {
 }
 
 
+_HTML_SIGNATURES = (b'<!doctype', b'<html', b'<HTML', b'<!DOCTYPE')
+
+def _is_real_stream(r) -> bool:
+    """
+    Verifica que la respuesta sea realmente un stream de vídeo/audio y no una
+    página HTML de error disfrazada con código 200.
+
+    Reglas (en orden de coste):
+    1. Content-Type 'text/html' → falso positivo seguro.
+    2. Lee hasta 512 bytes y comprueba que no empiecen por firma HTML.
+    3. Content-Type de vídeo explícito → verdadero positivo confirmado.
+    """
+    ct = r.headers.get('Content-Type', '').lower().split(';')[0].strip()
+
+    # Regla 1: HTML en Content-Type → error page
+    if ct in ('text/html', 'text/plain', 'application/xhtml+xml'):
+        return False
+
+    # Regla 2: leer un pequeño chunk para verificar contenido real
+    try:
+        chunk = b''
+        for data in r.iter_content(512):
+            chunk = data
+            break
+    except Exception:
+        chunk = b''
+
+    if not chunk:
+        # Respuesta vacía: puede ser un stream que tarde en arrancar;
+        # solo rechazamos si el Content-Type tampoco es de vídeo.
+        return ct.startswith(('video/', 'audio/', 'application/octet-stream',
+                               'application/vnd', 'multipart/x-mixed-replace'))
+
+    # Comprobación de firma HTML en los primeros bytes
+    head = chunk[:64].lower()
+    if any(sig.lower() in head for sig in _HTML_SIGNATURES):
+        return False
+
+    return True
+
+
 def check_url(url: str, timeout: int = 5) -> bool:
     """
-    True si la URL responde con código HTTP < 400.
+    True si la URL devuelve un stream real (no una página HTML de error).
 
-    Estrategia para streams IPTV:
-      1. GET parcial (Range) con UA de VLC — lo que usa el reproductor real.
-         HEAD se omite porque muchos servidores IPTV devuelven 405 a HEAD y
-         gastaríamos tiempo antes del fallback.
-      2. Si falla (timeout o error de red), intento rápido con UA de navegador
-         por si el servidor bloquea VLC pero admite navegadores.
-
-    El timeout se aplica a la conexión+primera respuesta (connect + read),
-    no a la descarga completa — el Range header limita a 1 KB.
+    Estrategia:
+      1. GET parcial (Range) con UA de VLC.
+      2. Fallback con UA de navegador.
+      Para cada intento: comprueba código HTTP Y contenido para
+      descartar falsos positivos (servidores que devuelven 200 + HTML).
     """
-    # Aumentamos el read-timeout ligeramente respecto al connect-timeout
-    # porque los servidores IPTV tardan más en empezar a emitir que en conectar.
     connect_t = min(timeout, 8)
-    read_t    = max(timeout, 12)   # mínimo 12s de read aunque el scan_timeout sea 5
+    read_t    = max(timeout, 12)
 
     for headers in (_HEADERS_VLC, _HEADERS_BROWSER):
         try:
@@ -67,16 +102,26 @@ def check_url(url: str, timeout: int = 5) -> bool:
                 allow_redirects=True,
                 timeout=(connect_t, read_t),
             )
-            r.close()
-            if r.status_code < 400:
-                return True
-            # 405 = HEAD/método no permitido, 401/403 = auth requerida →
-            # el stream existe pero requiere credenciales → lo consideramos vivo.
+
+            # Códigos de error definitivos
+            if r.status_code >= 400 and r.status_code not in (401, 403, 405):
+                r.close()
+                continue
+
+            # Auth requerida → el recurso existe
             if r.status_code in (401, 403, 405):
+                r.close()
                 return True
+
+            # 2xx / 3xx → verificar que es stream real
+            alive = _is_real_stream(r)
+            r.close()
+            if alive:
+                return True
+            # Si llegamos aquí con VLC-UA, intentamos con browser-UA
+            continue
+
         except requests.exceptions.Timeout:
-            # Timeout de red ≠ stream caído; puede ser servidor IPTV lento.
-            # Solo marcamos como caído si AMBOS intentos fallan por timeout.
             continue
         except Exception:
             continue
@@ -86,8 +131,9 @@ def check_url(url: str, timeout: int = 5) -> bool:
 
 def check_url_with_latency(url: str, timeout: int = 5) -> tuple:
     """
-    Comprueba si una URL está viva y mide la latencia en ms.
+    Comprueba si una URL devuelve un stream real y mide la latencia en ms.
     Devuelve (alive: bool, latency_ms: int).
+    Aplica la misma detección de falsos positivos que check_url().
     """
     import time
     connect_t = min(timeout, 8)
@@ -104,9 +150,21 @@ def check_url_with_latency(url: str, timeout: int = 5) -> tuple:
                 timeout=(connect_t, read_t),
             )
             latency = int((time.monotonic() - t0) * 1000)
-            r.close()
-            if r.status_code < 400 or r.status_code in (401, 403, 405):
+
+            if r.status_code >= 400 and r.status_code not in (401, 403, 405):
+                r.close()
+                continue
+
+            if r.status_code in (401, 403, 405):
+                r.close()
                 return True, latency
+
+            alive = _is_real_stream(r)
+            r.close()
+            if alive:
+                return True, latency
+            continue
+
         except requests.exceptions.Timeout:
             continue
         except Exception:
@@ -262,21 +320,22 @@ def scan_live_channels(app, max_workers: int = 20) -> dict:
     return result
 
 
-def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
+def scan_dead_links(app, batch_size: int = 5000, max_workers: int = 40) -> dict:
     """
-    Escanea hasta `batch_size` links M3U en paralelo.
+    Escanea hasta `batch_size` links M3U (VOD) en paralelo.
     Excluye canales en directo (tipo='live') — esos los gestiona scan_live_channels().
 
-    Rendimiento estimado (40 workers, timeout 5s):
-      - Batch de 500  → ~60-90 segundos
-      - 7000 links completos → varias ejecuciones o batch_size=7000 (15-20 min)
+    batch_size=0 → sin límite, escanea todos los items pendientes.
+
+    Rendimiento orientativo (40 workers, timeout 15s):
+      - ~160 checks/min → 80 000 items en ~8 horas (job nocturno ideal)
     """
     from models import db, Contenido, Lista
 
     # ── 1. Leer datos de BD en hilo principal ──────────────────
     with app.app_context():
-        timeout = app.config.get('SCAN_TIMEOUT', 5)
-        rows = (
+        timeout = app.config.get('SCAN_TIMEOUT', 15)
+        q = (
             Contenido.query
             .filter(
                 Contenido.activo == True,
@@ -284,10 +343,11 @@ def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
                 Contenido.tipo != 'live',   # los live los gestiona scan_live_channels()
             )
             .order_by(Contenido.ultima_verificacion.asc().nullsfirst())
-            .limit(batch_size)
             .with_entities(Contenido.id, Contenido.url_stream)
-            .all()
         )
+        if batch_size > 0:
+            q = q.limit(batch_size)
+        rows = q.all()
 
     if not rows:
         return {'checked': 0, 'alive': 0, 'dead': 0,
@@ -338,10 +398,14 @@ def scan_dead_links(app, batch_size: int = 500, max_workers: int = 40) -> dict:
                 )
         db.session.commit()
 
+    # has_more=True si procesamos exactamente batch_size → probablemente hay más
+    has_more = batch_size > 0 and len(results) == batch_size
+
     result = {
-        'checked': len(results),
-        'alive': alive,
-        'dead': dead,
+        'checked':   len(results),
+        'alive':     alive,
+        'dead':      dead,
+        'has_more':  has_more,
         'timestamp': datetime.utcnow().isoformat(),
     }
     logger.info(f'[Scan] Completado: {result}')

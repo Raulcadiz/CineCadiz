@@ -1214,3 +1214,92 @@ def run_live_scan_now():
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return jsonify({'ok': True, 'message': 'Escaneo iniciado en background'})
+
+
+@api_bp.post('/live/<int:channel_id>/set-server')
+def set_live_server(channel_id):
+    """
+    Selección manual de servidor para un canal en directo.
+    Body JSON: { "index": N }  — índice en la lista liveUrls del canal.
+    Responde con: { ok, active_url, active_index }
+    """
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    idx  = data.get('index')
+
+    if idx is None:
+        return jsonify({'error': 'index requerido'}), 400
+
+    channel = Contenido.query.filter_by(id=channel_id, tipo='live').first_or_404()
+
+    try:
+        urls = _json.loads(channel.live_urls_json) if channel.live_urls_json else []
+    except (ValueError, TypeError):
+        urls = []
+    if not urls:
+        urls = [channel.url_stream]
+
+    idx = int(idx)
+    if idx < 0 or idx >= len(urls):
+        return jsonify({'error': f'index fuera de rango (0-{len(urls)-1})'}), 400
+
+    channel.live_active_idx = idx
+    channel.activo = True
+    db.session.commit()
+
+    return jsonify({
+        'ok':           True,
+        'active_url':   urls[idx],
+        'active_index': idx,
+    })
+
+
+@api_bp.get('/live/<int:channel_id>/servers')
+def get_live_servers(channel_id):
+    """
+    Devuelve todos los servidores disponibles para un canal, con estado de
+    la última verificación conocida.
+    """
+    import json as _json
+    channel = Contenido.query.filter_by(id=channel_id, tipo='live').first_or_404()
+
+    try:
+        urls = _json.loads(channel.live_urls_json) if channel.live_urls_json else []
+    except (ValueError, TypeError):
+        urls = []
+    if not urls:
+        urls = [channel.url_stream]
+
+    active_idx = channel.live_active_idx or 0
+
+    # Obtener último resultado de scan para cada URL
+    from models import LiveScanReport
+    from sqlalchemy import func
+    last_reports = {}
+    for url in urls:
+        rep = (
+            LiveScanReport.query
+            .filter_by(contenido_id=channel_id, url_probada=url)
+            .order_by(LiveScanReport.timestamp.desc())
+            .first()
+        )
+        if rep:
+            last_reports[url] = {
+                'alive':      rep.resultado,
+                'latency_ms': rep.latencia_ms,
+                'checked_at': rep.timestamp.isoformat(),
+            }
+
+    servers = []
+    for i, url in enumerate(urls):
+        entry = {
+            'index':    i,
+            'url':      url,
+            'active':   (i == active_idx),
+            'label':    f'Servidor {i + 1}',
+        }
+        if url in last_reports:
+            entry.update(last_reports[url])
+        servers.append(entry)
+
+    return jsonify({'servers': servers, 'active_index': active_idx})
