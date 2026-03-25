@@ -471,6 +471,121 @@ def admin_server_health():
     return jsonify(data)
 
 
+@admin_bp.post('/purge-server')
+@login_required
+def admin_purge_server():
+    """
+    Elimina PERMANENTEMENTE todo el contenido caído de un servidor concreto.
+    Útil para limpiar servidores con 100% de streams muertos.
+    Body JSON o form: { "servidor": "8tb.btv.mx" }
+    """
+    from models import db, Contenido
+    servidor = (request.form.get('servidor') or
+                (request.get_json(silent=True) or {}).get('servidor', '')).strip()
+    if not servidor:
+        return jsonify({'error': 'servidor requerido'}), 400
+
+    with current_app.app_context():
+        deleted = (
+            Contenido.query
+            .filter(
+                Contenido.servidor == servidor,
+                Contenido.activo == False,
+                Contenido.fuente == 'm3u',
+            )
+            .delete(synchronize_session=False)
+        )
+        db.session.commit()
+
+    flash(f'Eliminados {deleted} streams caídos del servidor "{servidor}".', 'success')
+    return redirect(url_for('admin.dashboard'))
+
+
+@admin_bp.get('/api/telegram-config')
+@login_required
+def get_telegram_config():
+    """Devuelve la configuración actual del bot Telegram."""
+    from models import TelegramConfig
+    cfg = TelegramConfig.query.first()
+    return jsonify(cfg.to_dict() if cfg else {
+        'enabled': False, 'token': '', 'chat_ids': [],
+        'alert_threshold': 80, 'daily_digest': True, 'digest_hour': 8,
+    })
+
+
+@admin_bp.post('/api/telegram-config')
+@login_required
+def save_telegram_config():
+    """Guarda la configuración del bot Telegram."""
+    import json as _json
+    from models import db, TelegramConfig
+
+    data = request.get_json(silent=True) or {}
+    cfg = TelegramConfig.query.first()
+    if cfg is None:
+        cfg = TelegramConfig()
+        db.session.add(cfg)
+
+    cfg.enabled         = bool(data.get('enabled', True))
+    cfg.token           = data.get('token', '').strip() or None
+    cfg.alert_threshold = max(1, min(100, int(data.get('alert_threshold', 80))))
+    cfg.daily_digest    = bool(data.get('daily_digest', True))
+    cfg.digest_hour     = max(0, min(23, int(data.get('digest_hour', 8))))
+
+    ids = data.get('chat_ids', [])
+    if isinstance(ids, str):
+        ids = [i.strip() for i in ids.replace(',', '\n').splitlines() if i.strip()]
+    cfg.chat_ids_json = _json.dumps([str(i) for i in ids]) if ids else None
+    cfg.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'config': cfg.to_dict()})
+
+
+@admin_bp.post('/api/telegram-test')
+@login_required
+def test_telegram():
+    """Envía un mensaje de prueba al chat_id indicado."""
+    from telegram_bot import send_test
+    data     = request.get_json(silent=True) or {}
+    token    = data.get('token', '').strip()
+    chat_id  = str(data.get('chat_id', '')).strip()
+    if not token or not chat_id:
+        return jsonify({'ok': False, 'msg': 'token y chat_id son obligatorios'}), 400
+    ok, msg = send_test(token, chat_id)
+    return jsonify({'ok': ok, 'msg': msg})
+
+
+@admin_bp.post('/rescan-server')
+@login_required
+def admin_rescan_server():
+    """
+    Fuerza re-escaneo inmediato de todos los streams de un servidor concreto,
+    tanto activos como inactivos (les resetea ultima_verificacion para que
+    el siguiente scan automático los re-compruebe primero).
+    Body form: { "servidor": "8tb.btv.mx" }
+    """
+    from models import db, Contenido
+    servidor = request.form.get('servidor', '').strip()
+    if not servidor:
+        flash('Servidor no especificado.', 'danger')
+        return redirect(url_for('admin.dashboard'))
+
+    with current_app.app_context():
+        updated = (
+            Contenido.query
+            .filter(Contenido.servidor == servidor)
+            .update({'ultima_verificacion': None}, synchronize_session=False)
+        )
+        db.session.commit()
+
+    flash(
+        f'{updated} streams del servidor "{servidor}" marcados para re-escaneo. '
+        'El scanner automático los revisará en la próxima ronda.',
+        'info',
+    )
+    return redirect(url_for('admin.dashboard'))
+
+
 # ── Gestión de contenido ───────────────────────────────────────
 
 @admin_bp.get('/contenido')
@@ -1078,11 +1193,16 @@ def _import_lista(app, lista_id: int):
                 if active_proxies:
                     proxy_url = random.choice(active_proxies).url
 
-            # Parsear grupos_seleccionados si existe
+            # Parsear grupos_seleccionados si existe.
+            # Se normalizan los nombres (strip) para que coincidan exactamente con
+            # los que produce parse_and_filter(), evitando que diferencias de
+            # espacios entre la previsualización y el import descarten contenido.
             grupos_set = None
             if lista.grupos_seleccionados:
                 try:
-                    grupos_set = set(json.loads(lista.grupos_seleccionados))
+                    raw = json.loads(lista.grupos_seleccionados)
+                    if isinstance(raw, list) and raw:
+                        grupos_set = {g.strip() for g in raw if isinstance(g, str)}
                 except (ValueError, TypeError):
                     pass
 
@@ -1147,6 +1267,17 @@ def _import_lista(app, lista_id: int):
                 f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total'
             )
 
+            # Notificar a Telegram si se importó contenido nuevo
+            if nuevos > 0:
+                try:
+                    from telegram_bot import notify_new_content
+                    movies_new = sum(1 for it in items[:nuevos] if it.get('tipo') == 'pelicula')
+                    series_new = sum(1 for it in items[:nuevos] if it.get('tipo') == 'serie')
+                    live_new   = sum(1 for it in items[:nuevos] if it.get('tipo') == 'live')
+                    notify_new_content(app, movies_new, series_new, live_new, lista.nombre)
+                except Exception:
+                    pass
+
         except Exception as exc:
             app.logger.exception(f'[Import M3U] Excepción inesperada en lista {lista_id}: {exc}')
             try:
@@ -1155,6 +1286,11 @@ def _import_lista(app, lista_id: int):
                     lista.error = f'Error interno: {exc}'
                     lista.ultima_actualizacion = datetime.utcnow()
                     db.session.commit()
+                    try:
+                        from telegram_bot import notify_import_error
+                        notify_import_error(app, lista.nombre, str(exc))
+                    except Exception:
+                        pass
             except Exception:
                 pass
 

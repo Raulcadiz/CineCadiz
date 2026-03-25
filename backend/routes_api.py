@@ -714,7 +714,7 @@ def hls_proxy():
             **_PROXY_UA,
             'Referer': f'{parsed.scheme}://{parsed.netloc}/',
         }
-        resp = requests.get(url, headers=mfst_hdrs, timeout=5,
+        resp = requests.get(url, headers=mfst_hdrs, timeout=15,
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
 
@@ -1149,9 +1149,10 @@ def report_live_down(channel_id):
         db.session.commit()
         return jsonify({'next_url': urls[next_idx], 'channel_still_alive': True})
     else:
-        # Sin más URLs → marcar canal como caído temporalmente
-        channel.activo = False
-        db.session.commit()
+        # Sin más URLs de respaldo → informar al cliente, pero NO desactivar el canal.
+        # El escáner periódico es quien debe decidir si un canal está realmente muerto.
+        # Desactivarlo aquí causaría que un simple error de red de un usuario
+        # mate el canal permanentemente para todos.
         return jsonify({'next_url': None, 'channel_still_alive': False})
 
 

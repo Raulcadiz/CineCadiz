@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Banner para Android TV / Fire Stick
+  Tamaño estándar: 320x180 dp (ratio 16:9)
+  Diseño: fondo oscuro + play dorado + tira de película a la derecha
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Fondo negro-azulado cinematográfico -->
+    <path
+        android:fillColor="#0D0D1A"
+        android:pathData="M0,0 h320 v180 h-320z" />
+
+    <!-- Barra vertical izquierda (dorada) -->
+    <path
+        android:fillColor="#D4AF37"
+        android:pathData="M0,0 h5 v180 h-5z" />
+
+    <!-- Líneas horizontales decorativas (marco cinemático) -->
+    <path
+        android:fillColor="#D4AF37"
+        android:pathData="M5,38 h215 v2 h-215z
+                          M5,140 h215 v2 h-215z" />
+
+    <!-- Botón Play (triángulo dorado centrado en el área de contenido)
+         Vértices: (75,45) (75,135) (145,90) → centroide ≈ (98, 90) -->
+    <path
+        android:fillColor="#D4AF37"
+        android:pathData="M75,45 L75,135 L145,90 Z" />
+
+    <!-- ══ Tira de película (derecha) ══ -->
+
+    <!-- Cuerpo dorado de la tira -->
+    <path
+        android:fillColor="#D4AF37"
+        android:pathData="M228,0 h92 v180 h-92z" />
+
+    <!-- Área central oscura (el "film") -->
+    <path
+        android:fillColor="#0D0D1A"
+        android:pathData="M248,0 h34 v180 h-34z" />
+
+    <!-- Perforaciones izquierdas (8 huecos) -->
+    <path
+        android:fillColor="#0D0D1A"
+        android:pathData="M233,7  h14 v14 h-14z
+                          M233,29 h14 v14 h-14z
+                          M233,51 h14 v14 h-14z
+                          M233,73 h14 v14 h-14z
+                          M233,95 h14 v14 h-14z
+                          M233,117 h14 v14 h-14z
+                          M233,139 h14 v14 h-14z
+                          M233,161 h14 v14 h-14z" />
+
+    <!-- Perforaciones derechas (8 huecos) -->
+    <path
+        android:fillColor="#0D0D1A"
+        android:pathData="M283,7  h14 v14 h-14z
+                          M283,29 h14 v14 h-14z
+                          M283,51 h14 v14 h-14z
+                          M283,73 h14 v14 h-14z
+                          M283,95 h14 v14 h-14z
+                          M283,117 h14 v14 h-14z
+                          M283,139 h14 v14 h-14z
+                          M283,161 h14 v14 h-14z" />
+
+</vector>

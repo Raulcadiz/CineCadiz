@@ -477,7 +477,9 @@ def parse_and_filter(
 
     vod_items, live_items = [], []
     for it in all_items:
-        g = it.get('group_title') or '(sin grupo)'
+        # Normalizar el group_title (strip) para que coincida con los grupos
+        # enviados desde la UI (que también pasan por strip al ser comparados).
+        g = (it.get('group_title') or '').strip() or '(sin grupo)'
 
         # Filtro por grupos seleccionados
         if grupos is not None:

@@ -155,6 +155,10 @@ def _migrate_db():
         # Live channel failover
         'ALTER TABLE contenidos ADD COLUMN live_urls_json TEXT',
         'ALTER TABLE contenidos ADD COLUMN live_active_idx INTEGER NOT NULL DEFAULT 0',
+        # Telegram bot config (las tablas nuevas las crea db.create_all; estas son por si acaso)
+        'ALTER TABLE telegram_config ADD COLUMN daily_digest BOOLEAN NOT NULL DEFAULT 1',
+        'ALTER TABLE telegram_config ADD COLUMN digest_hour  INTEGER NOT NULL DEFAULT 8',
+        'ALTER TABLE telegram_config ADD COLUMN alert_threshold INTEGER NOT NULL DEFAULT 80',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

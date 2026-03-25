@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Permite tráfico HTTP (cleartext) hacia el servidor de CineCity.
+  Sustituye a android:usesCleartextTraffic para compatibilidad con API 21+.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

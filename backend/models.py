@@ -532,3 +532,56 @@ class IptvSession(db.Model):
     ip_address     = db.Column(db.String(45), nullable=True)
     last_heartbeat = db.Column(db.DateTime, default=datetime.utcnow)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ═══════════════════════════════════════════════════════════
+# TELEGRAM — CONFIGURACIÓN Y SNAPSHOTS DE SALUD
+# ═══════════════════════════════════════════════════════════
+
+class TelegramConfig(db.Model):
+    """Configuración del bot de Telegram para notificaciones."""
+    __tablename__ = 'telegram_config'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    enabled          = db.Column(db.Boolean, nullable=False, default=True)
+    token            = db.Column(db.String(200), nullable=True)
+    # JSON list de chat/group IDs, p.ej. ["-1001234567890", "987654321"]
+    chat_ids_json    = db.Column(db.Text, nullable=True)
+    # Umbral % de streams caídos que dispara la alerta (defecto 80%)
+    alert_threshold  = db.Column(db.Integer, nullable=False, default=80)
+    # Enviar resumen diario automático
+    daily_digest     = db.Column(db.Boolean, nullable=False, default=True)
+    # Hora UTC para el digest (0-23)
+    digest_hour      = db.Column(db.Integer, nullable=False, default=8)
+    updated_at       = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        import json as _json
+        ids = []
+        try:
+            ids = _json.loads(self.chat_ids_json) if self.chat_ids_json else []
+        except Exception:
+            pass
+        return {
+            'enabled':         self.enabled,
+            'token':           self.token or '',
+            'chat_ids':        ids,
+            'alert_threshold': self.alert_threshold,
+            'daily_digest':    self.daily_digest,
+            'digest_hour':     self.digest_hour,
+        }
+
+
+class ServerHealthSnapshot(db.Model):
+    """
+    Último estado conocido de cada servidor.
+    Permite detectar cambios (servidor se cae / se recupera) entre escaneos.
+    """
+    __tablename__ = 'server_health_snapshots'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    servidor   = db.Column(db.String(300), unique=True, nullable=False, index=True)
+    dead_pct   = db.Column(db.Float, nullable=False, default=0.0)
+    # True si ya se envió alerta de caída para este servidor (evita duplicados)
+    alerted    = db.Column(db.Boolean, nullable=False, default=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)

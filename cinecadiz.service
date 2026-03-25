@@ -1,0 +1,45 @@
+[Unit]
+Description=CineCadiz Backend (Flask + Gunicorn)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+
+# ── Usuario y directorio ────────────────────────────────────────
+# Cambia "g3v3r" por el usuario que creaste en el VPS
+User=g3v3r
+Group=g3v3r
+WorkingDirectory=/home/g3v3r/cine-cadiz/backend
+
+# ── Variables de entorno ────────────────────────────────────────
+# Carga el fichero .env con los secretos (no subir al repo)
+EnvironmentFile=/home/g3v3r/cine-cadiz/backend/.env
+
+# ── Gunicorn ────────────────────────────────────────────────────
+# --workers 1: APScheduler solo debe correr en UN proceso (no duplicar jobs)
+# --threads 8: permite atender 8 peticiones simultáneas en el mismo proceso
+# --worker-class gthread: threads reales, compatible con streaming/proxy
+# --timeout 120: tiempo máximo por petición (uploads M3U grandes necesitan margen)
+# --bind 0.0.0.0:80: escucha en el puerto 80 (o cambia a 8000 si usas Nginx)
+ExecStart=/home/g3v3r/cine-cadiz/backend/venv/bin/gunicorn \
+    --workers 1 \
+    --threads 8 \
+    --worker-class gthread \
+    --timeout 120 \
+    --bind 0.0.0.0:80 \
+    --access-logfile /var/log/cinecadiz/access.log \
+    --error-logfile  /var/log/cinecadiz/error.log \
+    --log-level info \
+    wsgi:application
+
+# ── Reinicio automático ─────────────────────────────────────────
+Restart=always
+RestartSec=5
+
+# ── Límites ─────────────────────────────────────────────────────
+# El escáner de 80k links necesita muchos file descriptors abiertos
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

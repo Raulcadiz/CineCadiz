@@ -21,12 +21,14 @@ def init_scheduler(app):
         segundo plano sin bloquear el servidor web.
         """
         from link_checker import scan_dead_links
+        from telegram_bot import notify_scan_report, check_and_notify_server_health
+
         batch   = app.config.get('SCAN_BATCH_SIZE', 5000)
         workers = app.config.get('SCAN_MAX_WORKERS', 40)
 
         total_checked = total_alive = total_dead = 0
         iteration = 0
-        max_iter  = 200          # límite de seguridad (200 × 5 000 = 1 000 000 items)
+        max_iter  = 200
 
         while iteration < max_iter:
             iteration += 1
@@ -41,17 +43,21 @@ def init_scheduler(app):
                 f'total acumulado={total_checked}'
             )
 
-            # Sin más ítems sin verificar → terminamos
             if not result.get('has_more', False):
                 break
 
-            # Pausa breve entre lotes para no saturar la BD
             _time.sleep(2)
 
         logger.info(
             f'[Scheduler] Scan VOD completo: {total_checked} verificados, '
             f'{total_alive} vivos, {total_dead} caídos en {iteration} lote(s)'
         )
+        # Notificar resumen por Telegram
+        try:
+            notify_scan_report(app, total_checked, total_alive, total_dead, scan_type='VOD')
+            check_and_notify_server_health(app)
+        except Exception as e:
+            logger.warning(f'[Scheduler] Error notificación Telegram post-scan: {e}')
 
     def job_purge():
         from link_checker import purge_dead_links
@@ -68,6 +74,7 @@ def init_scheduler(app):
         from datetime import datetime, timedelta
         from models import LiveScanConfig
         from link_checker import scan_live_channels
+        from telegram_bot import notify_scan_report
 
         with app.app_context():
             config = LiveScanConfig.query.first()
@@ -87,6 +94,31 @@ def init_scheduler(app):
 
         result = scan_live_channels(app)
         logger.info(f'[Scheduler] Scan live: {result}')
+        try:
+            alive = result.get('alive', 0)
+            dead  = result.get('dead',  0)
+            notify_scan_report(app, alive + dead, alive, dead, scan_type='Live')
+        except Exception as e:
+            logger.warning(f'[Scheduler] Error notificación Telegram post-live-scan: {e}')
+
+    def job_daily_digest():
+        """Resumen diario enviado a Telegram a la hora configurada."""
+        from datetime import datetime
+        from models import TelegramConfig
+        from telegram_bot import notify_daily_digest
+
+        with app.app_context():
+            cfg = TelegramConfig.query.first()
+            if not cfg or not cfg.enabled or not cfg.daily_digest:
+                return
+            current_hour = datetime.utcnow().hour
+            if current_hour != (cfg.digest_hour or 8):
+                return
+
+        try:
+            notify_daily_digest(app)
+        except Exception as e:
+            logger.warning(f'[Scheduler] Error digest diario Telegram: {e}')
 
     hours = app.config.get('SCAN_INTERVAL_HOURS', 24)
 
@@ -111,6 +143,14 @@ def init_scheduler(app):
         trigger=IntervalTrigger(weeks=1),
         id='auto_purge',
         name='Purge semanal de streams caídos',
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        func=job_daily_digest,
+        trigger=IntervalTrigger(hours=1),
+        id='daily_digest',
+        name='Digest diario Telegram',
         replace_existing=True,
     )
 
