@@ -1,9 +1,15 @@
 package com.example.cinecity.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -12,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -28,6 +36,8 @@ import com.example.cinecity.ui.components.LoadingIndicator
 import com.example.cinecity.ui.theme.CineCard
 import com.example.cinecity.ui.theme.CineSubtext
 import com.example.cinecity.viewmodel.HomeViewModel
+
+private val FocusColor = Color(0xFFFFD700)
 
 @Composable
 fun HomeScreen(
@@ -140,11 +150,27 @@ private fun ContinueWatchingSection(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContinueWatchingCard(progress: WatchProgress, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.08f else 1f,
+        animationSpec = tween(150),
+        label = "cwScale",
+    )
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    LaunchedEffect(isFocused) {
+        if (isFocused) bringIntoViewRequester.bringIntoView()
+    }
+
     Column(
         modifier = Modifier
             .width(140.dp)
+            .scale(scale)
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .onFocusChanged { isFocused = it.isFocused }
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -152,7 +178,11 @@ private fun ContinueWatchingCard(progress: WatchProgress, onClick: () -> Unit) {
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(CineCard),
+                .background(CineCard)
+                .then(
+                    if (isFocused) Modifier.border(2.dp, FocusColor, RoundedCornerShape(8.dp))
+                    else Modifier
+                ),
         ) {
             val proxied = ApiClient.imageProxyUrl(progress.image)
             if (!proxied.isNullOrBlank()) {
@@ -192,7 +222,7 @@ private fun ContinueWatchingCard(progress: WatchProgress, onClick: () -> Unit) {
             text = if (progress.season != null) progress.seriesTitle ?: progress.title
             else progress.title,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (isFocused) FocusColor else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

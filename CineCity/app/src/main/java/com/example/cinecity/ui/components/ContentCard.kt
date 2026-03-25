@@ -1,18 +1,26 @@
 package com.example.cinecity.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -23,6 +31,9 @@ import com.example.cinecity.data.api.ApiClient
 import com.example.cinecity.ui.theme.CineCard
 import com.example.cinecity.ui.theme.CineSubtext
 
+private val FocusColor = Color(0xFFFFD700)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ContentCard(
     imageUrl: String?,
@@ -32,9 +43,24 @@ fun ContentCard(
     width: Dp = 120.dp,
     modifier: Modifier = Modifier,
 ) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.08f else 1f,
+        animationSpec = tween(150),
+        label = "cardScale",
+    )
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    LaunchedEffect(isFocused) {
+        if (isFocused) bringIntoViewRequester.bringIntoView()
+    }
+
     Column(
         modifier = modifier
             .width(width)
+            .scale(scale)
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .onFocusChanged { isFocused = it.isFocused }
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -42,7 +68,11 @@ fun ContentCard(
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(CineCard),
+                .background(CineCard)
+                .then(
+                    if (isFocused) Modifier.border(2.dp, FocusColor, RoundedCornerShape(8.dp))
+                    else Modifier
+                ),
             contentAlignment = Alignment.Center,
         ) {
             val proxied = ApiClient.imageProxyUrl(imageUrl)
@@ -66,7 +96,7 @@ fun ContentCard(
         Text(
             text = title,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (isFocused) FocusColor else MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -81,6 +111,7 @@ fun ContentCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LiveChannelRow(
     imageUrl: String?,
@@ -89,9 +120,28 @@ fun LiveChannelRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.03f else 1f,
+        animationSpec = tween(150),
+        label = "rowScale",
+    )
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    LaunchedEffect(isFocused) {
+        if (isFocused) bringIntoViewRequester.bringIntoView()
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .scale(scale)
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .onFocusChanged { isFocused = it.isFocused }
+            .then(
+                if (isFocused) Modifier.border(1.dp, FocusColor, RoundedCornerShape(6.dp))
+                else Modifier
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -122,7 +172,7 @@ fun LiveChannelRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (isFocused) FocusColor else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -137,7 +187,7 @@ fun LiveChannelRow(
         Icon(
             Icons.Default.PlayArrow,
             contentDescription = "Reproducir",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = if (isFocused) FocusColor else MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(24.dp),
         )
     }
