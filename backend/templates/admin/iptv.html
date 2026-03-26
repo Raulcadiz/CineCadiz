@@ -233,21 +233,36 @@
                         Grupos de contenido permitidos
                         <span class="text-muted">(dejar todo sin marcar = acceso a todo)</span>
                     </label>
-                    <div class="d-flex gap-2 mb-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                    <div class="d-flex gap-2 mb-2 flex-wrap">
+                        <button type="button" class="btn btn-outline-danger btn-sm"
+                                onclick="toggleTipo('crear','pelicula',true)">🎬 Todas las pelis</button>
+                        <button type="button" class="btn btn-outline-info btn-sm"
+                                onclick="toggleTipo('crear','serie',true)">📺 Todas las series</button>
+                        <button type="button" class="btn btn-outline-warning btn-sm"
+                                onclick="toggleTipo('crear','live',true)">📡 Todos los canales</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"
                                 onclick="toggleAll('crear',true)">Marcar todo</button>
                         <button type="button" class="btn btn-outline-secondary btn-sm"
-                                onclick="toggleAll('crear',false)">Desmarcar todo</button>
+                                onclick="toggleAll('crear',false)">✕ Ninguno</button>
                     </div>
-                    <div style="max-height:200px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
-                        {% for grp in all_groups %}
-                        <div class="form-check">
-                            <input class="form-check-input grp-crear" type="checkbox"
-                                   name="grupos_permitidos" value="{{ grp }}"
-                                   id="cgrp_{{ loop.index }}">
-                            <label class="form-check-label text-light" style="font-size:.83rem"
-                                   for="cgrp_{{ loop.index }}">{{ grp }}</label>
+                    <div style="max-height:260px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
+                        {% for tipo, emoji, label, color in [('pelicula','🎬','Películas','danger'),('serie','📺','Series','info'),('live','📡','En directo','warning'),('otro','❓','Sin clasificar','secondary')] %}
+                        {% if groups_by_type[tipo] %}
+                        <div class="d-flex align-items-center gap-2 px-1 py-1 mb-1"
+                             style="border-bottom:1px solid #2a2a2a;">
+                            <span class="badge bg-{{ color }} bg-opacity-25 text-{{ color }}"
+                                  style="font-size:.75rem;">{{ emoji }} {{ label }} ({{ groups_by_type[tipo]|length }})</span>
                         </div>
+                        {% for grp in groups_by_type[tipo] %}
+                        <div class="form-check ps-3">
+                            <input class="form-check-input grp-crear grp-crear-{{ tipo }}" type="checkbox"
+                                   name="grupos_permitidos" value="{{ grp }}"
+                                   id="cgrp_{{ tipo }}_{{ loop.index }}">
+                            <label class="form-check-label text-light" style="font-size:.82rem"
+                                   for="cgrp_{{ tipo }}_{{ loop.index }}">{{ grp }}</label>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
                         {% endfor %}
                     </div>
                 </div>
@@ -324,22 +339,37 @@
                         Grupos de contenido permitidos
                         <span class="text-muted">(dejar todo sin marcar = acceso a todo)</span>
                     </label>
-                    <div class="d-flex gap-2 mb-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                    <div class="d-flex gap-2 mb-2 flex-wrap">
+                        <button type="button" class="btn btn-outline-danger btn-sm"
+                                onclick="toggleTipo('edit{{ u.id }}','pelicula',true)">🎬 Pelis</button>
+                        <button type="button" class="btn btn-outline-info btn-sm"
+                                onclick="toggleTipo('edit{{ u.id }}','serie',true)">📺 Series</button>
+                        <button type="button" class="btn btn-outline-warning btn-sm"
+                                onclick="toggleTipo('edit{{ u.id }}','live',true)">📡 Canales</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"
                                 onclick="toggleAll('edit{{ u.id }}',true)">Marcar todo</button>
                         <button type="button" class="btn btn-outline-secondary btn-sm"
-                                onclick="toggleAll('edit{{ u.id }}',false)">Desmarcar todo</button>
+                                onclick="toggleAll('edit{{ u.id }}',false)">✕</button>
                     </div>
-                    <div style="max-height:200px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
-                        {% for grp in all_groups %}
-                        <div class="form-check">
-                            <input class="form-check-input grp-edit{{ u.id }}" type="checkbox"
-                                   name="grupos_permitidos" value="{{ grp }}"
-                                   id="egrp_{{ u.id }}_{{ loop.index }}"
-                                   {% if grp in u_grupos %}checked{% endif %}>
-                            <label class="form-check-label text-light" style="font-size:.83rem"
-                                   for="egrp_{{ u.id }}_{{ loop.index }}">{{ grp }}</label>
+                    <div style="max-height:260px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:6px;padding:.5rem;">
+                        {% for tipo, emoji, label, color in [('pelicula','🎬','Películas','danger'),('serie','📺','Series','info'),('live','📡','En directo','warning'),('otro','❓','Sin clasificar','secondary')] %}
+                        {% if groups_by_type[tipo] %}
+                        <div class="d-flex align-items-center gap-2 px-1 py-1 mb-1"
+                             style="border-bottom:1px solid #2a2a2a;">
+                            <span class="badge bg-{{ color }} bg-opacity-25 text-{{ color }}"
+                                  style="font-size:.75rem;">{{ emoji }} {{ label }} ({{ groups_by_type[tipo]|length }})</span>
                         </div>
+                        {% for grp in groups_by_type[tipo] %}
+                        <div class="form-check ps-3">
+                            <input class="form-check-input grp-edit{{ u.id }} grp-edit{{ u.id }}-{{ tipo }}" type="checkbox"
+                                   name="grupos_permitidos" value="{{ grp }}"
+                                   id="egrp_{{ u.id }}_{{ tipo }}_{{ loop.index }}"
+                                   {% if grp in u_grupos %}checked{% endif %}>
+                            <label class="form-check-label text-light" style="font-size:.82rem"
+                                   for="egrp_{{ u.id }}_{{ tipo }}_{{ loop.index }}">{{ grp }}</label>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
                         {% endfor %}
                     </div>
                 </div>
@@ -376,6 +406,10 @@
 // Marcar/desmarcar todos los grupos de un modal
 function toggleAll(prefix, state) {
     document.querySelectorAll('.grp-' + prefix).forEach(el => el.checked = state);
+}
+// Marcar/desmarcar grupos de un tipo concreto (pelicula/serie/live)
+function toggleTipo(prefix, tipo, state) {
+    document.querySelectorAll('.grp-' + prefix + '-' + tipo).forEach(el => el.checked = state);
 }
 
 // Copiar URL al portapapeles

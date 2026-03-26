@@ -1656,19 +1656,31 @@ def iptv_panel():
             IptvSession.iptv_user_id == u.id,
             IptvSession.last_heartbeat >= _limite,
         ).count()
-    # Grupos disponibles para asignar a usuarios
-    all_groups = [
-        r[0] for r in
-        db.session.query(Contenido.group_title)
+    # Grupos disponibles organizados por tipo (pelicula/serie/live)
+    from sqlalchemy import func as _func
+    _rows = (
+        db.session.query(Contenido.group_title, Contenido.tipo, _func.count().label('cnt'))
         .filter(Contenido.activo == True, Contenido.group_title != None, Contenido.group_title != '')
-        .distinct().order_by(Contenido.group_title).all()
-    ]
+        .group_by(Contenido.group_title, Contenido.tipo)
+        .order_by(Contenido.group_title)
+        .all()
+    )
+    # Para cada group_title tomar el tipo dominante (más contenidos)
+    _seen: dict = {}
+    for row in sorted(_rows, key=lambda x: -x.cnt):
+        if row.group_title not in _seen:
+            _seen[row.group_title] = row.tipo or 'otro'
+    groups_by_type = {'pelicula': [], 'serie': [], 'live': [], 'otro': []}
+    for grp, tipo in sorted(_seen.items()):
+        groups_by_type[tipo if tipo in groups_by_type else 'otro'].append(grp)
+    all_groups = sorted(_seen.keys())
     # Límite IPTV del usuario actual y cuántos ha creado ya
     iptv_creados = 0 if panel_user.is_superadmin else len(usuarios)
     return render_template(
         'admin/iptv.html',
         usuarios=usuarios, activas=activas, panel_user=panel_user,
-        all_groups=all_groups, iptv_creados=iptv_creados,
+        all_groups=all_groups, groups_by_type=groups_by_type,
+        iptv_creados=iptv_creados,
     )
 
 
