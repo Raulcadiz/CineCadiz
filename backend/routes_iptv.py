@@ -179,7 +179,12 @@ def playlist(username: str, password: str):
     lines = ['#EXTM3U']
     for cid, titulo, tipo, imagen, group_title in filas:
         img = (imagen or '').replace('"', '')
-        grp = (group_title or _tipo_grp.get(tipo, 'General')).replace('"', '')
+        # Para canales live: usar el group_title original del canal
+        # Para VOD (pelicula/serie): usar nombre de categoría reconocible por apps IPTV
+        if tipo == 'live':
+            grp = (group_title or 'Directo').replace('"', '')
+        else:
+            grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
         tit = (titulo or '').replace(',', ' ')
         stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
         lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
@@ -317,7 +322,12 @@ def get_php():
     lines = ['#EXTM3U']
     for cid, titulo, tipo, imagen, group_title in filas:
         img = (imagen or '').replace('"', '')
-        grp = (group_title or _tipo_grp.get(tipo, 'General')).replace('"', '')
+        # Para canales live: usar el group_title original del canal
+        # Para VOD (pelicula/serie): usar nombre de categoría reconocible por apps IPTV
+        if tipo == 'live':
+            grp = (group_title or 'Directo').replace('"', '')
+        else:
+            grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
         tit = (titulo or '').replace(',', ' ')
         stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
         lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
