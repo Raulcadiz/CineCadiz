@@ -275,6 +275,13 @@ _DEFAULT_VOD_CONFIRMED = [
     'estrenos', 'estreno',   # "ESTRENOS 2021"
     'novedades', 'novedad',  # "NOVEDADES 2025"
     'vod',
+    # Etiquetas de doblaje/idioma usadas en listas IPTV → siempre VOD
+    'castellano', 'dual', 'latino', 'subtitulado', 'subtitulada',
+    'doblado', 'doblada', 'doblaje',
+    # Géneros cinematográficos usados como group-title
+    'drama', 'comedia', 'accion', 'terror', 'thriller',
+    'western', 'romance', 'aventura', 'fantasia', 'musical',
+    'ciencia ficcion', 'sci-fi', 'biografia', 'historica',
 ]
 
 # Palabras en group-title que indican CANAL EN VIVO → excluir
@@ -433,8 +440,11 @@ def is_vod_content(item: dict, config) -> bool:
         if _normalize(kw) in group:
             return True
 
-    # ── 5. Inclusión: título con año o patrón S/E ──────────────
+    # ── 5. Inclusión: título o group-title con año o patrón S/E ──
     if re.search(r'\(\d{4}\)', titulo):
+        return True
+    # Group-title con año entre paréntesis → categoría VOD, ej. "DRAMA (2014)"
+    if re.search(r'\(\d{4}\)', group):
         return True
     # Acepta: S01E01, S01.E01, S01-E01, S01 E01
     if re.search(r'[Ss]\d{1,2}\s*[._-]?\s*[Ee]\d{1,3}', titulo):
