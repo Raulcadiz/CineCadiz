@@ -1902,3 +1902,141 @@ def rescan_server():
     )
     db.session.commit()
     return jsonify({'ok': True, 'updated': updated})
+
+
+# ── Acciones manuales Telegram ─────────────────────────────────
+
+@admin_bp.post('/api/telegram-send-digest')
+@superadmin_required
+def telegram_send_digest():
+    """Envía el resumen diario de estadísticas ahora mismo."""
+    try:
+        from telegram_bot import notify_daily_digest
+        notify_daily_digest(current_app._get_current_object())
+        return jsonify({'ok': True, 'msg': 'Resumen enviado correctamente.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+
+@admin_bp.post('/api/telegram-send-servers')
+@superadmin_required
+def telegram_send_servers():
+    """Envía el estado de salud de todos los servidores."""
+    try:
+        from link_checker import server_health
+        rows = server_health(current_app._get_current_object())
+        if not rows:
+            return jsonify({'ok': False, 'msg': 'No hay datos de servidores.'})
+
+        from telegram_bot import notify_all
+        from datetime import datetime
+        lines = ['🖥️ <b>Estado de servidores</b>', f'📅 {datetime.now().strftime("%d/%m/%Y %H:%M")}', '']
+        for r in rows:
+            pct_ok = 100 - r['dead_pct']
+            icon = '🟢' if pct_ok >= 80 else ('🟡' if pct_ok >= 50 else '🔴')
+            lines.append(
+                f'{icon} <code>{r["servidor"]}</code>\n'
+                f'   ✅ {r["alive"]:,} activos / 🔴 {r["dead"]:,} caídos ({r["dead_pct"]:.1f}%)'
+            )
+        notify_all(current_app._get_current_object(), '\n'.join(lines))
+        return jsonify({'ok': True, 'msg': f'Estado de {len(rows)} servidores enviado.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+
+@admin_bp.post('/api/telegram-send-down')
+@superadmin_required
+def telegram_send_down():
+    """Envía solo los servidores críticos (>= umbral de alerta)."""
+    try:
+        from link_checker import server_health
+        from telegram_bot import notify_all, _get_config
+        from models import TelegramConfig
+        from datetime import datetime
+
+        cfg = TelegramConfig.query.first()
+        threshold = cfg.alert_threshold if cfg else 80
+        rows = server_health(current_app._get_current_object())
+        criticos = [r for r in rows if r['dead_pct'] >= threshold]
+
+        if not criticos:
+            notify_all(current_app._get_current_object(),
+                       f'✅ <b>Sin servidores críticos</b>\n\nTodos los servidores están por debajo del umbral de alerta ({threshold}%).\n📅 {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+            return jsonify({'ok': True, 'msg': 'Ningún servidor crítico. Mensaje enviado.'})
+
+        lines = [f'🚨 <b>Servidores críticos ({len(criticos)})</b>', f'⚠️ Umbral: {threshold}%', '']
+        for r in criticos:
+            lines.append(
+                f'🔴 <code>{r["servidor"]}</code>\n'
+                f'   📉 {r["dead_pct"]:.1f}% caídos ({r["dead"]:,}/{r["total"]:,})'
+            )
+        notify_all(current_app._get_current_object(), '\n'.join(lines))
+        return jsonify({'ok': True, 'msg': f'{len(criticos)} servidor(es) crítico(s) enviados.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+
+@admin_bp.post('/api/backup-create')
+@superadmin_required
+def backup_create():
+    """Crea un backup manual de la BD."""
+    try:
+        from backup import create_backup
+        path = create_backup(current_app._get_current_object())
+        return jsonify({'ok': True, 'msg': f'Backup creado: {path.name} ({path.stat().st_size // 1024} KB)'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+
+@admin_bp.post('/api/backup-send')
+@superadmin_required
+def backup_send():
+    """Crea un backup y lo envía por Telegram."""
+    try:
+        from backup import create_backup, send_backup_telegram
+        app = current_app._get_current_object()
+        path = create_backup(app)
+        ok, msg = send_backup_telegram(app, path)
+        return jsonify({'ok': ok, 'msg': msg})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+
+@admin_bp.get('/api/backup-list')
+@superadmin_required
+def backup_list():
+    """Lista los backups disponibles."""
+    from backup import list_backups
+    return jsonify({'ok': True, 'backups': list_backups()})
+
+
+@admin_bp.post('/api/telegram-send-content')
+@superadmin_required
+def telegram_send_content():
+    """Envía el reporte de contenido de la BD."""
+    try:
+        from telegram_bot import notify_all
+        from datetime import datetime
+
+        total     = Contenido.query.filter_by(fuente='m3u').count()
+        activos   = Contenido.query.filter_by(fuente='m3u', activo=True).count()
+        caidos    = total - activos
+        peliculas = Contenido.query.filter_by(fuente='m3u', tipo='pelicula', activo=True).count()
+        series    = Contenido.query.filter_by(fuente='m3u', tipo='serie',    activo=True).count()
+        live      = Contenido.query.filter_by(fuente='m3u', tipo='live',     activo=True).count()
+        pct_ok    = round(activos / total * 100, 1) if total else 0
+
+        text = (
+            f'📦 <b>Reporte de contenido</b>\n'
+            f'📅 {datetime.now().strftime("%d/%m/%Y %H:%M")}\n\n'
+            f'🎬 Películas: <b>{peliculas:,}</b>\n'
+            f'📺 Series: <b>{series:,}</b>\n'
+            f'📡 Directo: <b>{live:,}</b>\n\n'
+            f'✅ Activos: <b>{activos:,}</b> ({pct_ok}%)\n'
+            f'🔴 Caídos: <b>{caidos:,}</b>\n'
+            f'📊 Total: <b>{total:,}</b>'
+        )
+        notify_all(current_app._get_current_object(), text)
+        return jsonify({'ok': True, 'msg': 'Reporte de contenido enviado.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})

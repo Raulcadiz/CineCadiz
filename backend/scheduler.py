@@ -120,6 +120,19 @@ def init_scheduler(app):
         except Exception as e:
             logger.warning(f'[Scheduler] Error digest diario Telegram: {e}')
 
+    def job_backup():
+        """Backup diario de la BD a las 03:00 UTC."""
+        from datetime import datetime
+        from backup import create_backup
+        current_hour = datetime.utcnow().hour
+        if current_hour != 3:
+            return
+        try:
+            path = create_backup(app)
+            logger.info(f'[Scheduler] Backup automático: {path.name}')
+        except Exception as e:
+            logger.error(f'[Scheduler] Error backup automático: {e}')
+
     hours = app.config.get('SCAN_INTERVAL_HOURS', 24)
 
     _scheduler.add_job(
@@ -151,6 +164,14 @@ def init_scheduler(app):
         trigger=IntervalTrigger(hours=1),
         id='daily_digest',
         name='Digest diario Telegram',
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        func=job_backup,
+        trigger=IntervalTrigger(hours=1),
+        id='auto_backup',
+        name='Backup diario BD',
         replace_existing=True,
     )
 

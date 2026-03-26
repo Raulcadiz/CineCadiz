@@ -119,6 +119,101 @@
     </div>
 
 </div>
+
+<!-- ── Backup ─────────────────────────────────────────────────── -->
+<div class="row g-4 mt-1">
+    <div class="col-12">
+        <div class="form-card">
+            <h5 class="mb-1"><i class="bi bi-floppy2-fill me-2 text-warning"></i>Backup de base de datos</h5>
+            <p class="text-secondary small mb-3">
+                Backup automático diario a las 03:00 UTC · Retención: 7 días ·
+                Directorio: <code>backups/</code>
+            </p>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button class="btn btn-outline-warning btn-sm btn-action" data-endpoint="/admin/api/backup-create">
+                    <i class="bi bi-floppy-fill me-1"></i>Crear backup ahora
+                </button>
+                <button class="btn btn-warning text-dark btn-sm btn-action" data-endpoint="/admin/api/backup-send">
+                    <i class="bi bi-telegram me-1"></i>Crear y enviar por Telegram
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" id="btnRefreshBackups">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Ver backups
+                </button>
+            </div>
+            <div id="backup-action-result" class="small mb-2"></div>
+            <div id="backup-list" class="d-none">
+                <table class="table table-dark table-sm mb-0" style="font-size:.85rem;">
+                    <thead><tr>
+                        <th>Archivo</th><th class="text-end">Tamaño</th><th class="text-end">Fecha</th>
+                    </tr></thead>
+                    <tbody id="backup-list-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Acciones manuales ────────────────────────────────────── -->
+<div class="row g-4 mt-1">
+    <div class="col-12">
+        <div class="form-card">
+            <h5 class="mb-1"><i class="bi bi-send-fill me-2 text-success"></i>Enviar ahora</h5>
+            <p class="text-secondary small mb-4">Envía mensajes al canal/grupo configurado sin esperar al siguiente ciclo automático.</p>
+
+            <div class="row g-3">
+
+                <div class="col-sm-6 col-lg-3">
+                    <div class="border border-secondary border-opacity-25 rounded p-3 h-100 d-flex flex-column">
+                        <div class="mb-2" style="font-size:2rem;">📈</div>
+                        <div class="fw-semibold mb-1">Resumen diario</div>
+                        <p class="text-secondary small flex-grow-1">Películas, series, live, activos/caídos y usuarios activos.</p>
+                        <button class="btn btn-outline-success btn-sm mt-2 btn-action" data-endpoint="/admin/api/telegram-send-digest">
+                            <i class="bi bi-send me-1"></i>Enviar
+                        </button>
+                        <div class="action-result mt-2 small"></div>
+                    </div>
+                </div>
+
+                <div class="col-sm-6 col-lg-3">
+                    <div class="border border-secondary border-opacity-25 rounded p-3 h-100 d-flex flex-column">
+                        <div class="mb-2" style="font-size:2rem;">🖥️</div>
+                        <div class="fw-semibold mb-1">Estado de servidores</div>
+                        <p class="text-secondary small flex-grow-1">Salud de todos los servidores con % de streams activos/caídos.</p>
+                        <button class="btn btn-outline-info btn-sm mt-2 btn-action" data-endpoint="/admin/api/telegram-send-servers">
+                            <i class="bi bi-send me-1"></i>Enviar
+                        </button>
+                        <div class="action-result mt-2 small"></div>
+                    </div>
+                </div>
+
+                <div class="col-sm-6 col-lg-3">
+                    <div class="border border-secondary border-opacity-25 rounded p-3 h-100 d-flex flex-column">
+                        <div class="mb-2" style="font-size:2rem;">🚨</div>
+                        <div class="fw-semibold mb-1">Servidores críticos</div>
+                        <p class="text-secondary small flex-grow-1">Solo los servidores que superan el umbral de alerta configurado.</p>
+                        <button class="btn btn-outline-warning btn-sm mt-2 btn-action" data-endpoint="/admin/api/telegram-send-down">
+                            <i class="bi bi-send me-1"></i>Enviar
+                        </button>
+                        <div class="action-result mt-2 small"></div>
+                    </div>
+                </div>
+
+                <div class="col-sm-6 col-lg-3">
+                    <div class="border border-secondary border-opacity-25 rounded p-3 h-100 d-flex flex-column">
+                        <div class="mb-2" style="font-size:2rem;">📦</div>
+                        <div class="fw-semibold mb-1">Reporte de contenido</div>
+                        <p class="text-secondary small flex-grow-1">Desglose del catálogo: películas, series, live y estado de activos.</p>
+                        <button class="btn btn-outline-secondary btn-sm mt-2 btn-action" data-endpoint="/admin/api/telegram-send-content">
+                            <i class="bi bi-send me-1"></i>Enviar
+                        </button>
+                        <div class="action-result mt-2 small"></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -210,6 +305,60 @@ document.getElementById('btnTest').addEventListener('click', async () => {
         }
     } catch(e) {
         res.innerHTML = '<span class="text-danger">Error de red.</span>';
+    }
+});
+
+// ── Acciones manuales + Backup ─────────────────────────────────
+document.querySelectorAll('.btn-action').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const endpoint = btn.dataset.endpoint;
+        // Buscar el div de resultado: en tarjetas de envío está dentro, en backup es global
+        const resultEl = btn.closest('.d-flex')?.querySelector('.action-result')
+                      || document.getElementById('backup-action-result');
+        const origHtml = btn.innerHTML;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando…';
+        if (resultEl) resultEl.innerHTML = '';
+
+        try {
+            const r = await fetch(endpoint, { method: 'POST' });
+            const d = await r.json();
+            const html = d.ok
+                ? `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>${d.msg}</span>`
+                : `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>${d.msg}</span>`;
+            if (resultEl) resultEl.innerHTML = html;
+        } catch(e) {
+            if (resultEl) resultEl.innerHTML = '<span class="text-danger">Error de red.</span>';
+        }
+
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+        if (resultEl) setTimeout(() => resultEl.innerHTML = '', 8000);
+    });
+});
+
+// ── Lista de backups ────────────────────────────────────────────
+document.getElementById('btnRefreshBackups').addEventListener('click', async () => {
+    try {
+        const r = await fetch('/admin/api/backup-list');
+        const d = await r.json();
+        const tbody = document.getElementById('backup-list-body');
+        const listDiv = document.getElementById('backup-list');
+        if (!d.backups || !d.backups.length) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-secondary">Sin backups aún.</td></tr>';
+        } else {
+            tbody.innerHTML = d.backups.map(b => `
+                <tr>
+                    <td><i class="bi bi-floppy me-1 text-warning"></i>${b.name}</td>
+                    <td class="text-end">${b.size_kb} KB</td>
+                    <td class="text-end text-secondary">${b.created}</td>
+                </tr>`).join('');
+        }
+        listDiv.classList.remove('d-none');
+    } catch(e) {
+        document.getElementById('backup-action-result').innerHTML =
+            '<span class="text-danger">Error al cargar la lista.</span>';
     }
 });
 </script>
