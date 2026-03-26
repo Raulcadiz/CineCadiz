@@ -87,14 +87,32 @@ def notify_all(app, text: str) -> list:
 
 
 def send_test(token: str, chat_id: str) -> tuple[bool, str]:
-    """Test de conexión. Devuelve (ok, mensaje)."""
+    """Test de conexión. Devuelve (ok, mensaje_detallado)."""
     text = (
         "✅ <b>CineCadiz — Conexión OK</b>\n\n"
         "🤖 El bot está configurado correctamente.\n"
         f"🕐 {_now()}"
     )
-    ok = _send(token, chat_id, text)
-    return ok, "Mensaje enviado correctamente." if ok else "Error al enviar. Revisa token y chat_id."
+    real_chat_id, thread_id = _parse_chat(chat_id)
+    payload = {
+        "chat_id": real_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if thread_id is not None:
+        payload["message_thread_id"] = thread_id
+    try:
+        r = _requests.post(_TG_API.format(token=token), json=payload, timeout=10)
+        if r.ok:
+            return True, "Mensaje enviado correctamente."
+        try:
+            err = r.json().get('description', r.text[:200])
+        except Exception:
+            err = r.text[:200]
+        return False, f"Telegram error {r.status_code}: {err}"
+    except Exception as e:
+        return False, f"Error de red: {e}"
 
 
 # ─────────────────────────────────────────────

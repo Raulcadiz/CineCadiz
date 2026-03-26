@@ -486,9 +486,12 @@ def parse_and_filter(
             if g not in grupos:
                 continue
 
-        # Usar tipos_override si el admin asignó un tipo manualmente a este grupo
-        if tipos_override and g in tipos_override:
-            it['tipo'] = tipos_override[g]
+        # Usar tipos_override si el admin asignó un tipo explícito a este grupo.
+        # Si el tipo es 'otro' (grupo sin clasificar en la UI) se ignora el override
+        # y se deja que la detección automática decida.
+        override = tipos_override.get(g) if tipos_override else None
+        if override and override != 'otro':
+            it['tipo'] = override
             if it['tipo'] == 'live':
                 live_items.append(it)
             else:
