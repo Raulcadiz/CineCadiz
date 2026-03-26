@@ -17,7 +17,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory, TelegramConfig
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -1788,3 +1788,105 @@ def iptv_online():
         'contenido_id': s.contenido_id,
         'last_hb':      s.last_heartbeat.isoformat(),
     } for s in sesiones])
+
+
+# ══════════════════════════════════════════════════════════════
+# TELEGRAM BOT — configuración y test
+# ══════════════════════════════════════════════════════════════
+
+@admin_bp.get('/telegram')
+@superadmin_required
+def telegram():
+    cfg = TelegramConfig.query.first()
+    return render_template('admin/telegram.html', cfg=cfg)
+
+
+@admin_bp.get('/api/telegram-config')
+@superadmin_required
+def telegram_config_get():
+    cfg = TelegramConfig.query.first()
+    if not cfg:
+        return jsonify({'enabled': False, 'token': '', 'chat_ids': [],
+                        'alert_threshold': 80, 'daily_digest': True, 'digest_hour': 8})
+    import json as _json
+    try:
+        ids = _json.loads(cfg.chat_ids_json) if cfg.chat_ids_json else []
+    except Exception:
+        ids = []
+    return jsonify({
+        'enabled':         cfg.enabled,
+        'token':           cfg.token or '',
+        'chat_ids':        ids,
+        'alert_threshold': cfg.alert_threshold,
+        'daily_digest':    cfg.daily_digest,
+        'digest_hour':     cfg.digest_hour,
+    })
+
+
+@admin_bp.post('/api/telegram-config')
+@superadmin_required
+def telegram_config_save():
+    data = request.get_json(silent=True) or {}
+    cfg = TelegramConfig.query.first()
+    if not cfg:
+        cfg = TelegramConfig()
+        db.session.add(cfg)
+
+    raw_ids = data.get('chat_ids', [])
+    if isinstance(raw_ids, str):
+        raw_ids = [x.strip() for x in raw_ids.replace('\n', ',').split(',') if x.strip()]
+
+    cfg.enabled          = bool(data.get('enabled', True))
+    cfg.token            = (data.get('token') or '').strip()
+    cfg.chat_ids_json    = json.dumps(raw_ids)
+    cfg.alert_threshold  = int(data.get('alert_threshold', 80))
+    cfg.daily_digest     = bool(data.get('daily_digest', True))
+    cfg.digest_hour      = int(data.get('digest_hour', 8))
+    cfg.updated_at       = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@admin_bp.post('/api/telegram-test')
+@superadmin_required
+def telegram_test():
+    data    = request.get_json(silent=True) or {}
+    token   = (data.get('token') or '').strip()
+    chat_id = (data.get('chat_id') or '').strip()
+    if not token or not chat_id:
+        return jsonify({'ok': False, 'msg': 'Falta token o chat_id.'})
+    from telegram_bot import send_test
+    ok, msg = send_test(token, chat_id)
+    return jsonify({'ok': ok, 'msg': msg})
+
+
+# ══════════════════════════════════════════════════════════════
+# SERVIDORES — purgar caídos / re-escanear
+# ══════════════════════════════════════════════════════════════
+
+@admin_bp.post('/api/purge-server')
+@superadmin_required
+def purge_server():
+    """Elimina todos los contenidos inactivos (activo=False) de un servidor."""
+    servidor = (request.get_json(silent=True) or {}).get('servidor', '').strip()
+    if not servidor:
+        return jsonify({'ok': False, 'msg': 'Falta servidor.'})
+    deleted = Contenido.query.filter_by(servidor=servidor, activo=False).delete()
+    db.session.commit()
+    return jsonify({'ok': True, 'deleted': deleted})
+
+
+@admin_bp.post('/api/rescan-server')
+@superadmin_required
+def rescan_server():
+    """Marca todos los contenidos de un servidor para que sean re-verificados."""
+    servidor = (request.get_json(silent=True) or {}).get('servidor', '').strip()
+    if not servidor:
+        return jsonify({'ok': False, 'msg': 'Falta servidor.'})
+    updated = (
+        Contenido.query
+        .filter_by(servidor=servidor)
+        .update({'ultima_verificacion': None}, synchronize_session=False)
+    )
+    db.session.commit()
+    return jsonify({'ok': True, 'updated': updated})

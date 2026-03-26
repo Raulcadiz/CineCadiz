@@ -156,6 +156,10 @@
            class="{% if 'reportes' in request.endpoint %}active{% endif %}">
             <i class="bi bi-flag-fill"></i> Reportes
         </a>
+        <a href="{{ url_for('admin.telegram') }}"
+           class="{% if 'telegram' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-telegram" style="color:#2ca5e0;"></i> Bot Telegram
+        </a>
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
         {% endif %}
         <a href="{{ url_for('admin.iptv_panel') }}"
