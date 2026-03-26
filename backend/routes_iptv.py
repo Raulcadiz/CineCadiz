@@ -186,7 +186,8 @@ def playlist(username: str, password: str):
         else:
             grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
         tit = (titulo or '').replace(',', ' ')
-        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
+        ext = '.mp4' if tipo == 'pelicula' else '.mkv' if tipo == 'serie' else ''
+        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}{ext}'
         lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
         lines.append(stream_url)
 
@@ -198,8 +199,8 @@ def playlist(username: str, password: str):
     )
 
 
-@iptv_bp.get('/<username>/<password>/stream/<int:contenido_id>')
-def stream(username: str, password: str, contenido_id: int):
+@iptv_bp.get('/<username>/<password>/stream/<path:cid_str>')
+def stream(username: str, password: str, cid_str: str):
     """
     Controla conexiones simultáneas y redirige al stream real.
     Crea una sesión nueva (o reutiliza la del mismo token en cookie).
@@ -207,6 +208,12 @@ def stream(username: str, password: str, contenido_id: int):
     u = _auth(username, password)
     if not u:
         abort(401)
+
+    # Extraer ID numérico ignorando extensión (.mp4, .mkv, etc.)
+    try:
+        contenido_id = int(cid_str.split('.')[0])
+    except (ValueError, AttributeError):
+        abort(404)
 
     c = Contenido.query.get_or_404(contenido_id)
 
@@ -329,7 +336,8 @@ def get_php():
         else:
             grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
         tit = (titulo or '').replace(',', ' ')
-        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}'
+        ext = '.mp4' if tipo == 'pelicula' else '.mkv' if tipo == 'serie' else ''
+        stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}{ext}'
         lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
         lines.append(stream_url)
 
