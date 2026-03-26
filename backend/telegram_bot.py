@@ -15,19 +15,39 @@ _TG_API = "https://api.telegram.org/bot{token}/sendMessage"
 # Primitiva de envío
 # ─────────────────────────────────────────────
 
+def _parse_chat(chat_id: str) -> tuple[str, int | None]:
+    """
+    Parsea chat_id con soporte para tópicos de grupo.
+    Formato normal:  "-1001234567890"  → ("-1001234567890", None)
+    Formato tópico:  "-1001234567890/3014" → ("-1001234567890", 3014)
+    """
+    s = str(chat_id).strip()
+    if '/' in s:
+        parts = s.split('/', 1)
+        try:
+            return parts[0], int(parts[1])
+        except ValueError:
+            pass
+    return s, None
+
+
 def _send(token: str, chat_id: str, text: str) -> bool:
     """Envía un mensaje. Devuelve True si fue exitoso."""
     if not token or not chat_id or not text:
         return False
     try:
+        real_chat_id, thread_id = _parse_chat(chat_id)
+        payload = {
+            "chat_id": real_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
         r = _requests.post(
             _TG_API.format(token=token),
-            json={
-                "chat_id": str(chat_id),
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
+            json=payload,
             timeout=10,
         )
         if not r.ok:
