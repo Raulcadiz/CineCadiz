@@ -835,7 +835,8 @@ function _playWithMpegts(url, isLive) {
     );
     player.attachMediaElement(el.videoPlayer);
     player.load();
-    player.play().catch(() => {});
+    // player.play() devuelve void, no Promise — usar el elemento directamente
+    el.videoPlayer.play().catch(() => {});
     window._mpegtsPlayer = player;
     player.on(mpegts.Events.ERROR, (errType, errDetail) => {
         console.warn('[mpegts] error', errType, errDetail);
@@ -891,19 +892,23 @@ function _tryNative(url) {
     if (url.startsWith('http://')) {
         const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
         const urlLow = url.toLowerCase().split('?')[0];
-        // Chrome no puede decodificar video/mp2t raw; usar mpegts.js via proxy
-        if (urlLow.endsWith('.ts') && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            _playWithMpegts(proxyUrl, true);
-            return;
-        }
+        const isTsUrl = urlLow.endsWith('.ts');
+        // Paso 1: intentar con <video src> a través del proxy
+        // (funciona para MP4, WebM y cualquier formato que el navegador soporte)
         el.videoPlayer.onerror = null;
         el.videoPlayer.src = proxyUrl;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            _setPlayerLoading(false);
-            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            // Paso 2 (solo .ts): Chrome no puede decodificar video/mp2t de forma nativa;
+            // intentar con mpegts.js que sí puede via MediaSource API.
+            if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+                _playWithMpegts(proxyUrl, true);
+            } else {
+                _setPlayerLoading(false);
+                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            }
         };
         return;
     }
