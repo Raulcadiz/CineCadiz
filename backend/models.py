@@ -572,6 +572,68 @@ class TelegramConfig(db.Model):
         }
 
 
+# ═══════════════════════════════════════════════════════════
+# CANALES CURADOS — Lista manual de live con múltiples fuentes
+# ═══════════════════════════════════════════════════════════
+
+class CanalCurado(db.Model):
+    """
+    Canal TV en directo curado manualmente por el admin.
+    Tiene múltiples URLs de backup (de distintos servidores IPTV);
+    el APK y la web prueban cada URL en orden hasta que una funcione.
+    """
+    __tablename__ = 'canales_curados'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    nombre     = db.Column(db.String(200), nullable=False)
+    logo       = db.Column(db.Text, nullable=True)
+    grupo      = db.Column(db.String(200), nullable=True)
+    orden      = db.Column(db.Integer, nullable=False, default=0)
+    activo     = db.Column(db.Boolean, nullable=False, default=True)
+    # JSON: [{"nombre": "Server 1", "url": "http://..."}, ...]
+    urls_json  = db.Column(db.Text, nullable=False, default='[]')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def urls(self):
+        import json as _j
+        try:
+            return _j.loads(self.urls_json or '[]')
+        except Exception:
+            return []
+
+    def to_dict(self):
+        """
+        Devuelve el canal en el mismo formato que Contenido.to_dict()
+        para que el APK pueda usarlo sin cambios (incluye liveUrls para failover).
+        """
+        all_urls = [e['url'] for e in self.urls if e.get('url')]
+        stream_url = all_urls[0] if all_urls else ''
+        return {
+            'id':             self.id,
+            'title':          self.nombre,
+            'type':           'live',
+            'streamUrl':      stream_url,
+            'source':         'curado',
+            'server':         None,
+            'image':          self.logo or '',
+            'description':    '',
+            'year':           None,
+            'genres':         [],
+            'groupTitle':     self.grupo or 'Curados',
+            'season':         None,
+            'episode':        None,
+            'active':         self.activo,
+            'addedAt':        self.created_at.isoformat() if self.created_at else None,
+            'liveUrls':       all_urls,
+            'activeUrlIndex': 0,
+        }
+
+
+# ═══════════════════════════════════════════════════════════
+# SERVER HEALTH SNAPSHOTS
+# ═══════════════════════════════════════════════════════════
+
 class ServerHealthSnapshot(db.Model):
     """
     Último estado conocido de cada servidor.

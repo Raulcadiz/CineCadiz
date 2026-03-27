@@ -17,7 +17,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory, TelegramConfig
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory, TelegramConfig, CanalCurado
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -160,9 +160,13 @@ def dashboard():
     cutoff  = datetime.utcnow() - timedelta(minutes=timeout)
     online_count = UserSession.query.filter(UserSession.last_seen >= cutoff).count()
 
+    # Todas las listas M3U (para el selector del escaneo)
+    all_listas = Lista.query.order_by(Lista.nombre).all() if panel_user.is_superadmin else []
+
     return render_template(
         'admin/dashboard.html',
         stats=stats, listas=listas, fuentes=fuentes,
+        all_listas=all_listas,
         scan_state=_scan_state, online_count=online_count,
         panel_user=panel_user,
     )
@@ -413,14 +417,23 @@ def manual_scan():
         return redirect(url_for('admin.dashboard'))
 
     app = current_app._get_current_object()
-    batch = request.form.get('batch', app.config.get('SCAN_BATCH_SIZE', 500), type=int)
+    batch   = request.form.get('batch', app.config.get('SCAN_BATCH_SIZE', 500), type=int)
     workers = request.form.get('workers', 40, type=int)
     workers = max(5, min(workers, 80))   # entre 5 y 80
+    lista_id = request.form.get('lista_id', 0, type=int) or None
+
+    lista_nombre = None
+    if lista_id:
+        l = Lista.query.get(lista_id)
+        lista_nombre = l.nombre if l else None
 
     def run():
         _scan_state['running'] = True
         try:
-            result = scan_dead_links(app, batch_size=batch, max_workers=workers)
+            result = scan_dead_links(app, batch_size=batch, max_workers=workers,
+                                     lista_id=lista_id)
+            if lista_nombre:
+                result['lista_nombre'] = lista_nombre
             _scan_state['last_result'] = result
         except Exception as e:
             _scan_state['last_result'] = {'error': str(e)}
@@ -2119,3 +2132,120 @@ def telegram_webhook_info():
 
     info = get_webhook_info(cfg.token)
     return jsonify({'ok': True, 'info': info})
+
+
+# ══════════════════════════════════════════════════════════════
+# CANALES CURADOS — Lista manual de live con múltiples fuentes
+# ══════════════════════════════════════════════════════════════
+
+@admin_bp.get('/curado')
+@superadmin_required
+def curado():
+    """Gestión de la lista de canales en directo curados manualmente."""
+    canales = CanalCurado.query.order_by(CanalCurado.orden, CanalCurado.nombre).all()
+    panel_user = _get_panel_user()
+    return render_template('admin/curado.html', canales=canales, panel_user=panel_user)
+
+
+@admin_bp.get('/curado/api/buscar')
+@superadmin_required
+def curado_buscar():
+    """Busca canales live en la BD para añadir a la lista curada (AJAX)."""
+    q = request.args.get('q', '').strip()
+    lista_id = request.args.get('lista_id', 0, type=int) or None
+
+    base_q = Contenido.query.filter(
+        Contenido.tipo == 'live',
+        Contenido.activo == True,
+    )
+    if q:
+        base_q = base_q.filter(Contenido.titulo.ilike(f'%{q}%'))
+    if lista_id:
+        base_q = base_q.filter(Contenido.lista_id == lista_id)
+
+    resultados = base_q.order_by(Contenido.titulo).limit(60).all()
+    listas = Lista.query.order_by(Lista.nombre).all()
+
+    return jsonify({
+        'canales': [{
+            'id':      c.id,
+            'titulo':  c.titulo,
+            'logo':    c.imagen or '',
+            'grupo':   c.group_title or '',
+            'url':     c.url_stream,
+            'servidor': c.servidor or '',
+            'lista_id': c.lista_id,
+        } for c in resultados],
+        'listas': [{'id': l.id, 'nombre': l.nombre} for l in listas],
+    })
+
+
+@admin_bp.post('/curado/crear')
+@superadmin_required
+def curado_crear():
+    """Crea un nuevo canal curado."""
+    import json as _j
+    nombre = request.form.get('nombre', '').strip()
+    if not nombre:
+        flash('El nombre es obligatorio.', 'danger')
+        return redirect(url_for('admin.curado'))
+
+    logo  = request.form.get('logo', '').strip() or None
+    grupo = request.form.get('grupo', '').strip() or None
+    try:
+        urls = _j.loads(request.form.get('urls', '[]'))
+    except Exception:
+        urls = []
+
+    max_orden = db.session.query(db.func.max(CanalCurado.orden)).scalar() or 0
+    canal = CanalCurado(
+        nombre=nombre, logo=logo, grupo=grupo,
+        urls_json=_j.dumps(urls),
+        orden=max_orden + 1,
+    )
+    db.session.add(canal)
+    db.session.commit()
+    flash(f'Canal "{nombre}" añadido a la lista curada.', 'success')
+    return redirect(url_for('admin.curado'))
+
+
+@admin_bp.post('/curado/<int:cid>/editar')
+@superadmin_required
+def curado_editar(cid):
+    """Edita un canal curado (llamada AJAX, devuelve JSON)."""
+    import json as _j
+    canal = CanalCurado.query.get_or_404(cid)
+    canal.nombre = request.form.get('nombre', canal.nombre).strip()
+    canal.logo   = request.form.get('logo', '').strip() or None
+    canal.grupo  = request.form.get('grupo', '').strip() or None
+    canal.activo = request.form.get('activo', 'true') == 'true'
+    try:
+        canal.urls_json = _j.dumps(_j.loads(request.form.get('urls', '[]')))
+    except Exception:
+        pass
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@admin_bp.post('/curado/<int:cid>/eliminar')
+@superadmin_required
+def curado_eliminar(cid):
+    """Elimina un canal curado."""
+    canal = CanalCurado.query.get_or_404(cid)
+    nombre = canal.nombre
+    db.session.delete(canal)
+    db.session.commit()
+    flash(f'Canal "{nombre}" eliminado.', 'info')
+    return redirect(url_for('admin.curado'))
+
+
+@admin_bp.post('/curado/reordenar')
+@superadmin_required
+def curado_reordenar():
+    """Actualiza el orden de los canales. Body JSON: {"ids": [3, 1, 5, ...]}"""
+    import json as _j
+    data = request.get_json(silent=True) or {}
+    for idx, cid in enumerate(data.get('ids', [])):
+        CanalCurado.query.filter_by(id=int(cid)).update({'orden': idx})
+    db.session.commit()
+    return jsonify({'ok': True})

@@ -163,10 +163,16 @@
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
         {% endif %}
         <a href="{{ url_for('admin.iptv_panel') }}"
-           class="{% if 'iptv' in request.endpoint %}active{% endif %}">
+           class="{% if 'iptv' in request.endpoint and 'curado' not in request.endpoint %}active{% endif %}">
             <i class="bi bi-broadcast-pin"></i>
             {% if current_user and current_user.is_superadmin %}Panel IPTV{% else %}Mis Usuarios IPTV{% endif %}
         </a>
+        {% if current_user and current_user.is_superadmin %}
+        <a href="{{ url_for('admin.curado') }}"
+           class="{% if 'curado' in request.endpoint %}active{% endif %}">
+            <i class="bi bi-star-fill" style="color:#f59e0b;"></i> Canales Curados
+        </a>
+        {% endif %}
         <hr style="border-color:#2a2a2a;margin:.5rem 1rem;">
         <a href="{{ url_for('auth.mi_cuenta') }}">
             <i class="bi bi-person-circle"></i> Mi cuenta

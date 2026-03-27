@@ -1,0 +1,393 @@
+{% extends "admin/base.html" %}
+{% block title %}Canales Curados{% endblock %}
+
+{% block content %}
+<div class="topbar d-flex justify-content-between align-items-center">
+    <h1><i class="bi bi-star-fill me-2" style="color:#f59e0b"></i>Canales Curados</h1>
+    <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
+        <i class="bi bi-plus-lg me-1"></i>Añadir canal
+    </button>
+</div>
+
+<div class="alert alert-secondary small mb-3">
+    <i class="bi bi-info-circle me-1"></i>
+    Lista de canales TV en directo seleccionados manualmente. Cada canal puede tener <strong>múltiples URLs</strong>
+    de distintos servidores — si el primero falla, la app intenta el siguiente automáticamente.
+    El orden de la tabla es el orden en que aparecen en la app y web.
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% for cat, msg in messages %}
+<div class="alert alert-{{ 'danger' if cat == 'danger' else 'success' if cat == 'success' else 'info' }} py-2 small">{{ msg }}</div>
+{% endfor %}
+{% endwith %}
+
+<!-- Tabla de canales curados -->
+<div class="card bg-dark border-secondary mb-4">
+    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-list-ul me-1"></i>{{ canales|length }} canales</span>
+        <small class="text-muted">Arrastra las filas para reordenar o usa las flechas</small>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0" id="tablaCurados">
+            <thead>
+                <tr>
+                    <th style="width:40px"></th>
+                    <th style="width:50px">Logo</th>
+                    <th>Nombre</th>
+                    <th>Grupo</th>
+                    <th>URLs</th>
+                    <th style="width:80px">Activo</th>
+                    <th style="width:100px">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="curadosTbody">
+            {% for canal in canales %}
+            <tr data-id="{{ canal.id }}" class="{{ '' if canal.activo else 'opacity-50' }}">
+                <td class="text-center text-muted" style="cursor:grab">
+                    <i class="bi bi-grip-vertical"></i>
+                </td>
+                <td>
+                    {% if canal.logo %}
+                    <img src="{{ canal.logo }}" alt="" style="width:40px;height:28px;object-fit:contain;background:#111;border-radius:3px;"
+                         onerror="this.style.display='none'">
+                    {% else %}
+                    <div style="width:40px;height:28px;background:#2a2a2a;border-radius:3px;display:flex;align-items:center;justify-content:center;">
+                        <i class="bi bi-tv text-muted" style="font-size:.7rem"></i>
+                    </div>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="fw-semibold">{{ canal.nombre }}</span>
+                    <small class="text-muted d-block" style="font-size:.75rem">#{{ canal.orden }}</small>
+                </td>
+                <td><span class="badge bg-secondary">{{ canal.grupo or '—' }}</span></td>
+                <td>
+                    {% set urls = canal.urls %}
+                    <span class="badge" style="background:#1a2a1a;color:#4ade80;font-size:.75rem">
+                        {{ urls|length }} URL{{ 's' if urls|length != 1 else '' }}
+                    </span>
+                    {% for u in urls[:2] %}
+                    <small class="text-muted d-block" style="font-size:.7rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                           title="{{ u.url }}">
+                        <i class="bi bi-link-45deg"></i>{{ u.nombre or u.url }}
+                    </small>
+                    {% endfor %}
+                    {% if urls|length > 2 %}
+                    <small class="text-muted" style="font-size:.7rem">+{{ urls|length - 2 }} más</small>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="badge {{ 'bg-success' if canal.activo else 'bg-danger' }}">
+                        {{ 'Sí' if canal.activo else 'No' }}
+                    </span>
+                </td>
+                <td>
+                    <button class="btn btn-outline-primary btn-sm me-1"
+                            onclick="abrirEditar({{ canal.id }}, {{ canal.nombre|tojson }}, {{ canal.logo|tojson or 'null' }}, {{ canal.grupo|tojson or 'null' }}, {{ canal.activo|tojson }}, {{ canal.urls|tojson }})"
+                            title="Editar">
+                        <i class="bi bi-pencil-fill"></i>
+                    </button>
+                    <form action="{{ url_for('admin.curado_eliminar', cid=canal.id) }}" method="post" class="d-inline"
+                          onsubmit="return confirm('¿Eliminar {{ canal.nombre }}?')">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Eliminar">
+                            <i class="bi bi-trash-fill"></i>
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" class="text-center text-muted py-4">
+                    No hay canales curados todavía. Haz clic en "Añadir canal" para empezar.
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+<!-- ══ Modal Crear ══════════════════════════════════════════ -->
+<div class="modal fade" id="modalCrear" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Añadir canal curado</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="formCrear" action="{{ url_for('admin.curado_crear') }}" method="post">
+                <div class="modal-body">
+
+                    <!-- Buscador de canales existentes -->
+                    <div class="mb-3 p-3 border border-secondary rounded" style="background:#111">
+                        <label class="form-label fw-semibold text-warning">
+                            <i class="bi bi-search me-1"></i>Buscar en tus canales live
+                        </label>
+                        <div class="d-flex gap-2 mb-2">
+                            <input type="text" id="buscarQ" class="form-control form-control-sm" placeholder="Nombre del canal...">
+                            <select id="buscarLista" class="form-select form-select-sm" style="max-width:180px">
+                                <option value="">Todas las listas</option>
+                            </select>
+                            <button type="button" class="btn btn-outline-warning btn-sm" onclick="buscarCanales()">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <div id="buscarResultados" class="d-flex flex-wrap gap-1" style="max-height:180px;overflow-y:auto"></div>
+                    </div>
+
+                    <!-- Datos del canal -->
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+                            <input type="text" name="nombre" id="crearNombre" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Grupo</label>
+                            <input type="text" name="grupo" id="crearGrupo" class="form-control" placeholder="ej: Deportes, Noticias…">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Logo URL</label>
+                            <input type="url" name="logo" id="crearLogo" class="form-control" placeholder="https://...">
+                        </div>
+                    </div>
+
+                    <!-- URLs de reproducción -->
+                    <div class="mt-3">
+                        <label class="form-label fw-semibold">
+                            URLs de reproducción
+                            <span class="text-muted fw-normal">(en orden de prioridad)</span>
+                        </label>
+                        <div id="crearUrls"></div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="agregarUrlRow('crear')">
+                            <i class="bi bi-plus-lg me-1"></i>Añadir URL manualmente
+                        </button>
+                        <input type="hidden" name="urls" id="crearUrlsHidden">
+                    </div>
+
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning" onclick="prepararUrls('crear')">
+                        <i class="bi bi-check-lg me-1"></i>Guardar canal
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
+<!-- ══ Modal Editar ════════════════════════════════════════ -->
+<div class="modal fade" id="modalEditar" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-pencil-fill me-2"></i>Editar canal</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="editarBody">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Nombre</label>
+                        <input type="text" id="editNombre" class="form-control">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Grupo</label>
+                        <input type="text" id="editGrupo" class="form-control">
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label fw-semibold">Logo URL</label>
+                        <input type="url" id="editLogo" class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Activo</label>
+                        <select id="editActivo" class="form-select">
+                            <option value="true">Sí</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label fw-semibold">URLs de reproducción</label>
+                    <div id="editUrls"></div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="agregarUrlRow('edit')">
+                        <i class="bi bi-plus-lg me-1"></i>Añadir URL
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="guardarEditar()">
+                    <i class="bi bi-check-lg me-1"></i>Guardar cambios
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _editId = null;
+
+// ── Buscar canales en BD ──────────────────────────────────
+let _listasCache = [];
+
+async function cargarListas() {
+    try {
+        const r = await fetch('/admin/curado/api/buscar?q=');
+        const d = await r.json();
+        _listasCache = d.listas || [];
+        const sel = document.getElementById('buscarLista');
+        _listasCache.forEach(l => {
+            const o = document.createElement('option');
+            o.value = l.id; o.textContent = l.nombre;
+            sel.appendChild(o);
+        });
+    } catch(e) {}
+}
+cargarListas();
+
+async function buscarCanales() {
+    const q  = document.getElementById('buscarQ').value.trim();
+    const li = document.getElementById('buscarLista').value;
+    const url = `/admin/curado/api/buscar?q=${encodeURIComponent(q)}${li ? '&lista_id='+li : ''}`;
+    const r   = await fetch(url);
+    const d   = await r.json();
+    const div = document.getElementById('buscarResultados');
+    div.innerHTML = '';
+    if (!d.canales.length) {
+        div.innerHTML = '<small class="text-muted">Sin resultados.</small>';
+        return;
+    }
+    d.canales.forEach(c => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary btn-sm';
+        btn.style.cssText = 'font-size:.75rem;padding:2px 8px;';
+        btn.innerHTML = `${c.logo ? `<img src="${c.logo}" style="height:14px;margin-right:4px;vertical-align:middle;" onerror="this.remove()">` : ''}${escHtml(c.titulo)}`;
+        btn.title = c.url;
+        btn.onclick = () => rellenarDesdeCanal(c);
+        div.appendChild(btn);
+    });
+}
+
+document.getElementById('buscarQ').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); buscarCanales(); }
+});
+
+function rellenarDesdeCanal(c) {
+    document.getElementById('crearNombre').value = c.titulo;
+    document.getElementById('crearGrupo').value  = c.grupo || '';
+    document.getElementById('crearLogo').value   = c.logo  || '';
+    // Añadir URL del canal buscado
+    const listaName = _listasCache.find(l => l.id == c.lista_id)?.nombre || c.servidor || 'Servidor';
+    agregarUrlRow('crear', listaName, c.url);
+}
+
+// ── Gestión de filas de URL ───────────────────────────────
+function agregarUrlRow(prefix, nombre='', url='') {
+    const container = document.getElementById(prefix + 'Urls');
+    const idx = container.children.length;
+    const div = document.createElement('div');
+    div.className = 'd-flex gap-2 align-items-center mb-2';
+    div.innerHTML = `
+        <span class="badge bg-secondary">${idx+1}</span>
+        <input type="text" placeholder="Nombre (ej: dplatino)" class="form-control form-control-sm url-nombre" value="${escHtml(nombre)}" style="max-width:140px">
+        <input type="url"  placeholder="http://..." class="form-control form-control-sm url-value" value="${escHtml(url)}">
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.d-flex').remove();renumerarUrls('${prefix}')">
+            <i class="bi bi-x"></i>
+        </button>`;
+    container.appendChild(div);
+}
+
+function renumerarUrls(prefix) {
+    const rows = document.getElementById(prefix + 'Urls').children;
+    [...rows].forEach((r, i) => {
+        const badge = r.querySelector('.badge');
+        if (badge) badge.textContent = i + 1;
+    });
+}
+
+function leerUrls(prefix) {
+    const container = document.getElementById(prefix + 'Urls');
+    const urls = [];
+    [...container.children].forEach(row => {
+        const nombre = row.querySelector('.url-nombre')?.value.trim() || '';
+        const url    = row.querySelector('.url-value')?.value.trim()  || '';
+        if (url) urls.push({ nombre, url });
+    });
+    return urls;
+}
+
+function prepararUrls(prefix) {
+    const urls = leerUrls(prefix);
+    document.getElementById(prefix + 'UrlsHidden').value = JSON.stringify(urls);
+}
+
+function escHtml(s) {
+    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Editar ────────────────────────────────────────────────
+function abrirEditar(id, nombre, logo, grupo, activo, urls) {
+    _editId = id;
+    document.getElementById('editNombre').value = nombre || '';
+    document.getElementById('editLogo').value   = logo   || '';
+    document.getElementById('editGrupo').value  = grupo  || '';
+    document.getElementById('editActivo').value = activo ? 'true' : 'false';
+
+    const cont = document.getElementById('editUrls');
+    cont.innerHTML = '';
+    (urls || []).forEach(u => agregarUrlRow('edit', u.nombre || '', u.url || ''));
+
+    new bootstrap.Modal(document.getElementById('modalEditar')).show();
+}
+
+async function guardarEditar() {
+    if (!_editId) return;
+    const urls = leerUrls('edit');
+    const fd = new FormData();
+    fd.append('nombre', document.getElementById('editNombre').value.trim());
+    fd.append('logo',   document.getElementById('editLogo').value.trim());
+    fd.append('grupo',  document.getElementById('editGrupo').value.trim());
+    fd.append('activo', document.getElementById('editActivo').value);
+    fd.append('urls',   JSON.stringify(urls));
+
+    const r = await fetch(`/admin/curado/${_editId}/editar`, { method:'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('Error al guardar. Inténtalo de nuevo.');
+}
+
+// ── Reordenar con flechas arriba/abajo ──────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    const tbody = document.getElementById('curadosTbody');
+    tbody.addEventListener('click', async e => {
+        const btn = e.target.closest('[data-dir]');
+        if (!btn) return;
+        const row  = btn.closest('tr');
+        const dir  = btn.dataset.dir;
+        const sib  = dir === 'up' ? row.previousElementSibling : row.nextElementSibling;
+        if (!sib) return;
+        if (dir === 'up') tbody.insertBefore(row, sib);
+        else tbody.insertBefore(sib, row);
+        await guardarOrden();
+    });
+});
+
+async function guardarOrden() {
+    const ids = [...document.querySelectorAll('#curadosTbody tr[data-id]')]
+        .map(r => parseInt(r.dataset.id));
+    await fetch('/admin/curado/reordenar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+    });
+}
+</script>
+{% endblock %}

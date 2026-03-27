@@ -320,12 +320,14 @@ def scan_live_channels(app, max_workers: int = 20) -> dict:
     return result
 
 
-def scan_dead_links(app, batch_size: int = 5000, max_workers: int = 40) -> dict:
+def scan_dead_links(app, batch_size: int = 5000, max_workers: int = 40,
+                    lista_id: int = None) -> dict:
     """
     Escanea hasta `batch_size` links M3U (VOD) en paralelo.
     Excluye canales en directo (tipo='live') — esos los gestiona scan_live_channels().
 
     batch_size=0 → sin límite, escanea todos los items pendientes.
+    lista_id → si se especifica, solo escanea contenido de esa lista.
 
     Rendimiento orientativo (40 workers, timeout 15s):
       - ~160 checks/min → 80 000 items en ~8 horas (job nocturno ideal)
@@ -335,14 +337,15 @@ def scan_dead_links(app, batch_size: int = 5000, max_workers: int = 40) -> dict:
     # ── 1. Leer datos de BD en hilo principal ──────────────────
     with app.app_context():
         timeout = app.config.get('SCAN_TIMEOUT', 15)
+        q = Contenido.query.filter(
+            Contenido.activo == True,
+            Contenido.fuente == 'm3u',
+            Contenido.tipo != 'live',   # los live los gestiona scan_live_channels()
+        )
+        if lista_id:
+            q = q.filter(Contenido.lista_id == lista_id)
         q = (
-            Contenido.query
-            .filter(
-                Contenido.activo == True,
-                Contenido.fuente == 'm3u',
-                Contenido.tipo != 'live',   # los live los gestiona scan_live_channels()
-            )
-            .order_by(Contenido.ultima_verificacion.asc().nullsfirst())
+            q.order_by(Contenido.ultima_verificacion.asc().nullsfirst())
             .with_entities(Contenido.id, Contenido.url_stream)
         )
         if batch_size > 0:

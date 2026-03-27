@@ -21,7 +21,7 @@
 {% if scan_state.last_result and not scan_state.running %}
 <div class="alert alert-secondary mb-3 py-2 small">
     <i class="bi bi-check-circle me-1"></i>
-    <strong>Último scan:</strong>
+    <strong>Último scan{% if scan_state.last_result.lista_nombre %} — {{ scan_state.last_result.lista_nombre }}{% endif %}:</strong>
     {{ scan_state.last_result.checked }} revisados —
     <span class="text-success">{{ scan_state.last_result.alive }} vivos</span> /
     <span class="text-danger">{{ scan_state.last_result.dead }} caídos</span>
@@ -244,8 +244,19 @@
             <form action="{{ url_for('admin.manual_scan') }}" method="post">
                 <div class="modal-body">
                     <div class="alert alert-secondary small">
-                        Solo se verifican links M3U. Con <strong>40 hilos</strong> y timeout de 5s
+                        Solo se verifican links M3U (no live). Con <strong>40 hilos</strong> y timeout de 5s
                         se procesan ~500 links/minuto. Para 7000 links → batch 7000, esperar ~15 min.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Servidor a escanear</label>
+                        <select name="lista_id" class="form-select">
+                            <option value="0">— Todos los servidores —</option>
+                            {% for l in all_listas %}
+                            <option value="{{ l.id }}">{{ l.nombre }}
+                                ({{ l.items_activos }}/{{ l.total_items }} activos)</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Deja "Todos" para un escaneo global.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Links a verificar</label>

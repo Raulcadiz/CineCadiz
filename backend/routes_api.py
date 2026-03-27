@@ -1343,3 +1343,22 @@ def app_version():
         'apk_url': APK_URL,
     })
 
+
+# ── Canales curados ────────────────────────────────────────────
+
+@api_bp.get('/canales-curados')
+def canales_curados():
+    """
+    Lista de canales TV en directo curados manualmente por el admin.
+    Devuelve los activos ordenados por orden/nombre.
+    Mismo formato que Contenido.to_dict() → el APK puede usarlos con failover.
+    """
+    from models import CanalCurado
+    canales = (
+        CanalCurado.query
+        .filter_by(activo=True)
+        .order_by(CanalCurado.orden, CanalCurado.nombre)
+        .all()
+    )
+    return jsonify([c.to_dict() for c in canales])
+
