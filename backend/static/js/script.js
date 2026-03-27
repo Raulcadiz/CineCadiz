@@ -793,7 +793,20 @@ function _isLikelyHls(url) {
  * Si falla por red/CORS → proxy del VPS.
  * Si falla por parseo   → no es HLS, prueba como vídeo nativo .ts.
  */
+/**
+ * Normaliza doble barra en el path de una URL (http://host//live/ → http://host/live/).
+ * Algunos servidores IPTV almacenan las URLs con // en la ruta.
+ */
+function _normalizeStreamUrl(url) {
+    try {
+        const u = new URL(url);
+        u.pathname = u.pathname.replace(/\/{2,}/g, '/');
+        return u.toString();
+    } catch (_) { return url; }
+}
+
 function _loadHlsDirect(url) {
+    url = _normalizeStreamUrl(url);
     // Para canales live con .ts: intentar el manifest HLS (.m3u8) del mismo servidor
     const urlLow = url.toLowerCase().split('?')[0];
     const hlsUrl = (urlLow.endsWith('.ts') && urlLow.includes('/live/'))
@@ -830,6 +843,7 @@ function _loadHlsDirect(url) {
  * Si el navegador no puede reproducirlo → intenta a través del stream-proxy.
  */
 function _tryNative(url) {
+    url = _normalizeStreamUrl(url);
     // Si la URL es HTTP y la página es HTTPS, el navegador bloqueará la carga
     // del elemento <video> directamente (mixed content pasivo también bloqueado
     // en Chrome moderno). Ir directo al proxy.

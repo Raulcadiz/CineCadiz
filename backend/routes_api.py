@@ -14,34 +14,32 @@ import requests
 # ── Helpers de seguridad para proxies ───────────────────────────
 
 def _is_private(url: str) -> bool:
-    """Bloquea URLs que apunten a IPs privadas/locales (prevención de SSRF)."""
-    import re as _re2
+    """
+    Bloquea URLs que apunten a IPs privadas/locales (prevención de SSRF).
+
+    Solo bloquea si el hostname ES explícitamente localhost o una IP privada literal.
+    Para nombres de host externos (dplatino.net, etc.) NO hace DNS — permite la petición
+    y deja que requests.get() falle de forma segura si no puede conectar.
+    Razón: setdefaulttimeout() es global y no thread-safe; usarlo en un worker
+    gthread rompería todas las conexiones en curso.
+    """
     try:
         h = _urlparse(url).hostname or ''
+        # Bloquear hostnames claramente locales
         if h in ('localhost', '127.0.0.1', '::1', '0.0.0.0', ''):
             return True
-        # Si el hostname ya es una IP literal, comprobamos directamente sin DNS
-        if _re2.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', h):
-            p = list(map(int, h.split('.')))
-            return (p[0] == 127 or p[0] == 10
-                    or (p[0] == 172 and 16 <= p[1] <= 31)
-                    or (p[0] == 192 and p[1] == 168)
-                    or (p[0] == 169 and p[1] == 254))
-        # Para nombres de host: intentar DNS con timeout corto
-        # Si falla (sin red, DNS lento) → permitir; requests.get fallará de forma segura
-        old_timeout = _socket.getdefaulttimeout()
-        try:
-            _socket.setdefaulttimeout(3)
-            ip = _socket.gethostbyname(h)
-            p = list(map(int, ip.split('.')))
-            return (p[0] == 127 or p[0] == 10
-                    or (p[0] == 172 and 16 <= p[1] <= 31)
-                    or (p[0] == 192 and p[1] == 168)
-                    or (p[0] == 169 and p[1] == 254))
-        except Exception:
-            return False  # DNS falló → dejar pasar; requests manejará el error
-        finally:
-            _socket.setdefaulttimeout(old_timeout)
+        # Si es una IP literal, comprobar rango sin DNS (rápido y thread-safe)
+        if _re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', h):
+            try:
+                p = list(map(int, h.split('.')))
+                return (p[0] == 127 or p[0] == 10
+                        or (p[0] == 172 and 16 <= p[1] <= 31)
+                        or (p[0] == 192 and p[1] == 168)
+                        or (p[0] == 169 and p[1] == 254))
+            except ValueError:
+                return True  # IP malformada → bloquear
+        # Hostname externo (dplatino.net, somoseluno.blog, etc.) → permitir
+        return False
     except Exception:
         return True  # URL malformada → bloquear
 
@@ -673,6 +671,13 @@ def stream_proxy():
     if _is_private(url):
         return '', 403
 
+    # Normalizar doble barra en el path (http://host:port//live/... → /live/...)
+    # sin tocar el // del scheme (http://)
+    _parsed = _urlparse(url)
+    _clean_path = _re.sub(r'/{2,}', '/', _parsed.path)
+    if _clean_path != _parsed.path:
+        url = _parsed._replace(path=_clean_path).geturl()
+
     hdrs = {**_PROXY_UA}
     # Referer = origen del servidor IPTV; valida sesión de segmentos HLS (/hlsr/)
     _p = _urlparse(url)
@@ -727,6 +732,12 @@ def hls_proxy():
         return '', 400
     if _is_private(url):
         return '', 403
+
+    # Normalizar doble barra en el path
+    _hp = _urlparse(url)
+    _hc = _re.sub(r'/{2,}', '/', _hp.path)
+    if _hc != _hp.path:
+        url = _hp._replace(path=_hc).geturl()
 
     try:
         parsed   = _urlparse(url)
