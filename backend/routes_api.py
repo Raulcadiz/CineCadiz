@@ -1355,6 +1355,63 @@ def app_version():
     })
 
 
+# ── Diagnóstico de proxy (solo admin) ─────────────────────────
+
+@api_bp.get('/proxy-diag')
+def proxy_diag():
+    """
+    Prueba si el VPS puede alcanzar una URL externa.
+    Solo accesible desde localhost o con header X-Diag-Key correcto.
+    Útil para depurar problemas de conectividad del proxy.
+    """
+    import time
+    # Restricción básica: solo desde el mismo servidor o con clave
+    if (request.remote_addr not in ('127.0.0.1', '::1')
+            and request.headers.get('X-Diag') != 'cinecadiz_diag_2024'):
+        return jsonify({'error': 'forbidden'}), 403
+
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'missing url'}), 400
+
+    result = {
+        'url': url,
+        'is_private': _is_private(url),
+        'dns_ok': False,
+        'connect_ok': False,
+        'http_status': None,
+        'content_type': None,
+        'error': None,
+        'duration_ms': 0,
+    }
+
+    if result['is_private']:
+        result['error'] = 'blocked by is_private()'
+        return jsonify(result)
+
+    t0 = time.time()
+    try:
+        import socket as _sock
+        from urllib.parse import urlparse as _up
+        h = _up(url).hostname
+        p = _up(url).port or 80
+        # Test DNS
+        _sock.getaddrinfo(h, p, _sock.AF_UNSPEC, _sock.SOCK_STREAM)
+        result['dns_ok'] = True
+        # Test HTTP HEAD
+        resp = requests.head(url, headers={**_PROXY_UA}, timeout=(5, 5),
+                             proxies={}, allow_redirects=True)
+        result['connect_ok'] = True
+        result['http_status'] = resp.status_code
+        result['content_type'] = resp.headers.get('Content-Type', '')
+    except Exception as exc:
+        result['error'] = f'{type(exc).__name__}: {exc}'
+    finally:
+        result['duration_ms'] = round((time.time() - t0) * 1000)
+
+    return jsonify(result)
+
+
 # ── Canales curados ────────────────────────────────────────────
 
 @api_bp.get('/canales-curados')

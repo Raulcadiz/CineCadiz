@@ -559,9 +559,13 @@ function _setPlayerLoading(on) {
 }
 
 /**
- * Destruye la instancia HLS y cancela cualquier descarga activa del video.
+ * Destruye la instancia HLS y mpegts (si existen) y cancela descargas activas.
  */
 function _destroyHls() {
+    if (window._mpegtsPlayer) {
+        try { window._mpegtsPlayer.destroy(); } catch (_) {}
+        window._mpegtsPlayer = null;
+    }
     if (_hls) {
         _hls.destroy();
         _hls = null;
@@ -805,6 +809,43 @@ function _normalizeStreamUrl(url) {
     } catch (_) { return url; }
 }
 
+/**
+ * Reproduce un stream MPEG-TS usando mpegts.js vía MediaSource API.
+ * Chrome no puede decodificar video/mp2t directamente en <video>.
+ * @param {string} url  URL del stream (puede ser la URL del proxy)
+ * @param {boolean} isLive  true = stream en directo (sin fin conocido)
+ */
+function _playWithMpegts(url, isLive) {
+    _destroyHls(); // destruye instancias anteriores HLS/mpegts
+    if (typeof mpegts === 'undefined' || !mpegts.isSupported()) {
+        // Fallback: intentar nativo (puede funcionar en Safari/Firefox con fMP4)
+        el.videoPlayer.src = url;
+        el.videoPlayer.load();
+        el.videoPlayer.play().catch(() => {});
+        el.videoPlayer.onerror = () => {
+            el.videoPlayer.onerror = null;
+            _setPlayerLoading(false);
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+        };
+        return;
+    }
+    const player = mpegts.createPlayer(
+        { type: 'mpegts', url, isLive: isLive !== false },
+        { enableWorker: true, lazyLoadMaxDuration: 30, seekType: 'range' }
+    );
+    player.attachMediaElement(el.videoPlayer);
+    player.load();
+    player.play().catch(() => {});
+    window._mpegtsPlayer = player;
+    player.on(mpegts.Events.ERROR, (errType, errDetail) => {
+        console.warn('[mpegts] error', errType, errDetail);
+        try { player.destroy(); } catch (_) {}
+        window._mpegtsPlayer = null;
+        _setPlayerLoading(false);
+        _showPlayerError('Stream MPEG-TS no disponible o bloqueado en el servidor');
+    });
+}
+
 function _loadHlsDirect(url) {
     url = _normalizeStreamUrl(url);
     // Para canales live con .ts: intentar el manifest HLS (.m3u8) del mismo servidor
@@ -848,8 +889,15 @@ function _tryNative(url) {
     // del elemento <video> directamente (mixed content pasivo también bloqueado
     // en Chrome moderno). Ir directo al proxy.
     if (url.startsWith('http://')) {
+        const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
+        const urlLow = url.toLowerCase().split('?')[0];
+        // Chrome no puede decodificar video/mp2t raw; usar mpegts.js via proxy
+        if (urlLow.endsWith('.ts') && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            _playWithMpegts(proxyUrl, true);
+            return;
+        }
         el.videoPlayer.onerror = null;
-        el.videoPlayer.src = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
+        el.videoPlayer.src = proxyUrl;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
