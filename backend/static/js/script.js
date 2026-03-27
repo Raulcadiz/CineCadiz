@@ -664,11 +664,12 @@ function _loadHls(url) {
         if (data.fatal) {
             _destroyHls();
             const originalUrl = el.player.dataset.streamUrl;
-            // Si la URL original es HLS ya probamos: directo → hls-proxy → sin más.
-            // Usar stream-proxy con un .m3u8 devuelve el manifest en crudo y el browser
+            // Solo mostrar error si la URL es un manifiesto .m3u8 real:
+            // stream-proxy con .m3u8 devuelve el manifest en crudo y el browser
             // intenta resolver los segmentos relativos contra nuestro servidor → 404.
-            if (originalUrl && !_isLikelyHls(originalUrl)) {
-                // No es HLS → quizás sea un formato nativo (mp4/mkv que llegó aquí por error)
+            // Para .ts / sin extensión → intentar stream-proxy directamente.
+            const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
+            if (!isM3u8) {
                 _tryNative(originalUrl);
             } else {
                 _setPlayerLoading(false);

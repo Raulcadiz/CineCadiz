@@ -673,6 +673,9 @@ def stream_proxy():
             'Access-Control-Allow-Headers': 'Range',
             'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
             'Cache-Control': 'no-cache',
+            # Desactiva el buffering de nginx para que los chunks lleguen al cliente
+            # en tiempo real (crítico para streams live y progresivos de video)
+            'X-Accel-Buffering': 'no',
         }
         for h in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
             if h in up.headers:
@@ -680,7 +683,7 @@ def stream_proxy():
 
         def _gen():
             try:
-                for chunk in up.iter_content(chunk_size=65536):
+                for chunk in up.iter_content(chunk_size=32768):
                     if chunk:
                         yield chunk
             except Exception:
@@ -750,7 +753,11 @@ def hls_proxy():
         return Response(
             '\n'.join(lines),
             content_type='application/vnd.apple.mpegurl',
-            headers={'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache'},
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+            },
         )
     except Exception:
         return '', 502
