@@ -15,18 +15,35 @@ import requests
 
 def _is_private(url: str) -> bool:
     """Bloquea URLs que apunten a IPs privadas/locales (prevención de SSRF)."""
+    import re as _re2
     try:
         h = _urlparse(url).hostname or ''
         if h in ('localhost', '127.0.0.1', '::1', '0.0.0.0', ''):
             return True
-        ip = _socket.gethostbyname(h)
-        p = list(map(int, ip.split('.')))
-        return (p[0] == 127 or p[0] == 10
-                or (p[0] == 172 and 16 <= p[1] <= 31)
-                or (p[0] == 192 and p[1] == 168)
-                or (p[0] == 169 and p[1] == 254))
+        # Si el hostname ya es una IP literal, comprobamos directamente sin DNS
+        if _re2.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', h):
+            p = list(map(int, h.split('.')))
+            return (p[0] == 127 or p[0] == 10
+                    or (p[0] == 172 and 16 <= p[1] <= 31)
+                    or (p[0] == 192 and p[1] == 168)
+                    or (p[0] == 169 and p[1] == 254))
+        # Para nombres de host: intentar DNS con timeout corto
+        # Si falla (sin red, DNS lento) → permitir; requests.get fallará de forma segura
+        old_timeout = _socket.getdefaulttimeout()
+        try:
+            _socket.setdefaulttimeout(3)
+            ip = _socket.gethostbyname(h)
+            p = list(map(int, ip.split('.')))
+            return (p[0] == 127 or p[0] == 10
+                    or (p[0] == 172 and 16 <= p[1] <= 31)
+                    or (p[0] == 192 and p[1] == 168)
+                    or (p[0] == 169 and p[1] == 254))
+        except Exception:
+            return False  # DNS falló → dejar pasar; requests manejará el error
+        finally:
+            _socket.setdefaulttimeout(old_timeout)
     except Exception:
-        return True   # fail-safe: si no se puede resolver, bloquear
+        return True  # URL malformada → bloquear
 
 _PROXY_UA = {
     # VLC como User-Agent principal — los servidores IPTV reconocen y sirven a VLC;
@@ -664,7 +681,7 @@ def stream_proxy():
         hdrs['Range'] = request.headers['Range']
 
     try:
-        up = requests.get(url, stream=True, headers=hdrs, timeout=20,
+        up = requests.get(url, stream=True, headers=hdrs, timeout=(8, 20),
                           proxies={}, allow_redirects=True)
         ct = _content_type_for_url(url, up.headers.get('Content-Type', ''))
 
