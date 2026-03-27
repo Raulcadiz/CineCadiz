@@ -893,22 +893,25 @@ function _tryNative(url) {
         const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
         const urlLow = url.toLowerCase().split('?')[0];
         const isTsUrl = urlLow.endsWith('.ts');
-        // Paso 1: intentar con <video src> a través del proxy
-        // (funciona para MP4, WebM y cualquier formato que el navegador soporte)
+
+        // Para .ts ir DIRECTAMENTE a mpegts.js — Chrome rechaza video/mp2t de forma
+        // nativa e intentarlo primero con <video src> haría DOS peticiones seguidas al
+        // mismo stream-proxy URL, lo que puede disparar el límite de conexiones del
+        // servidor IPTV y devolver NetworkError en el segundo intento (mpegts.js).
+        if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            _playWithMpegts(proxyUrl, true);
+            return;
+        }
+
+        // MP4, WebM, etc. → intentar con <video src> a través del proxy.
         el.videoPlayer.onerror = null;
         el.videoPlayer.src = proxyUrl;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            // Paso 2 (solo .ts): Chrome no puede decodificar video/mp2t de forma nativa;
-            // intentar con mpegts.js que sí puede via MediaSource API.
-            if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-                _playWithMpegts(proxyUrl, true);
-            } else {
-                _setPlayerLoading(false);
-                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-            }
+            _setPlayerLoading(false);
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
         };
         return;
     }
@@ -986,9 +989,15 @@ async function loadGrid(append = false) {
         }
     }
 
-    // Vista En Directo → usar los grupos ya cargados en memoria (respeta filtro del genre strip)
+    // Vista En Directo → cargar TODOS los canales de la API (el caché del inicio
+    // solo tiene 60 para el carrusel; aquí necesitamos todos para que el filtro
+    // de categoría funcione correctamente).
     if (state.currentType === 'live') {
         if (!append) {
+            try {
+                const data = await api.liveAgrupados({ limit: 5000 });
+                if (Array.isArray(data)) state.liveGroups = data;
+            } catch { /* mantener lo que haya en caché si la API falla */ }
             const activePill = document.querySelector('.genre-strip-pill.active');
             const activeCat = activePill ? decodeURIComponent(activePill.dataset.cat || '') : '';
             _filterLiveByCategory(activeCat);
@@ -1607,10 +1616,11 @@ async function loadGenrePills() {
 /** Filtra los canales en directo por categoría usando los grupos en memoria.
  *  En vista live (grid) actualiza el grid principal; en vista inicio actualiza el carrusel. */
 function _filterLiveByCategory(cat) {
-    const filtered = cat
+    const catTrim = (cat || '').trim();
+    const filtered = catTrim
         ? state.liveGroups.filter(g =>
-            g.groupTitle === cat ||
-            (g.genres || []).some(gen => gen === cat)
+            (g.groupTitle || '').trim() === catTrim ||
+            (g.genres || []).some(gen => (gen || '').trim() === catTrim)
           )
         : state.liveGroups;
     const html = filtered.length
