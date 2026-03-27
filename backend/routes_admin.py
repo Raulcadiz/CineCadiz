@@ -2040,3 +2040,82 @@ def telegram_send_content():
         return jsonify({'ok': True, 'msg': 'Reporte de contenido enviado.'})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)})
+
+
+# ─────────────────────────────────────────────────────────────
+# Telegram — Webhook (recibe updates de Telegram, sin auth)
+# ─────────────────────────────────────────────────────────────
+
+@admin_bp.post('/api/telegram-webhook/<path:token_path>')
+def telegram_webhook(token_path):
+    """
+    Endpoint que Telegram llama con cada update.
+    La URL incluye el token del bot como capa de seguridad.
+    No requiere sesión de administrador.
+    """
+    from telegram_bot import handle_webhook_update
+
+    cfg = TelegramConfig.query.first()
+    if not cfg or not cfg.token or cfg.token != token_path:
+        return '', 403
+
+    update = request.get_json(silent=True) or {}
+    import threading
+    app = current_app._get_current_object()
+    threading.Thread(
+        target=handle_webhook_update,
+        args=(app, update),
+        daemon=True,
+    ).start()
+    return '', 200
+
+
+# ─────────────────────────────────────────────────────────────
+# Telegram — Gestión del webhook desde el panel admin
+# ─────────────────────────────────────────────────────────────
+
+@admin_bp.post('/api/telegram-webhook-set')
+@superadmin_required
+def telegram_webhook_set():
+    """Registra el webhook de Telegram apuntando a este servidor."""
+    from telegram_bot import set_webhook
+
+    cfg = TelegramConfig.query.first()
+    if not cfg or not cfg.token:
+        return jsonify({'ok': False, 'msg': 'Bot no configurado. Guarda el token primero.'})
+
+    base_url = request.json.get('base_url', '').rstrip('/')
+    if not base_url:
+        return jsonify({'ok': False, 'msg': 'Falta la URL base del servidor.'})
+
+    webhook_url = f"{base_url}/admin/api/telegram-webhook/{cfg.token}"
+    ok, msg = set_webhook(cfg.token, webhook_url)
+    return jsonify({'ok': ok, 'msg': msg, 'webhook_url': webhook_url if ok else ''})
+
+
+@admin_bp.post('/api/telegram-webhook-del')
+@superadmin_required
+def telegram_webhook_del():
+    """Elimina el webhook de Telegram."""
+    from telegram_bot import delete_webhook
+
+    cfg = TelegramConfig.query.first()
+    if not cfg or not cfg.token:
+        return jsonify({'ok': False, 'msg': 'Bot no configurado.'})
+
+    ok, msg = delete_webhook(cfg.token)
+    return jsonify({'ok': ok, 'msg': msg})
+
+
+@admin_bp.get('/api/telegram-webhook-info')
+@superadmin_required
+def telegram_webhook_info():
+    """Devuelve el estado actual del webhook registrado en Telegram."""
+    from telegram_bot import get_webhook_info
+
+    cfg = TelegramConfig.query.first()
+    if not cfg or not cfg.token:
+        return jsonify({'ok': False, 'info': {}})
+
+    info = get_webhook_info(cfg.token)
+    return jsonify({'ok': True, 'info': info})

@@ -8,7 +8,8 @@ from datetime import datetime
 import requests as _requests
 
 logger = logging.getLogger(__name__)
-_TG_API = "https://api.telegram.org/bot{token}/sendMessage"
+_TG_API  = "https://api.telegram.org/bot{token}/sendMessage"
+_TG_BASE = "https://api.telegram.org/bot{token}/{method}"
 
 
 # ─────────────────────────────────────────────
@@ -219,6 +220,277 @@ def notify_daily_digest(app):
         f"👥 Usuarios: <b>{users}</b>"
     )
     notify_all(app, text)
+
+
+# ─────────────────────────────────────────────
+# Webhook — gestión y manejo de comandos
+# ─────────────────────────────────────────────
+
+def _api(token: str, method: str, payload: dict) -> dict:
+    """Llamada genérica a la Bot API."""
+    try:
+        r = _requests.post(
+            _TG_BASE.format(token=token, method=method),
+            json=payload,
+            timeout=10,
+        )
+        return r.json()
+    except Exception as e:
+        logger.error(f"[Telegram] API {method} error: {e}")
+        return {'ok': False, 'description': str(e)}
+
+
+def _send_keyboard(token: str, chat_id: str, text: str, keyboard: dict) -> bool:
+    """Envía mensaje con teclado inline."""
+    real_chat_id, thread_id = _parse_chat(chat_id)
+    payload = {
+        "chat_id": real_chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": keyboard,
+    }
+    if thread_id is not None:
+        payload["message_thread_id"] = thread_id
+    try:
+        r = _requests.post(_TG_API.format(token=token), json=payload, timeout=10)
+        return r.ok
+    except Exception:
+        return False
+
+
+def set_webhook(token: str, webhook_url: str) -> tuple[bool, str]:
+    """Registra el webhook en Telegram."""
+    try:
+        r = _requests.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url, "allowed_updates": ["message", "callback_query"]},
+            timeout=10,
+        )
+        data = r.json()
+        if data.get('ok'):
+            return True, data.get('description', 'Webhook registrado.')
+        return False, data.get('description', 'Error desconocido.')
+    except Exception as e:
+        return False, f"Error de red: {e}"
+
+
+def delete_webhook(token: str) -> tuple[bool, str]:
+    """Elimina el webhook de Telegram."""
+    try:
+        r = _requests.post(
+            f"https://api.telegram.org/bot{token}/deleteWebhook",
+            timeout=10,
+        )
+        data = r.json()
+        if data.get('ok'):
+            return True, 'Webhook eliminado correctamente.'
+        return False, data.get('description', 'Error al eliminar webhook.')
+    except Exception as e:
+        return False, f"Error de red: {e}"
+
+
+def get_webhook_info(token: str) -> dict:
+    """Consulta el estado actual del webhook en Telegram."""
+    try:
+        r = _requests.get(
+            f"https://api.telegram.org/bot{token}/getWebhookInfo",
+            timeout=10,
+        )
+        data = r.json()
+        return data.get('result', {}) if data.get('ok') else {}
+    except Exception:
+        return {}
+
+
+# ── Manejadores de comandos ─────────────────────────────────
+
+def _cmd_ayuda(token: str, chat_id: str):
+    text = (
+        "🤖 <b>CineCadiz Bot</b>\n\n"
+        "Comandos disponibles:\n\n"
+        "/estado — Estado general del sistema\n"
+        "/servidores — Salud de los servidores\n"
+        "/stats — Estadísticas de contenido\n"
+        "/usuarios — Info de usuarios\n"
+        "/backup — Crear y enviar backup\n"
+        "/ayuda — Esta ayuda\n\n"
+        f"🕐 {_now()}"
+    )
+    _send(token, chat_id, text)
+
+
+def _cmd_estado(app, token: str, chat_id: str):
+    from models import Contenido, User
+    with app.app_context():
+        total   = Contenido.query.filter_by(fuente='m3u').count()
+        activos = Contenido.query.filter_by(fuente='m3u', activo=True).count()
+        caidos  = total - activos
+        users   = User.query.filter_by(activo=True).count()
+        pct     = round(activos / total * 100, 1) if total else 0
+
+    status = "🟢" if pct >= 80 else ("🟡" if pct >= 50 else "🔴")
+    text = (
+        f"{status} <b>Estado CineCadiz</b>\n"
+        f"📅 {_now()}\n\n"
+        f"📦 Contenido total: <b>{total:,}</b>\n"
+        f"✅ Activos: <b>{activos:,}</b> ({pct}%)\n"
+        f"🔴 Caídos: <b>{caidos:,}</b>\n\n"
+        f"👥 Usuarios activos: <b>{users}</b>"
+    )
+    keyboard = {"inline_keyboard": [[
+        {"text": "📊 Stats", "callback_data": "cmd_stats"},
+        {"text": "🖥️ Servidores", "callback_data": "cmd_servidores"},
+    ]]}
+    _send_keyboard(token, chat_id, text, keyboard)
+
+
+def _cmd_servidores(app, token: str, chat_id: str):
+    from link_checker import server_health
+    with app.app_context():
+        servers = server_health(app)[:15]
+
+    if not servers:
+        _send(token, chat_id, "ℹ️ No hay datos de servidores disponibles.")
+        return
+
+    lines = [f"🖥️ <b>Estado de servidores</b>", f"📅 {_now()}", ""]
+    for s in servers:
+        pct = s['dead_pct']
+        e = "🔴" if pct >= 80 else ("🟡" if pct >= 50 else "🟢")
+        ok_pct = round(100 - pct, 0)
+        lines.append(f"{e} <code>{s['servidor'][:28]}</code>")
+        lines.append(f"   ✅{s['alive']:,} 🔴{s['dead']:,} ({ok_pct:.0f}% OK)")
+
+    keyboard = {"inline_keyboard": [[
+        {"text": "🔄 Actualizar", "callback_data": "cmd_servidores"},
+    ]]}
+    _send_keyboard(token, chat_id, "\n".join(lines), keyboard)
+
+
+def _cmd_stats(app, token: str, chat_id: str):
+    from models import Contenido
+    with app.app_context():
+        total     = Contenido.query.filter_by(fuente='m3u').count()
+        activos   = Contenido.query.filter_by(fuente='m3u', activo=True).count()
+        peliculas = Contenido.query.filter_by(fuente='m3u', tipo='pelicula', activo=True).count()
+        series    = Contenido.query.filter_by(fuente='m3u', tipo='serie',    activo=True).count()
+        live      = Contenido.query.filter_by(fuente='m3u', tipo='live',     activo=True).count()
+        pct       = round(activos / total * 100, 1) if total else 0
+
+    text = (
+        f"📊 <b>Estadísticas CineCadiz</b>\n"
+        f"📅 {_now()}\n\n"
+        f"🎬 Películas: <b>{peliculas:,}</b>\n"
+        f"📺 Series: <b>{series:,}</b>\n"
+        f"📡 Directo: <b>{live:,}</b>\n\n"
+        f"✅ Activos: <b>{activos:,}</b> ({pct}%)\n"
+        f"📦 Total: <b>{total:,}</b>"
+    )
+    _send(token, chat_id, text)
+
+
+def _cmd_usuarios(app, token: str, chat_id: str):
+    from models import User, IptvUser
+    with app.app_context():
+        total_web   = User.query.filter_by(activo=True).count()
+        superadmins = User.query.filter_by(role='superadmin', activo=True).count()
+        premiums    = User.query.filter_by(role='premium',    activo=True).count()
+        regular     = User.query.filter_by(role='user',       activo=True).count()
+        iptv_active = IptvUser.query.filter_by(activo=True).count()
+        iptv_total  = IptvUser.query.count()
+
+    text = (
+        f"👥 <b>Usuarios CineCadiz</b>\n"
+        f"📅 {_now()}\n\n"
+        f"🌐 <b>Web:</b> {total_web}\n"
+        f"  👑 Superadmin: {superadmins}\n"
+        f"  ⭐ Premium: {premiums}\n"
+        f"  👤 Usuario: {regular}\n\n"
+        f"📺 <b>IPTV:</b> {iptv_active} activos / {iptv_total} total"
+    )
+    _send(token, chat_id, text)
+
+
+def _cmd_backup(app, token: str, chat_id: str):
+    _send(token, chat_id, "⏳ Creando backup, espera...")
+    try:
+        from backup import create_backup, send_backup_telegram
+        path = create_backup(app)
+        ok, msg = send_backup_telegram(app, path)
+        status = "✅ Backup creado y enviado" if ok else f"⚠️ Creado, error al enviar: {msg}"
+        _send(token, chat_id, f"{status}\n📦 {path.name}")
+    except Exception as e:
+        _send(token, chat_id, f"❌ Error en backup: {e}")
+
+
+def _handle_callback(app, token: str, callback: dict):
+    """Responde a botones inline."""
+    cb_id   = callback['id']
+    data    = callback.get('data', '')
+    chat_id = str(callback['message']['chat']['id'])
+
+    # Confirmar recepción del callback a Telegram
+    try:
+        _requests.post(
+            f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+            json={"callback_query_id": cb_id},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+    if data == 'cmd_estado':
+        _cmd_estado(app, token, chat_id)
+    elif data == 'cmd_servidores':
+        _cmd_servidores(app, token, chat_id)
+    elif data == 'cmd_stats':
+        _cmd_stats(app, token, chat_id)
+
+
+def handle_webhook_update(app, update: dict):
+    """
+    Procesa una actualización entrante del webhook de Telegram.
+    Llama a los handlers de comando o callback_query según corresponda.
+    """
+    from models import TelegramConfig
+    with app.app_context():
+        cfg = TelegramConfig.query.first()
+        if not cfg or not cfg.enabled or not cfg.token:
+            return
+        token = cfg.token
+
+    message  = update.get('message') or update.get('edited_message')
+    callback = update.get('callback_query')
+
+    if callback:
+        _handle_callback(app, token, callback)
+        return
+
+    if not message:
+        return
+
+    chat_id = str(message['chat']['id'])
+    text    = message.get('text', '')
+
+    if not text.startswith('/'):
+        return
+
+    # Soportar /cmd@botname
+    cmd = text.split('@')[0].split()[0].lower()
+
+    if cmd in ('/start', '/ayuda', '/help'):
+        _cmd_ayuda(token, chat_id)
+    elif cmd == '/estado':
+        _cmd_estado(app, token, chat_id)
+    elif cmd == '/servidores':
+        _cmd_servidores(app, token, chat_id)
+    elif cmd == '/stats':
+        _cmd_stats(app, token, chat_id)
+    elif cmd == '/usuarios':
+        _cmd_usuarios(app, token, chat_id)
+    elif cmd == '/backup':
+        _cmd_backup(app, token, chat_id)
 
 
 def check_and_notify_server_health(app):

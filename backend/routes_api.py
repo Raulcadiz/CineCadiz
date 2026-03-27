@@ -1304,3 +1304,18 @@ def get_live_servers(channel_id):
         servers.append(entry)
 
     return jsonify({'servers': servers, 'active_index': active_idx})
+
+
+# ── Versión de la app (para notificación de actualización) ──────
+
+# Bump este número cuando publiques una nueva APK
+APP_VERSION = "2.1"
+APK_URL     = "https://cinecadiz.servegame.com/download/cinecadiz.apk"
+
+@api_bp.get('/version')
+def app_version():
+    return jsonify({
+        'version': APP_VERSION,
+        'apk_url': APK_URL,
+    })
+

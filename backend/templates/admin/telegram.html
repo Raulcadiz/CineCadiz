@@ -153,6 +153,63 @@
     </div>
 </div>
 
+<!-- ── Webhook ──────────────────────────────────────────────── -->
+<div class="row g-4 mt-1">
+    <div class="col-12">
+        <div class="form-card">
+            <h5 class="mb-1"><i class="bi bi-hdd-network-fill me-2 text-info"></i>Webhook — Comandos desde Telegram</h5>
+            <p class="text-secondary small mb-3">
+                Registra el webhook para que el bot responda a comandos en tiempo real:
+                <code>/estado</code> <code>/servidores</code> <code>/stats</code> <code>/usuarios</code> <code>/backup</code>
+            </p>
+
+            <!-- Estado actual -->
+            <div id="webhook-status-box" class="alert alert-secondary py-2 px-3 mb-3 small d-flex align-items-center gap-2" style="font-size:.85rem;">
+                <span id="webhook-status-icon">⚪</span>
+                <span id="webhook-status-text">Cargando estado del webhook…</span>
+            </div>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-sm-8 col-lg-6">
+                    <label class="form-label text-secondary small mb-1">URL base del servidor (con HTTPS)</label>
+                    <input type="url" class="form-control bg-dark border-secondary text-white form-control-sm"
+                           id="webhookBaseUrl" placeholder="https://cinecadiz.servegame.com">
+                    <div class="form-text text-muted" style="font-size:.75rem;">
+                        Se registrará: <code id="webhookPreview" class="text-info">/admin/api/telegram-webhook/&lt;token&gt;</code>
+                    </div>
+                </div>
+                <div class="col-sm-4 col-lg-6">
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-info btn-sm" id="btnSetWebhook">
+                            <i class="bi bi-cloud-upload-fill me-1"></i>Registrar webhook
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" id="btnDelWebhook">
+                            <i class="bi bi-trash3 me-1"></i>Eliminar
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" id="btnRefreshWebhook">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="webhook-action-result" class="mt-2 small"></div>
+
+            <!-- Comandos disponibles -->
+            <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
+                <div class="text-secondary small mb-2"><i class="bi bi-slash-circle me-1"></i>Comandos disponibles en el chat:</div>
+                <div class="d-flex flex-wrap gap-2">
+                    <span class="badge bg-dark border border-secondary">/estado</span>
+                    <span class="badge bg-dark border border-secondary">/servidores</span>
+                    <span class="badge bg-dark border border-secondary">/stats</span>
+                    <span class="badge bg-dark border border-secondary">/usuarios</span>
+                    <span class="badge bg-dark border border-secondary">/backup</span>
+                    <span class="badge bg-dark border border-secondary">/ayuda</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ── Acciones manuales ────────────────────────────────────── -->
 <div class="row g-4 mt-1">
     <div class="col-12">
@@ -336,6 +393,115 @@ document.querySelectorAll('.btn-action').forEach(btn => {
         btn.innerHTML = origHtml;
         if (resultEl) setTimeout(() => resultEl.innerHTML = '', 8000);
     });
+});
+
+// ── Webhook ─────────────────────────────────────────────────────
+async function loadWebhookInfo() {
+    const box      = document.getElementById('webhook-status-box');
+    const icon     = document.getElementById('webhook-status-icon');
+    const txt      = document.getElementById('webhook-status-text');
+    const preview  = document.getElementById('webhookPreview');
+    try {
+        const r = await fetch('/admin/api/telegram-webhook-info');
+        const d = await r.json();
+        if (!d.ok) {
+            icon.textContent = '⚪';
+            txt.textContent  = 'Bot no configurado.';
+            box.className = 'alert alert-secondary py-2 px-3 mb-3 small d-flex align-items-center gap-2';
+            return;
+        }
+        const info = d.info || {};
+        if (info.url) {
+            icon.textContent = '🟢';
+            txt.innerHTML = `Activo: <code>${info.url}</code>`;
+            if (info.last_error_message) {
+                txt.innerHTML += ` — <span class="text-warning">Último error: ${info.last_error_message}</span>`;
+            }
+            box.className = 'alert alert-success py-2 px-3 mb-3 small d-flex align-items-center gap-2';
+            // Pre-fill base URL from registered webhook
+            try {
+                const u = new URL(info.url);
+                document.getElementById('webhookBaseUrl').value = u.origin;
+                preview.textContent = u.origin + '/admin/api/telegram-webhook/<token>';
+            } catch(_) {}
+        } else {
+            icon.textContent = '🔴';
+            txt.textContent  = 'Sin webhook registrado. El bot no recibirá comandos.';
+            box.className = 'alert alert-warning py-2 px-3 mb-3 small d-flex align-items-center gap-2';
+        }
+    } catch(e) {
+        icon.textContent = '⚪';
+        txt.textContent  = 'Error al consultar estado.';
+    }
+}
+loadWebhookInfo();
+
+document.getElementById('webhookBaseUrl').addEventListener('input', function() {
+    const preview = document.getElementById('webhookPreview');
+    const base = this.value.trim().replace(/\/$/, '');
+    preview.textContent = base ? base + '/admin/api/telegram-webhook/<token>' : '/admin/api/telegram-webhook/<token>';
+});
+
+document.getElementById('btnRefreshWebhook').addEventListener('click', loadWebhookInfo);
+
+document.getElementById('btnSetWebhook').addEventListener('click', async () => {
+    const btn       = document.getElementById('btnSetWebhook');
+    const resultEl  = document.getElementById('webhook-action-result');
+    const baseUrl   = document.getElementById('webhookBaseUrl').value.trim();
+
+    if (!baseUrl) {
+        resultEl.innerHTML = '<span class="text-warning">Introduce la URL base del servidor.</span>';
+        return;
+    }
+
+    const origHtml = btn.innerHTML;
+    btn.disabled   = true;
+    btn.innerHTML  = '<span class="spinner-border spinner-border-sm me-1"></span>Registrando…';
+    resultEl.innerHTML = '';
+
+    try {
+        const r = await fetch('/admin/api/telegram-webhook-set', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({base_url: baseUrl}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            resultEl.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>${d.msg}<br><code class="text-info">${d.webhook_url}</code></span>`;
+            await loadWebhookInfo();
+        } else {
+            resultEl.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>${d.msg}</span>`;
+        }
+    } catch(e) {
+        resultEl.innerHTML = '<span class="text-danger">Error de red.</span>';
+    }
+    btn.disabled  = false;
+    btn.innerHTML = origHtml;
+});
+
+document.getElementById('btnDelWebhook').addEventListener('click', async () => {
+    const btn      = document.getElementById('btnDelWebhook');
+    const resultEl = document.getElementById('webhook-action-result');
+    const origHtml = btn.innerHTML;
+
+    btn.disabled   = true;
+    btn.innerHTML  = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando…';
+    resultEl.innerHTML = '';
+
+    try {
+        const r = await fetch('/admin/api/telegram-webhook-del', { method: 'POST' });
+        const d = await r.json();
+        const html = d.ok
+            ? `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>${d.msg}</span>`
+            : `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>${d.msg}</span>`;
+        resultEl.innerHTML = html;
+        if (d.ok) await loadWebhookInfo();
+    } catch(e) {
+        resultEl.innerHTML = '<span class="text-danger">Error de red.</span>';
+    }
+    btn.disabled  = false;
+    btn.innerHTML = origHtml;
+    setTimeout(() => resultEl.innerHTML = '', 6000);
 });
 
 // ── Lista de backups ────────────────────────────────────────────
