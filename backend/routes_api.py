@@ -685,38 +685,62 @@ def stream_proxy():
     if request.headers.get('Range'):          # soporte parcial de contenido (seeking)
         hdrs['Range'] = request.headers['Range']
 
-    try:
-        up = requests.get(url, stream=True, headers=hdrs, timeout=(8, 20),
-                          proxies={}, allow_redirects=True)
-        ct = _content_type_for_url(url, up.headers.get('Content-Type', ''))
+    # Reintentar hasta 3 veces (para servidores inestables tipo dplatino que
+    # VLC tiene que reintentar 3-4 veces antes de que el servidor responda OK).
+    # Solo se reintenta en errores de conexión o respuestas 5xx — los 4xx
+    # (403 bloqueado, 404 no existe) no se reintentan.
+    import time as _time
+    up = None
+    last_exc = None
+    for _attempt in range(3):
+        try:
+            up = requests.get(url, stream=True, headers=hdrs, timeout=(8, 20),
+                              proxies={}, allow_redirects=True)
+            if up.status_code < 500:   # 2xx o 4xx → no reintentar
+                break
+            up.close()
+            up = None
+            if _attempt < 2:
+                _time.sleep(0.4)
+        except requests.exceptions.Timeout as exc:
+            last_exc = exc
+            up = None
+            if _attempt < 2:
+                _time.sleep(0.4)
+        except Exception as exc:
+            last_exc = exc
+            up = None
+            if _attempt < 2:
+                _time.sleep(0.3)
 
-        out_hdrs = {
-            'Access-Control-Allow-Origin':  '*',
-            'Access-Control-Allow-Headers': 'Range',
-            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
-            'Cache-Control': 'no-cache',
-            # Desactiva el buffering de nginx para que los chunks lleguen al cliente
-            # en tiempo real (crítico para streams live y progresivos de video)
-            'X-Accel-Buffering': 'no',
-        }
-        for h in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
-            if h in up.headers:
-                out_hdrs[h] = up.headers[h]
+    if up is None:
+        return ('', 504) if isinstance(last_exc, requests.exceptions.Timeout) else ('', 502)
 
-        def _gen():
-            try:
-                for chunk in up.iter_content(chunk_size=32768):
-                    if chunk:
-                        yield chunk
-            except Exception:
-                pass
+    ct = _content_type_for_url(url, up.headers.get('Content-Type', ''))
 
-        return Response(_gen(), status=up.status_code,
-                        content_type=ct, headers=out_hdrs)
-    except requests.exceptions.Timeout:
-        return '', 504
-    except Exception:
-        return '', 502
+    out_hdrs = {
+        'Access-Control-Allow-Origin':  '*',
+        'Access-Control-Allow-Headers': 'Range',
+        'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+        'Cache-Control': 'no-cache',
+        # Desactiva el buffering de nginx para que los chunks lleguen al cliente
+        # en tiempo real (crítico para streams live y progresivos de video)
+        'X-Accel-Buffering': 'no',
+    }
+    for h in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if h in up.headers:
+            out_hdrs[h] = up.headers[h]
+
+    def _gen():
+        try:
+            for chunk in up.iter_content(chunk_size=32768):
+                if chunk:
+                    yield chunk
+        except Exception:
+            pass
+
+    return Response(_gen(), status=up.status_code,
+                    content_type=ct, headers=out_hdrs)
 
 
 @api_bp.get('/hls-proxy')

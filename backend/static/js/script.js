@@ -729,7 +729,7 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
     el.detailsModal.style.display = 'none';
     el.player.style.display = 'flex';
     document.getElementById('playerTitle').textContent = title || '';
-    el.player.dataset.streamUrl = url;
+    el.player.dataset.streamUrl = _normalizeStreamUrl(url);   // normaliza // doble
     el.player.dataset.itemId    = itemId;
 
     // Thumbnail en la cabecera del reproductor
