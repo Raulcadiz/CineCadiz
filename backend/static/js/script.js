@@ -800,6 +800,13 @@ function _loadHlsDirect(url) {
         ? url.replace(/\.ts(\?.*)?$/i, '.m3u8')
         : url;
 
+    // Si la URL es HTTP y la página es HTTPS, el navegador bloqueará el XHR (mixed content).
+    // Ir directamente al proxy para evitar el error y el retraso.
+    if (hlsUrl.startsWith('http://')) {
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
+        return;
+    }
+
     _hls = new Hls({
         maxBufferLength: 30,
         maxBufferSize:   60 * 1000 * 1000,
@@ -813,11 +820,6 @@ function _loadHlsDirect(url) {
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         _destroyHls();
-        // _loadHlsDirect solo se llama para URLs HLS (ver _isLikelyHls).
-        // Cualquier error fatal → proxy del VPS:
-        //   NETWORK_ERROR = CORS / timeout / IP bloqueada
-        //   MEDIA_ERROR   = servidor devolvió respuesta no-HLS para este User-Agent
-        //                   (habitual en servidores IPTV que bloquean UA de Android Chrome)
         _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
     });
 }
@@ -828,19 +830,34 @@ function _loadHlsDirect(url) {
  * Si el navegador no puede reproducirlo → intenta a través del stream-proxy.
  */
 function _tryNative(url) {
+    // Si la URL es HTTP y la página es HTTPS, el navegador bloqueará la carga
+    // del elemento <video> directamente (mixed content pasivo también bloqueado
+    // en Chrome moderno). Ir directo al proxy.
+    if (url.startsWith('http://')) {
+        el.videoPlayer.onerror = null;
+        el.videoPlayer.src = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
+        el.videoPlayer.load();
+        el.videoPlayer.play().catch(() => {});
+        el.videoPlayer.onerror = () => {
+            el.videoPlayer.onerror = null;
+            _setPlayerLoading(false);
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+        };
+        return;
+    }
+
+    // URL HTTPS → intentar directo primero, proxy como fallback
     el.videoPlayer.onerror = null;
     el.videoPlayer.src = url;
     el.videoPlayer.load();
     el.videoPlayer.play().catch(() => {});
     el.videoPlayer.onerror = () => {
         el.videoPlayer.onerror = null;
-        // Paso 4: a través del stream-proxy del VPS
         el.videoPlayer.src = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            // Paso 5: todo falló — limpiar spinner y mostrar error
             _setPlayerLoading(false);
             _showPlayerError('Stream no disponible o formato no compatible con el navegador');
         };
