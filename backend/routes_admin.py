@@ -2249,3 +2249,88 @@ def curado_reordenar():
         CanalCurado.query.filter_by(id=int(cid)).update({'orden': idx})
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@admin_bp.post('/curado/importar-m3u')
+@superadmin_required
+def curado_importar_m3u():
+    """Importa canales curados en bloque desde un archivo .m3u subido."""
+    import json as _jj
+    from m3u_parser import decode_m3u_bytes, parse_extinf, is_vod_content
+
+    archivo = request.files.get('archivo')
+    if not archivo or not archivo.filename:
+        flash('Selecciona un archivo .m3u', 'danger')
+        return redirect(url_for('admin.curado'))
+
+    try:
+        raw = archivo.read()
+    except Exception as exc:
+        flash(f'Error leyendo archivo: {exc}', 'danger')
+        return redirect(url_for('admin.curado'))
+
+    content = decode_m3u_bytes(raw)
+
+    # Parseo ligero del M3U para extraer solo canales en directo
+    canales = {}   # clave normalizada → {nombre, logo, grupo, urls:[]}
+    lines   = content.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.upper().startswith('#EXTINF:'):
+            # Buscar la URL (siguiente línea no vacía y no comentario)
+            url = ''
+            j   = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if nxt and not nxt.startswith('#'):
+                    url = nxt
+                    break
+                j += 1
+
+            info = parse_extinf(line)
+            info['url_stream'] = url   # necesario para is_vod_content (ruta /live/)
+
+            # Solo canales en directo (excluir películas y series)
+            if url and not is_vod_content(info, current_app.config):
+                nombre = (info.get('titulo') or '').strip() or 'Canal'
+                logo   = info.get('imagen')      or ''
+                grupo  = info.get('group_title') or ''
+                key    = nombre.lower().strip()
+
+                if key not in canales:
+                    canales[key] = {'nombre': nombre, 'logo': logo, 'grupo': grupo, 'urls': []}
+                canales[key]['urls'].append({
+                    'nombre': 'URL ' + str(len(canales[key]['urls']) + 1),
+                    'url':    url,
+                })
+            i = j + 1
+        else:
+            i += 1
+
+    if not canales:
+        flash('No se encontraron canales en directo en el archivo.', 'warning')
+        return redirect(url_for('admin.curado'))
+
+    # Opción: borrar todos los existentes antes de importar
+    if request.form.get('reemplazar'):
+        CanalCurado.query.delete()
+        db.session.flush()
+
+    max_orden = db.session.query(db.func.max(CanalCurado.orden)).scalar() or 0
+    creados   = 0
+    for ch in canales.values():
+        canal = CanalCurado(
+            nombre   = ch['nombre'],
+            logo     = ch['logo'] or None,
+            grupo    = ch['grupo'] or None,
+            urls_json= _jj.dumps(ch['urls']),
+            orden    = max_orden + creados + 1,
+            activo   = True,
+        )
+        db.session.add(canal)
+        creados += 1
+
+    db.session.commit()
+    flash(f'✓ {creados} canales curados importados correctamente.', 'success')
+    return redirect(url_for('admin.curado'))

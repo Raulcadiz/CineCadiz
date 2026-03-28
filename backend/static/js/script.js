@@ -683,20 +683,22 @@ function _loadHls(url) {
         el.videoPlayer.play().catch(() => {});
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) {
-            _destroyHls();
-            const originalUrl = el.player.dataset.streamUrl;
-            // Solo mostrar error si la URL es un manifiesto .m3u8 real:
-            // stream-proxy con .m3u8 devuelve el manifest en crudo y el browser
-            // intenta resolver los segmentos relativos contra nuestro servidor → 404.
-            // Para .ts / sin extensión → intentar stream-proxy directamente.
-            const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
-            if (!isM3u8) {
-                _tryNative(originalUrl);
-            } else {
-                _setPlayerLoading(false);
-                _showPlayerError('Stream no disponible o canal caído');
-            }
+        if (!data.fatal) return;
+        _destroyHls();
+        // 403/401 = IP del servidor bloqueada por el proveedor IPTV → sin reintentos
+        const httpCode = data.response?.code;
+        if (httpCode === 403 || httpCode === 401) {
+            _setPlayerLoading(false);
+            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso a este stream');
+            return;
+        }
+        const originalUrl = el.player.dataset.streamUrl;
+        const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
+        if (!isM3u8) {
+            _tryNative(originalUrl);
+        } else {
+            _setPlayerLoading(false);
+            _showPlayerError('Stream no disponible o canal caído');
         }
     });
 }

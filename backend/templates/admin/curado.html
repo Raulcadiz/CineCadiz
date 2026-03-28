@@ -2,11 +2,16 @@
 {% block title %}Canales Curados{% endblock %}
 
 {% block content %}
-<div class="topbar d-flex justify-content-between align-items-center">
+<div class="topbar d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h1><i class="bi bi-star-fill me-2" style="color:#f59e0b"></i>Canales Curados</h1>
-    <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
-        <i class="bi bi-plus-lg me-1"></i>Añadir canal
-    </button>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportarM3u">
+            <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar M3U
+        </button>
+        <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
+            <i class="bi bi-plus-lg me-1"></i>Añadir canal
+        </button>
+    </div>
 </div>
 
 <div class="alert alert-secondary small mb-3">
@@ -390,4 +395,49 @@ async function guardarOrden() {
     });
 }
 </script>
+
+<!-- ── Modal: Importar desde M3U ──────────────────────────── -->
+<div class="modal fade" id="modalImportarM3u" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2 text-info"></i>Importar canales desde M3U</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="{{ url_for('admin.curado_importar_m3u') }}" method="post" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        Sube un archivo <code>.m3u</code> descargado desde tu proveedor IPTV.<br>
+                        Se importarán automáticamente todos los <strong>canales en directo</strong> (live),
+                        agrupando URLs duplicadas del mismo canal como fuentes de backup.<br>
+                        Las películas y series se ignoran.
+                    </p>
+                    <div class="alert alert-info py-2 small">
+                        <i class="bi bi-lightbulb me-1"></i>
+                        <strong>Tip Xtream Codes:</strong> En tu app IPTV copia la URL tipo<br>
+                        <code>http://servidor/get.php?username=XXX&amp;password=YYY&amp;type=m3u_plus</code><br>
+                        Ábrela en el navegador y guarda el archivo descargado.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-secondary small mb-1">Archivo .m3u / .m3u8</label>
+                        <input type="file" name="archivo" class="form-control bg-dark text-light border-secondary"
+                               accept=".m3u,.m3u8,.txt" required>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="import-reemplazar" name="reemplazar">
+                        <label class="form-check-label text-secondary small" for="import-reemplazar">
+                            Eliminar canales curados existentes antes de importar
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-info btn-sm text-dark">
+                        <i class="bi bi-cloud-upload me-1"></i>Importar canales
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
