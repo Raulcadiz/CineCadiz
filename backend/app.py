@@ -4,7 +4,7 @@ CinemaCity — Flask Application Factory
 import json
 import os
 from datetime import timedelta
-from flask import Flask, render_template, send_from_directory, session, g
+from flask import Flask, render_template, send_from_directory, session, g, request
 
 from config import Config
 from models import db
@@ -78,6 +78,12 @@ def create_app(config_class=Config):
         if not _session.get('user_id'):
             return _redirect(_url_for('auth.login'))
         return render_template('index.html')
+
+    @app.route('/player')
+    def player():
+        url   = request.args.get('url',   '').strip()
+        title = request.args.get('title', '').strip()
+        return render_template('player.html', url=url, title=title)
 
     @app.route('/manifest.json')
     def manifest():

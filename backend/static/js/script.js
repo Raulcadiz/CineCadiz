@@ -724,6 +724,16 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
         return;
     }
 
+    // HTTP streams HLS/live: el proxy del VPS está bloqueado por IP de datacenter (OVH).
+    // Abrimos un reproductor HTTP — el navegador conecta desde la IP doméstica del usuario.
+    if (url.startsWith('http://') && _isLikelyHls(url)) {
+        window.open(
+            `http://${location.hostname}/player?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title || '')}`,
+            '_blank', 'noopener,noreferrer'
+        );
+        return;
+    }
+
     _destroyHls();
     // Cerrar el modal de detalles si está abierto para que no quede atrapado detrás
     el.detailsModal.style.display = 'none';
