@@ -176,7 +176,7 @@ def playlist(username: str, password: str):
 
     filas = q.order_by(tipo_orden, Contenido.group_title, Contenido.titulo).all()
 
-    lines = ['#EXTM3U']
+    lines = ['#EXTM3U x-tvg-url=""']
     for cid, titulo, tipo, imagen, group_title in filas:
         img = (imagen or '').replace('"', '')
         # Para canales live: usar el group_title original del canal
@@ -185,10 +185,15 @@ def playlist(username: str, password: str):
             grp = (group_title or 'Directo').replace('"', '')
         else:
             grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
-        tit = (titulo or '').replace(',', ' ')
-        ext = '.mp4' if tipo == 'pelicula' else '.mkv' if tipo == 'serie' else ''
+        tit   = (titulo or '').replace(',', ' ').replace('"', '')
+        tvgid = f'CC{cid}'
+        # Live → .ts (formato nativo IPTV), pelicula → .mp4, serie → .mkv
+        ext   = '.ts' if tipo == 'live' else '.mp4' if tipo == 'pelicula' else '.mkv'
         stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}{ext}'
-        lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
+        lines.append(
+            f'#EXTINF:-1 tvg-id="{tvgid}" tvg-name="{tit}" '
+            f'tvg-logo="{img}" group-title="{grp}",{tit}'
+        )
         lines.append(stream_url)
 
     content = '\n'.join(lines) + '\n'
@@ -326,7 +331,7 @@ def get_php():
 
     filas = q.order_by(tipo_orden, Contenido.group_title, Contenido.titulo).all()
 
-    lines = ['#EXTM3U']
+    lines = ['#EXTM3U x-tvg-url=""']
     for cid, titulo, tipo, imagen, group_title in filas:
         img = (imagen or '').replace('"', '')
         # Para canales live: usar el group_title original del canal
@@ -335,10 +340,15 @@ def get_php():
             grp = (group_title or 'Directo').replace('"', '')
         else:
             grp = _tipo_grp.get(tipo, group_title or 'General').replace('"', '')
-        tit = (titulo or '').replace(',', ' ')
-        ext = '.mp4' if tipo == 'pelicula' else '.mkv' if tipo == 'serie' else ''
+        tit   = (titulo or '').replace(',', ' ').replace('"', '')
+        tvgid = f'CC{cid}'
+        # Live → .ts (formato nativo IPTV), pelicula → .mp4, serie → .mkv
+        ext   = '.ts' if tipo == 'live' else '.mp4' if tipo == 'pelicula' else '.mkv'
         stream_url = f'{base}/iptv/{username}/{password}/stream/{cid}{ext}'
-        lines.append(f'#EXTINF:-1 tvg-logo="{img}" group-title="{grp}",{tit}')
+        lines.append(
+            f'#EXTINF:-1 tvg-id="{tvgid}" tvg-name="{tit}" '
+            f'tvg-logo="{img}" group-title="{grp}",{tit}'
+        )
         lines.append(stream_url)
 
     content = '\n'.join(lines) + '\n'

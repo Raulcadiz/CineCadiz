@@ -633,6 +633,41 @@ def toggle_contenido(item_id):
     return jsonify({'activo': item.activo})
 
 
+@admin_bp.post('/contenido/cambiar-servidor-live')
+@superadmin_required
+def cambiar_servidor_live():
+    """
+    Reemplaza el servidor (host) en todas las URLs de canales live.
+    Útil para cambiar de proveedor IPTV sin reimportar toda la lista.
+    Body JSON: {"servidor_old": "dplatino.net", "servidor_new": "nuevoserver.com"}
+    """
+    import json as _j
+    data = request.get_json(silent=True) or {}
+    old = (data.get('servidor_old') or '').strip()
+    new = (data.get('servidor_new') or '').strip()
+
+    if not old or not new:
+        return jsonify({'error': 'servidor_old y servidor_new son obligatorios'}), 400
+    if old == new:
+        return jsonify({'error': 'Los servidores son iguales'}), 400
+
+    # Solo actualizar canales live activos cuya URL contiene el servidor antiguo
+    from sqlalchemy import func as _func
+    items = (Contenido.query
+             .filter(Contenido.tipo == 'live',
+                     Contenido.url_stream.ilike(f'%{old}%'))
+             .all())
+
+    actualizados = 0
+    for item in items:
+        if item.url_stream and old in item.url_stream:
+            item.url_stream = item.url_stream.replace(old, new)
+            actualizados += 1
+
+    db.session.commit()
+    return jsonify({'ok': True, 'actualizados': actualizados, 'servidor_old': old, 'servidor_new': new})
+
+
 # ── API AJAX ───────────────────────────────────────────────────
 
 @admin_bp.get('/api/listas/<int:lista_id>/status')

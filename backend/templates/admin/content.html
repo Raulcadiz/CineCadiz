@@ -2,9 +2,50 @@
 {% block title %}Contenido{% endblock %}
 
 {% block content %}
-<div class="topbar">
-    <h1><i class="bi bi-film me-2 text-danger"></i>Contenido</h1>
-    <span class="text-muted small">Total: {{ pagination.total }} items</span>
+<div class="topbar d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+        <h1><i class="bi bi-film me-2 text-danger"></i>Contenido</h1>
+        <span class="text-muted small">Total: {{ pagination.total }} items</span>
+    </div>
+    <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalCambiarServidor">
+        <i class="bi bi-arrow-repeat me-1"></i>Cambiar servidor live
+    </button>
+</div>
+
+<!-- Modal: Cambiar servidor live -->
+<div class="modal fade" id="modalCambiarServidor" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat me-2 text-warning"></i>Cambiar servidor de canales live</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Reemplaza el servidor en todas las URLs de canales live de la base de datos.<br>
+                    Útil para cambiar de proveedor IPTV sin reimportar toda la lista.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small mb-1">Servidor actual (a reemplazar)</label>
+                    <input type="text" id="svr-old" class="form-control bg-dark text-light border-secondary"
+                           placeholder="ej: dplatino.net o somoseluno.blog">
+                    <div class="form-text text-muted">Solo el host, sin http:// ni barras.</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small mb-1">Nuevo servidor</label>
+                    <input type="text" id="svr-new" class="form-control bg-dark text-light border-secondary"
+                           placeholder="ej: nuevoserver.com:8080">
+                </div>
+                <div id="svr-alert" class="alert d-none py-2 small"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" id="btn-svr-ok" class="btn btn-warning btn-sm">
+                    <i class="bi bi-arrow-repeat me-1"></i>Reemplazar URLs
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Filtros -->
@@ -151,6 +192,37 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
             btn.title = 'Inactivo — click para activar';
         }
     });
+});
+
+// Cambiar servidor live
+document.getElementById('btn-svr-ok')?.addEventListener('click', async () => {
+    const old = document.getElementById('svr-old').value.trim();
+    const nw  = document.getElementById('svr-new').value.trim();
+    const alrt = document.getElementById('svr-alert');
+    alrt.className = 'alert d-none py-2 small';
+    if (!old || !nw) { alrt.className = 'alert alert-danger py-2 small'; alrt.textContent = 'Rellena ambos campos.'; return; }
+    const btn = document.getElementById('btn-svr-ok');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando…';
+    try {
+        const res  = await fetch('/admin/contenido/cambiar-servidor-live', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ servidor_old: old, servidor_new: nw }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alrt.className = 'alert alert-success py-2 small';
+            alrt.textContent = `✓ ${data.actualizados} URLs actualizadas (${old} → ${nw})`;
+        } else {
+            alrt.className = 'alert alert-danger py-2 small';
+            alrt.textContent = data.error || 'Error desconocido';
+        }
+    } catch (e) {
+        alrt.className = 'alert alert-danger py-2 small';
+        alrt.textContent = 'Error de conexión';
+    } finally {
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Reemplazar URLs';
+    }
 });
 </script>
 {% endblock %}

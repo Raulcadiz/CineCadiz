@@ -869,9 +869,26 @@ function _playWithMpegts(url, isLive) {
 
 function _loadHlsDirect(url) {
     url = _normalizeStreamUrl(url);
-    // Para canales live con .ts: intentar el manifest HLS (.m3u8) del mismo servidor
     const urlLow = url.toLowerCase().split('?')[0];
-    const hlsUrl = (urlLow.endsWith('.ts') && urlLow.includes('/live/'))
+
+    // ── Canales live Xtream Codes (.ts con /live/ en la ruta) ──────────────
+    // NO convertir a .m3u8: los segmentos HLS que genera el servidor usan tokens
+    // de sesión IP-lockeados (/hls/HASH/...ts → 403 desde IPs de datacenter).
+    // La URL directa /live/USER/PASS/ID.ts usa autenticación por credenciales,
+    // no por sesión, por lo que funciona igual que los streams de películas.
+    if (urlLow.endsWith('.ts') && urlLow.includes('/live/')) {
+        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            const src = (location.protocol === 'https:')
+                ? `/api/stream-proxy?url=${encodeURIComponent(url)}`
+                : url;
+            _playWithMpegts(src, true);
+            return;
+        }
+    }
+
+    // ── Resto de streams HLS (URLs .m3u8, o .ts sin /live/) ────────────────
+    // Para .ts sin /live/: intentar convertir a .m3u8 (algunas listas IPTV lo admiten)
+    const hlsUrl = (urlLow.endsWith('.ts') && !urlLow.includes('/live/'))
         ? url.replace(/\.ts(\?.*)?$/i, '.m3u8')
         : url;
 
