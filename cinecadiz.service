@@ -27,7 +27,7 @@ ExecStart=/home/g3v3r/cine-cadiz/backend/venv/bin/gunicorn \
     --threads 8 \
     --worker-class gthread \
     --timeout 120 \
-    --bind 0.0.0.0:80 \
+    --bind 0.0.0.0:5000 \
     --access-logfile /var/log/cinecadiz/access.log \
     --error-logfile  /var/log/cinecadiz/error.log \
     --log-level info \
