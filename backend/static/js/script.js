@@ -595,6 +595,10 @@ function _showPlayerError(msg) {
             <button class="err-btn" data-action="close-player">
                 ← Volver al listado
             </button>
+            ${streamUrl && streamUrl.startsWith('http://') ? `
+            <button class="err-btn" data-action="open-tab">
+                📺 Ver en pestaña
+            </button>` : ''}
             ${itemId ? `
             <button class="err-btn" data-action="open-app" data-id="${itemId}">
                 📲 Abrir en app
@@ -616,6 +620,12 @@ function _showPlayerError(msg) {
             const action = btn.dataset.action;
             if (action === 'close-player') {
                 document.querySelector('.btn-close-player')?.click();
+            } else if (action === 'open-tab') {
+                const title = document.getElementById('playerTitle')?.textContent || '';
+                window.open(
+                    `http://${location.hostname}/player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(title)}`,
+                    '_blank', 'noopener,noreferrer'
+                );
             } else if (action === 'open-app') {
                 // Descarga el .m3u del ítem — el SO lo abre en VLC / MX Player / etc.
                 const id = btn.dataset.id;
@@ -721,16 +731,6 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
     // RSS → nueva pestaña (cinemacity.cc bloquea iframe)
     if (source === 'rss') {
         window.open(url, '_blank', 'noopener,noreferrer');
-        return;
-    }
-
-    // HTTP streams HLS/live: el proxy del VPS está bloqueado por IP de datacenter (OVH).
-    // Abrimos un reproductor HTTP — el navegador conecta desde la IP doméstica del usuario.
-    if (url.startsWith('http://') && _isLikelyHls(url)) {
-        window.open(
-            `http://${location.hostname}/player?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title || '')}`,
-            '_blank', 'noopener,noreferrer'
-        );
         return;
     }
 
