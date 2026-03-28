@@ -665,8 +665,16 @@ function _showPlayerError(msg) {
 /** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
 function _loadHls(url) {
     _hls = new Hls({
-        maxBufferLength:   30,
-        maxBufferSize:     60 * 1000 * 1000,
+        maxBufferLength:            30,
+        maxBufferSize:              60 * 1000 * 1000,
+        liveSyncDurationCount:      3,
+        liveBackBufferLength:       30,
+        manifestLoadingMaxRetry:    6,
+        manifestLoadingRetryDelay:  1000,
+        fragLoadingMaxRetry:        6,
+        fragLoadingRetryDelay:      1000,
+        levelLoadingMaxRetry:       6,
+        levelLoadingRetryDelay:     1000,
         xhrSetup: (xhr) => { xhr.withCredentials = false; },
     });
     _hls.loadSource(url);
@@ -865,16 +873,24 @@ function _loadHlsDirect(url) {
         ? url.replace(/\.ts(\?.*)?$/i, '.m3u8')
         : url;
 
-    // Si la URL es HTTP y la página es HTTPS, el navegador bloqueará el XHR (mixed content).
-    // Ir directamente al proxy para evitar el error y el retraso.
-    if (hlsUrl.startsWith('http://')) {
+    // Solo usar proxy cuando la página es HTTPS (mixed content bloqueado).
+    // En HTTP (local) el navegador puede cargar el stream directamente.
+    if (hlsUrl.startsWith('http://') && location.protocol === 'https:') {
         _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
         return;
     }
 
     _hls = new Hls({
-        maxBufferLength: 30,
-        maxBufferSize:   60 * 1000 * 1000,
+        maxBufferLength:            30,
+        maxBufferSize:              60 * 1000 * 1000,
+        liveSyncDurationCount:      3,
+        liveBackBufferLength:       30,
+        manifestLoadingMaxRetry:    6,
+        manifestLoadingRetryDelay:  1000,
+        fragLoadingMaxRetry:        6,
+        fragLoadingRetryDelay:      1000,
+        levelLoadingMaxRetry:       6,
+        levelLoadingRetryDelay:     1000,
         xhrSetup: xhr => { xhr.withCredentials = false; },
     });
     _hls.loadSource(hlsUrl);
@@ -885,7 +901,12 @@ function _loadHlsDirect(url) {
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         _destroyHls();
-        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
+        // Solo usar proxy si estamos en HTTPS
+        if (location.protocol === 'https:') {
+            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
+        } else {
+            _showPlayerError('Stream no disponible o canal caído');
+        }
     });
 }
 
@@ -896,10 +917,9 @@ function _loadHlsDirect(url) {
  */
 function _tryNative(url) {
     url = _normalizeStreamUrl(url);
-    // Si la URL es HTTP y la página es HTTPS, el navegador bloqueará la carga
-    // del elemento <video> directamente (mixed content pasivo también bloqueado
-    // en Chrome moderno). Ir directo al proxy.
-    if (url.startsWith('http://')) {
+    // Solo usar proxy cuando la página es HTTPS (mixed content bloqueado).
+    // En HTTP (local) el navegador puede cargar el stream directamente.
+    if (url.startsWith('http://') && location.protocol === 'https:') {
         const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
         const urlLow = url.toLowerCase().split('?')[0];
         const isTsUrl = urlLow.endsWith('.ts');
