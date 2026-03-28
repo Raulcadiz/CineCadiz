@@ -326,6 +326,34 @@ def eliminar_lista(lista_id):
     return redirect(url_for('admin.listas'))
 
 
+@admin_bp.post('/listas/<int:lista_id>/editar-url')
+@login_required
+def editar_url_lista(lista_id):
+    """Cambia la URL de una lista existente y la re-importa."""
+    lista = Lista.query.get_or_404(lista_id)
+    panel_user = _get_panel_user()
+    if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
+        return jsonify({'error': 'Sin permiso'}), 403
+
+    nueva_url = (request.form.get('url') or request.get_json(silent=True, force=True) or {}).get('url', '') if request.is_json else request.form.get('url', '')
+    if isinstance(nueva_url, dict):
+        nueva_url = nueva_url.get('url', '')
+    nueva_url = str(nueva_url).strip()
+
+    if not nueva_url or not nueva_url.lower().startswith('http'):
+        flash('URL inválida.', 'danger')
+        return redirect(url_for('admin.listas'))
+
+    lista.url   = nueva_url
+    lista.error = None
+    lista.ultima_actualizacion = None   # fuerza estado "Pendiente"
+    db.session.commit()
+
+    _import_lista_async(current_app._get_current_object(), lista.id)
+    flash(f'URL de "{lista.nombre}" actualizada. Re-importando en segundo plano…', 'success')
+    return redirect(url_for('admin.listas'))
+
+
 @admin_bp.post('/listas/<int:lista_id>/toggle')
 @login_required
 def toggle_lista(lista_id):

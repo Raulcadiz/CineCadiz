@@ -271,6 +271,11 @@
                                 <i class="bi bi-arrow-repeat"></i>
                             </button>
                         </form>
+                        <button type="button" class="btn btn-outline-warning btn-sm"
+                                title="Cambiar URL y reimportar"
+                                onclick="openEditUrl({{ lista.id }}, '{{ lista.nombre|replace("'","\\'")|e }}', '{{ lista.url|replace("'","\\'")|e }}')">
+                            <i class="bi bi-pencil"></i>
+                        </button>
                         {% endif %}
 
                         <form action="{{ url_for('admin.toggle_lista', lista_id=lista.id) }}"
@@ -920,6 +925,28 @@ document.getElementById('btnGuardarGrupos')?.addEventListener('click', () => {
     form.submit();
 });
 
+// ── Editar URL de lista ──────────────────────────────────────────
+let _euListaId = null;
+function openEditUrl(id, nombre, urlActual) {
+    _euListaId = id;
+    document.getElementById('eu-nombre').textContent = nombre;
+    document.getElementById('eu-url').value = urlActual;
+    document.getElementById('eu-alert').className = 'alert d-none py-2 small';
+    new bootstrap.Modal(document.getElementById('modalEditUrl')).show();
+}
+document.getElementById('btnGuardarUrl')?.addEventListener('click', () => {
+    const url = document.getElementById('eu-url').value.trim();
+    if (!url.startsWith('http')) {
+        document.getElementById('eu-alert').className = 'alert alert-danger py-2 small';
+        document.getElementById('eu-alert').textContent = 'La URL debe empezar por http://';
+        return;
+    }
+    const form = document.getElementById('formEditUrl');
+    form.action = `/admin/listas/${_euListaId}/editar-url`;
+    document.getElementById('eu-url-hidden').value = url;
+    form.submit();
+});
+
 // ── Limpiar duplicados ───────────────────────────────────────────
 document.getElementById('btn-dedup')?.addEventListener('click', async () => {
     const btn = document.getElementById('btn-dedup');
@@ -944,4 +971,38 @@ document.getElementById('btn-dedup')?.addEventListener('click', async () => {
     }
 });
 </script>
+
+<!-- Modal: Editar URL de lista -->
+<div class="modal fade" id="modalEditUrl" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2 text-warning"></i>Cambiar URL de lista</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">Lista: <strong id="eu-nombre"></strong></p>
+                <p class="text-muted small mb-2">
+                    Cambia la URL al nuevo proveedor. Al guardar se reimportará automáticamente desde la nueva URL,
+                    reemplazando el contenido anterior de esta lista.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label text-secondary small mb-1">Nueva URL M3U</label>
+                    <input type="url" id="eu-url" class="form-control bg-dark text-light border-secondary"
+                           placeholder="http://nuevo-servidor/get.php?username=X&password=Y&type=m3u_plus">
+                </div>
+                <div id="eu-alert" class="alert d-none py-2 small"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" id="btnGuardarUrl" class="btn btn-warning btn-sm">
+                    <i class="bi bi-arrow-repeat me-1"></i>Guardar y reimportar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<form id="formEditUrl" method="post" class="d-none">
+    <input type="hidden" id="eu-url-hidden" name="url">
+</form>
 {% endblock %}
