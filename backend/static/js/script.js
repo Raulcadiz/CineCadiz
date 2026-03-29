@@ -24,6 +24,7 @@ const state = {
     currentYear: '',
     currentGenre: '',
     currentSort: 'year_desc',
+    currentListaId: '',     // lista activa en la vista En Directo
     favorites: JSON.parse(localStorage.getItem('cc_favorites') || '[]'),
     allItems: [],           // caché local para búsqueda rápida
     liveGroups: [],         // caché de grupos de canales en directo
@@ -81,7 +82,8 @@ const api = {
     item: (id) => api.get(`contenido/${id}`),
 
     liveAgrupados: (params = {}) => api.get('live-agrupados', params),
-    liveCategorias: ()            => api.get('live-categorias'),
+    liveCategorias: (params = {}) => api.get('live-categorias', params),
+    liveListas: ()                => api.get('live-listas'),
 
     watch: (contenidoId) => fetch('/api/watch', {
         method: 'POST',
@@ -926,10 +928,8 @@ function _loadHlsDirect(url) {
     // no por sesión, por lo que funciona igual que los streams de películas.
     if (urlLow.endsWith('.ts') && urlLow.includes('/live/')) {
         if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            const src = (location.protocol === 'https:')
-                ? `/api/stream-proxy?url=${encodeURIComponent(url)}`
-                : url;
-            _playWithMpegts(src, true);
+            // Siempre pasar por el proxy: resuelve CORS y mixed-content independientemente del protocolo
+            _playWithMpegts(`/api/stream-proxy?url=${encodeURIComponent(url)}`, true);
             return;
         }
     }
@@ -967,12 +967,8 @@ function _loadHlsDirect(url) {
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         _destroyHls();
-        // Solo usar proxy si estamos en HTTPS
-        if (location.protocol === 'https:') {
-            _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
-        } else {
-            _showPlayerError('Stream no disponible o canal caído');
-        }
+        // Reintentar siempre a través del proxy (resuelve CORS y mixed-content en HTTP y HTTPS)
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
     });
 }
 
@@ -983,49 +979,51 @@ function _loadHlsDirect(url) {
  */
 function _tryNative(url) {
     url = _normalizeStreamUrl(url);
-    // Solo usar proxy cuando la página es HTTPS (mixed content bloqueado).
-    // En HTTP (local) el navegador puede cargar el stream directamente.
-    if (url.startsWith('http://') && location.protocol === 'https:') {
-        const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
-        const urlLow = url.toLowerCase().split('?')[0];
-        const isTsUrl = urlLow.endsWith('.ts');
+    const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
+    const urlLow   = url.toLowerCase().split('?')[0];
+    const isTsUrl  = urlLow.endsWith('.ts');
 
-        // Para .ts ir DIRECTAMENTE a mpegts.js — Chrome rechaza video/mp2t de forma
-        // nativa e intentarlo primero con <video src> haría DOS peticiones seguidas al
-        // mismo stream-proxy URL, lo que puede disparar el límite de conexiones del
-        // servidor IPTV y devolver NetworkError en el segundo intento (mpegts.js).
-        if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            _playWithMpegts(proxyUrl, true);
+    // Para .ts → mpegts.js directo a través del proxy (Chrome no puede reproducir
+    // video/mp2t nativo; además el proxy resuelve CORS y mixed-content).
+    if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+        _playWithMpegts(proxyUrl, true);
+        return;
+    }
+
+    // Para el resto: intentar <video src> directo primero.
+    // Si la URL es HTTP en un sitio HTTPS (mixed-content) saltamos directo al proxy.
+    const src = (url.startsWith('http://') && location.protocol === 'https:')
+        ? proxyUrl
+        : url;
+
+    el.videoPlayer.onerror = null;
+    el.videoPlayer.src = src;
+    el.videoPlayer.load();
+    el.videoPlayer.play().catch(() => {});
+    el.videoPlayer.onerror = () => {
+        el.videoPlayer.onerror = null;
+        // Si ya estábamos usando el proxy → intentar mpegts.js como último recurso
+        if (src === proxyUrl) {
+            if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+                _playWithMpegts(proxyUrl, false);
+            } else {
+                _setPlayerLoading(false);
+                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            }
             return;
         }
-
-        // MP4, WebM, etc. → intentar con <video src> a través del proxy.
-        el.videoPlayer.onerror = null;
+        // Intentar a través del proxy, y si también falla → mpegts.js
         el.videoPlayer.src = proxyUrl;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            _setPlayerLoading(false);
-            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-        };
-        return;
-    }
-
-    // URL HTTPS → intentar directo primero, proxy como fallback
-    el.videoPlayer.onerror = null;
-    el.videoPlayer.src = url;
-    el.videoPlayer.load();
-    el.videoPlayer.play().catch(() => {});
-    el.videoPlayer.onerror = () => {
-        el.videoPlayer.onerror = null;
-        el.videoPlayer.src = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
-        el.videoPlayer.load();
-        el.videoPlayer.play().catch(() => {});
-        el.videoPlayer.onerror = () => {
-            el.videoPlayer.onerror = null;
-            _setPlayerLoading(false);
-            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+                _playWithMpegts(proxyUrl, false);
+            } else {
+                _setPlayerLoading(false);
+                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            }
         };
     };
 }
@@ -1225,12 +1223,17 @@ function setView(type) {
         [hero, novedSec, contSec, pelSec, serSec, liveSec, recoSec, porqueSecs].forEach(s => {
             if (s) s.style.display = 'none';
         });
-        // Mostrar genre strip solo en la vista de directo
+        // Mostrar lista-bar y genre-strip solo en la vista de directo
+        const listaBar = document.getElementById('listaBar');
+        const showLive = type === 'live';
+        if (listaBar) listaBar.style.display = showLive ? 'flex' : 'none';
         if (genreStrip) {
-            const showStrip = type === 'live';
-            genreStrip.style.display = showStrip ? 'flex' : 'none';
-            document.body.classList.toggle('has-genre-strip', showStrip);
+            genreStrip.style.display = showLive ? 'flex' : 'none';
+            document.body.classList.toggle('has-genre-strip', showLive);
         }
+        // Ajustar clase para dar espacio si la lista-bar está visible
+        const hasListas = listaBar && listaBar.querySelectorAll('option').length > 1;
+        document.body.classList.toggle('has-lista-bar', showLive && hasListas);
         document.getElementById('movies')?.scrollIntoView({ behavior: 'smooth' });
     }
 }
@@ -1388,6 +1391,11 @@ function setupEvents() {
     el.genreFilter?.addEventListener('change', e => {
         state.currentGenre = e.target.value;
         loadGrid();
+    });
+
+    // Selector de lista de canales en directo
+    document.getElementById('listaFilter')?.addEventListener('change', e => {
+        _reloadLiveByLista(e.target.value);
     });
 
     // ── Scroll infinito (sustituye al botón "Cargar más") ────
@@ -1668,6 +1676,80 @@ function setupEvents() {
     });
 }
 
+// ── Selector de lista para canales en directo ───────────────
+async function loadLiveListas() {
+    try {
+        const listas = await api.liveListas();
+        const sel    = document.getElementById('listaFilter');
+        const bar    = document.getElementById('listaBar');
+        if (!sel || !bar) return;
+
+        if (!listas || listas.length <= 1) {
+            // Con 0 ó 1 lista no tiene sentido mostrar el selector
+            bar.style.display = 'none';
+            document.body.classList.remove('has-lista-bar');
+            return;
+        }
+
+        // Mantener la opción "Todas las listas" y añadir las listas reales
+        sel.innerHTML = '<option value="">📋 Todas las listas</option>' +
+            listas.map(l => `<option value="${l.id}">${l.nombre}</option>`).join('');
+
+        // Mostrar la barra si estamos en vista live
+        if (state.currentType === 'live') {
+            bar.style.display = 'flex';
+            document.body.classList.add('has-lista-bar');
+        }
+    } catch { /* silenciar */ }
+}
+
+/** Recarga los canales en directo filtrando por lista y actualiza las categorías. */
+async function _reloadLiveByLista(listaId) {
+    state.currentListaId = listaId;
+    try {
+        const params = { limit: 200 };
+        if (listaId) params.lista_id = listaId;
+
+        const [liveData, cats] = await Promise.all([
+            api.liveAgrupados(params),
+            api.liveCategorias(listaId ? { lista_id: listaId } : {}),
+        ]);
+
+        state.liveGroups = Array.isArray(liveData) ? liveData : [];
+
+        // Actualizar carrusel en vista inicio
+        if (el.liveCarousel) {
+            el.liveCarousel.innerHTML = state.liveGroups.length
+                ? state.liveGroups.map((g, i) => renderLiveGroupCard(g, i)).join('')
+                : '<p class="no-content">Sin canales disponibles</p>';
+        }
+
+        // Actualizar grid si estamos en vista live
+        if (state.currentType === 'live' && el.moviesGrid) {
+            el.moviesGrid.innerHTML = state.liveGroups.length
+                ? state.liveGroups.map((g, i) => renderLiveGroupCard(g, i)).join('')
+                : '<p class="no-content">Sin canales disponibles</p>';
+        }
+
+        // Regenerar pastillas de categoría
+        const strip = document.getElementById('genreStrip');
+        if (strip) {
+            strip.innerHTML =
+                `<button class="genre-strip-pill active" data-cat="">Todos</button>` +
+                (cats || []).map(cat =>
+                    `<button class="genre-strip-pill" data-cat="${encodeURIComponent(cat)}">${cat}</button>`
+                ).join('');
+            strip.querySelectorAll('.genre-strip-pill').forEach(pill => {
+                pill.addEventListener('click', () => {
+                    strip.querySelectorAll('.genre-strip-pill').forEach(p => p.classList.remove('active'));
+                    pill.classList.add('active');
+                    _filterLiveByCategory(decodeURIComponent(pill.dataset.cat));
+                });
+            });
+        }
+    } catch { /* silenciar */ }
+}
+
 // ── Género strip (pastillas de categorías de canales en directo) ────────────
 async function loadGenrePills() {
     try {
@@ -1940,6 +2022,7 @@ async function init() {
         loadContinueWatching();
         loadRecomendaciones();
         loadGenrePills();
+        loadLiveListas();
 
         setupEvents();
     } catch (err) {

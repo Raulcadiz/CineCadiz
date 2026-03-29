@@ -527,6 +527,7 @@ def get_live_agrupados():
     """
     q         = request.args.get('q', '').strip()
     categoria = request.args.get('categoria', '').strip()
+    lista_id  = request.args.get('lista_id', type=int)
 
     base_q = _build_visible_query().filter(
         Contenido.tipo == 'live',
@@ -536,6 +537,8 @@ def get_live_agrupados():
         base_q = base_q.filter(Contenido.titulo.ilike(f'%{q}%'))
     if categoria:
         base_q = base_q.filter(Contenido.group_title.ilike(f'%{categoria}%'))
+    if lista_id:
+        base_q = base_q.filter(Contenido.lista_id == lista_id)
 
     channels = base_q.order_by(Contenido.titulo.asc()).all()
 
@@ -583,16 +586,35 @@ def get_live_categorias():
     """
     Categorías de canales en directo.
     Usa group_title si está disponible, si no usa genero como fallback.
+    Acepta ?lista_id=N para filtrar por lista.
     """
-    rows = db.session.query(Contenido.group_title).filter(
+    lista_id = request.args.get('lista_id', type=int)
+    q = db.session.query(Contenido.group_title).filter(
         Contenido.activo == True,
         Contenido.tipo == 'live',
         Contenido.group_title != None,
         Contenido.group_title != '',
-    ).distinct().all()
+    )
+    if lista_id:
+        q = q.filter(Contenido.lista_id == lista_id)
+    rows = q.distinct().all()
     cats = sorted({row[0].strip() for row in rows if row[0].strip()}, key=str.lower)
 
     return jsonify(cats)
+
+
+@api_bp.get('/live-listas')
+def get_live_listas():
+    """Listas M3U que contienen al menos un canal en directo activo."""
+    rows = (
+        db.session.query(Lista.id, Lista.nombre)
+        .join(Contenido, Contenido.lista_id == Lista.id)
+        .filter(Contenido.activo == True, Contenido.tipo == 'live', Lista.activa == True)
+        .group_by(Lista.id, Lista.nombre)
+        .order_by(Lista.nombre.asc())
+        .all()
+    )
+    return jsonify([{'id': r.id, 'nombre': r.nombre} for r in rows])
 
 
 @api_bp.get('/serie-episodios')

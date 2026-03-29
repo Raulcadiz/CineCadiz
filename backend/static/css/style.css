@@ -1497,6 +1497,29 @@ select.btn-pa option { background:#1a1a1a; color:#fff; }
 }
 
 /* ── Genre navigation strip (categorías directo) ─────────── */
+/* Barra selector de lista (aparece sobre el genre-strip en vista live) */
+.lista-bar {
+    position: fixed; top: calc(var(--header-h, 58px) + 44px); left: 0; right: 0;
+    z-index: 1000;
+    background: rgba(10,10,10,.97);
+    border-bottom: 1px solid var(--border);
+    padding: 4px 2%;
+    display: flex; align-items: center; gap: .5rem;
+    height: 38px;
+}
+.lista-bar .filter-select {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.18);
+    color: #fff;
+    font-size: .8rem;
+    padding: .2rem .6rem;
+    border-radius: 16px;
+    cursor: pointer;
+    max-width: 260px;
+}
+body.has-lista-bar .main-content  { padding-top: calc(var(--header-h, 58px) + 44px + 38px + 40px); }
+body.has-lista-bar .genre-strip   { top: calc(var(--header-h, 58px) + 44px + 38px); }
+
 .genre-strip {
     position: fixed; top: calc(var(--header-h, 58px) + 44px); left: 0; right: 0;
     z-index: 999;
