@@ -741,11 +741,20 @@ function _loadHls(url) {
         }
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
+        const httpCode = data.response?.code;
+        // 502 = proxy detectó respuesta no-video del servidor IPTV (IP bloqueada).
+        // Fallar INMEDIATAMENTE sin esperar reintentos de HLS.js — evita carga infinita.
+        if (httpCode === 502) {
+            console.warn('[hls] 502 from proxy — IP blocked, failing fast');
+            _destroyHls();
+            _setPlayerLoading(false);
+            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso', 2);
+            return;
+        }
         if (!data.fatal) return;
-        console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', data.response?.code, 'url:', data.url);
+        console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', httpCode, 'url:', data.url);
         _destroyHls();
         // 403/401 = IP del servidor bloqueada por el proveedor IPTV → sin reintentos
-        const httpCode = data.response?.code;
         if (httpCode === 403 || httpCode === 401) {
             _setPlayerLoading(false);
             _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso a este stream');
@@ -1026,6 +1035,14 @@ function _tryNative(url) {
         console.warn('[player] _tryNative onerror src=proxy?', src === proxyUrl, 'code', code, el.videoPlayer.error?.message);
         el.videoPlayer.onerror = null;
         if (src === proxyUrl) {
+            // Diagnóstico: ver qué devuelve realmente el proxy
+            fetch(proxyUrl, { method: 'GET', headers: { Range: 'bytes=0-63' } })
+                .then(r => r.text().then(t => {
+                    console.warn('[proxy-diag] status:', r.status,
+                        '| ct:', r.headers.get('content-type'),
+                        '| body[0..64]:', JSON.stringify(t.slice(0, 64)));
+                }))
+                .catch(e => console.warn('[proxy-diag] fetch error:', e));
             _lastResort();
             return;
         }

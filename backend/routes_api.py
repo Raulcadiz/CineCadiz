@@ -798,8 +798,10 @@ def stream_proxy():
         up.close()
         return '', 502
 
-    _tip = _first_chunk.lstrip()[:10].lower()
-    if _tip.startswith(b'<!') or _tip.startswith(b'<html'):
+    # Detectar cualquier respuesta de texto (HTML, JSON, plain text) disfrazada de video.
+    # Los formatos de video SIEMPRE empiezan con bytes binarios (nunca '<', '{', '[').
+    _tip = _first_chunk.lstrip()
+    if _tip and _tip[0:1] in (b'<', b'{', b'['):
         up.close()
         return '', 502
 
