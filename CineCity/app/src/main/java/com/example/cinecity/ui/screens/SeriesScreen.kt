@@ -31,6 +31,8 @@ import com.example.cinecity.viewmodel.SeriesViewModel
 @Composable
 fun SeriesScreen(
     onSeriesClick: (String) -> Unit,
+    voiceQuery: String? = null,
+    onVoiceQueryConsumed: () -> Unit = {},
     viewModel: SeriesViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -39,6 +41,14 @@ fun SeriesScreen(
 
     // Prevent keyboard from opening automatically on screen enter
     LaunchedEffect(Unit) { focusManager.clearFocus() }
+
+    // Voice search
+    LaunchedEffect(voiceQuery) {
+        if (!voiceQuery.isNullOrBlank()) {
+            viewModel.onQueryChange(voiceQuery)
+            onVoiceQueryConsumed()
+        }
+    }
 
     val shouldLoadMore by remember {
         derivedStateOf {

@@ -19,6 +19,8 @@ import com.example.cinecity.viewmodel.MoviesViewModel
 @Composable
 fun MoviesScreen(
     onItemClick: (Contenido) -> Unit,
+    voiceQuery: String? = null,
+    onVoiceQueryConsumed: () -> Unit = {},
     viewModel: MoviesViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -27,6 +29,14 @@ fun MoviesScreen(
 
     // Prevent keyboard from opening automatically on screen enter
     LaunchedEffect(Unit) { focusManager.clearFocus() }
+
+    // Voice search — apply when a new voice query arrives
+    LaunchedEffect(voiceQuery) {
+        if (!voiceQuery.isNullOrBlank()) {
+            viewModel.onQueryChange(voiceQuery)
+            onVoiceQueryConsumed()
+        }
+    }
 
     // Infinite scroll trigger
     val shouldLoadMore by remember {

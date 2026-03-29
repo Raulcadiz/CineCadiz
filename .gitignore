@@ -1,3 +1,10 @@
+backups/
 backend/instance/*.db
 backend/instance/*.db-shm
 backend/instance/*.db-wal
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+backend/flask.log
+backend/nohup.out
+backend/.env

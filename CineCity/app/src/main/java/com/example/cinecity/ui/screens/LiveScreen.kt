@@ -8,10 +8,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.cinecity.data.model.Contenido
@@ -26,16 +28,27 @@ import com.example.cinecity.viewmodel.LiveViewModel
 fun LiveScreen(
     onChannelClick: (Contenido) -> Unit,
     onSettingsClick: (() -> Unit)? = null,
+    voiceQuery: String? = null,
+    onVoiceQueryConsumed: () -> Unit = {},
     viewModel: LiveViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
 
-    // Categoría seleccionada para filtrar ("" = todas)
+    // Categoría seleccionada para filtrar ("" = todas, "⭐" = curados)
     var selectedGroup by remember { mutableStateOf("") }
+    val hasCurados = state.curados.isNotEmpty()
 
     // Resetear filtro cuando cambia la búsqueda
     LaunchedEffect(state.query) {
         if (state.query.isNotBlank()) selectedGroup = ""
+    }
+
+    // Voice search
+    LaunchedEffect(voiceQuery) {
+        if (!voiceQuery.isNullOrBlank()) {
+            viewModel.onQueryChange(voiceQuery)
+            onVoiceQueryConsumed()
+        }
     }
 
     Column(
@@ -92,7 +105,7 @@ fun LiveScreen(
                         .sorted()
                 }
 
-                if (groups.isNotEmpty() && state.query.isBlank()) {
+                if ((groups.isNotEmpty() || hasCurados) && state.query.isBlank()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -111,6 +124,30 @@ fun LiveScreen(
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
                             ),
                         )
+                        // Chip "⭐ Curados" — solo si hay canales curados
+                        if (hasCurados) {
+                            FilterChip(
+                                selected = selectedGroup == "⭐",
+                                onClick = { selectedGroup = if (selectedGroup == "⭐") "" else "⭐" },
+                                label = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Star,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                        Text("Curados")
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFB45309),
+                                    selectedLabelColor = Color.White,
+                                ),
+                            )
+                        }
                         groups.forEach { group ->
                             FilterChip(
                                 selected = selectedGroup == group,
@@ -127,17 +164,19 @@ fun LiveScreen(
                 }
 
                 // ── Lista de canales filtrada ─────────────────
-                val visibleItems = if (selectedGroup.isEmpty()) {
-                    state.items
-                } else {
-                    state.items.filter { it.groupTitle == selectedGroup }
+                val showingCurados = selectedGroup == "⭐"
+                val visibleCurados = if (showingCurados || selectedGroup.isEmpty()) state.curados else emptyList()
+                val visibleItems   = when {
+                    showingCurados          -> emptyList()
+                    selectedGroup.isEmpty() -> state.items
+                    else                    -> state.items.filter { it.groupTitle == selectedGroup }
                 }
-
                 val grouped = visibleItems.groupBy { it.groupTitle ?: "" }
+                val totalVisible = visibleCurados.size + visibleItems.size
 
                 // Contador de canales
                 Text(
-                    text = "${visibleItems.size} canal${if (visibleItems.size != 1) "es" else ""}",
+                    text = "$totalVisible canal${if (totalVisible != 1) "es" else ""}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -147,9 +186,43 @@ fun LiveScreen(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(bottom = 80.dp),
                 ) {
+                    // ── Sección Curados ────────────────────────
+                    if (visibleCurados.isNotEmpty()) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = Color(0xFFF59E0B),
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Text(
+                                    text = "Canales Curados",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color(0xFFF59E0B),
+                                )
+                            }
+                        }
+                        items(visibleCurados, key = { "curado_${it.id}" }) { channel ->
+                            LiveChannelRow(
+                                imageUrl = channel.image,
+                                title = channel.title,
+                                groupTitle = null,
+                                onClick = { onChannelClick(channel) },
+                            )
+                            HorizontalDivider(color = CineDivider, thickness = 0.5.dp)
+                        }
+                    }
+
+                    // ── Canales regulares ──────────────────────
                     grouped.forEach { (group, channels) ->
-                        // Solo mostrar header de grupo si no hay filtro activo
-                        // (con filtro, el grupo ya es obvio)
                         if (group.isNotBlank() && selectedGroup.isEmpty()) {
                             item {
                                 Text(
