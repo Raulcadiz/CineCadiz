@@ -3,54 +3,139 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ title or 'Reproductor' }} — CineCadiz</title>
+    <title>{{ title or 'Directo' }} — CineCadiz</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; height: 100vh; display: flex; flex-direction: column; font-family: sans-serif; }
-        #bar { color: #ccc; font-size: .85rem; padding: .4rem .8rem; background: #111; flex-shrink: 0; }
+        body { background: #000; height: 100vh; display: flex; flex-direction: column; font-family: sans-serif; overflow: hidden; }
+        #bar {
+            color: #ddd; font-size: .85rem; padding: .35rem .9rem;
+            background: #111; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+        }
+        #bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #bar button {
+            background: #222; border: 1px solid #444; color: #ccc;
+            border-radius: 4px; padding: .15rem .55rem; font-size: .78rem; cursor: pointer; flex-shrink: 0;
+        }
+        #bar button:hover { background: #333; }
         video { flex: 1; width: 100%; display: block; background: #000; }
-        #err { color: #f66; padding: 1rem; display: none; font-size: .9rem; }
+        #overlay {
+            position: absolute; inset: 0; background: rgba(0,0,0,.82);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: .8rem; color: #eee; font-size: .95rem;
+        }
+        #overlay.hidden { display: none; }
+        #overlay .spin {
+            width: 36px; height: 36px; border: 3px solid #444;
+            border-top-color: #e53; border-radius: 50%;
+            animation: spin .8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #overlay button {
+            margin-top: .4rem; background: #e53; border: none; color: #fff;
+            padding: .45rem 1.1rem; border-radius: 6px; font-size: .88rem; cursor: pointer;
+        }
+        #overlay button:hover { background: #c33; }
     </style>
 </head>
 <body>
-    {% if title %}<div id="bar">📡 {{ title }}</div>{% endif %}
-    <video id="v" controls autoplay playsinline></video>
-    <div id="err"></div>
+    {% if title %}
+    <div id="bar">
+        <span>📡 {{ title }}</span>
+        <button onclick="reconnect()">↺ Reconectar</button>
+    </div>
+    {% endif %}
+    <div style="position:relative;flex:1;display:flex;flex-direction:column;">
+        <video id="v" controls autoplay playsinline></video>
+        <div id="overlay">
+            <div class="spin"></div>
+            <span id="msg">Conectando…</span>
+            <button onclick="reconnect()" style="display:none" id="btn-retry">↺ Reintentar</button>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
     <script>
-        const v   = document.getElementById('v');
-        const err = document.getElementById('err');
-        const url = {{ url | tojson }};
+    const v    = document.getElementById('v');
+    const ovl  = document.getElementById('overlay');
+    const msg  = document.getElementById('msg');
+    const spin = ovl.querySelector('.spin');
+    const btnR = document.getElementById('btn-retry');
+    const url  = {{ url | tojson }};
 
-        function showErr(msg) {
-            err.style.display = 'block';
-            err.textContent = '❌ ' + msg;
-        }
+    let _hls, _mpegts, _retries = 0;
 
+    function showLoading(text) {
+        ovl.classList.remove('hidden');
+        spin.style.display = 'block';
+        btnR.style.display = 'none';
+        msg.textContent = text || 'Conectando…';
+    }
+    function showError(text) {
+        ovl.classList.remove('hidden');
+        spin.style.display = 'none';
+        btnR.style.display = 'block';
+        msg.textContent = text || 'Error de stream';
+    }
+    function hideOverlay() { ovl.classList.add('hidden'); }
+
+    v.addEventListener('playing', hideOverlay);
+    v.addEventListener('waiting', () => showLoading('Buffering…'));
+
+    function destroy() {
+        try { _hls?.destroy(); } catch(_) {}
+        try { _mpegts?.destroy(); } catch(_) {}
+        _hls = null; _mpegts = null;
+        v.pause(); v.removeAttribute('src'); v.load();
+    }
+
+    function reconnect() {
+        _retries++;
+        showLoading(_retries > 1 ? `Reintentando (${_retries})…` : 'Reconectando…');
+        destroy();
+        setTimeout(start, 800);
+    }
+
+    function start() {
         const urlLow = url.toLowerCase().split('?')[0];
         const isTs   = urlLow.endsWith('.ts');
-        const isM3u8 = urlLow.endsWith('.m3u8') || urlLow.includes('.m3u8?');
 
-        if (isM3u8 || (!isTs && typeof Hls !== 'undefined' && Hls.isSupported())) {
-            const hls = new Hls({ xhrSetup: xhr => { xhr.withCredentials = false; } });
-            hls.loadSource(url);
-            hls.attachMedia(v);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-            hls.on(Hls.Events.ERROR, (_, d) => {
-                if (d.fatal) showErr('Stream no disponible o formato no compatible.');
+        if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            // MPEG-TS directo (canales live Xtream Codes)
+            _mpegts = mpegts.createPlayer({
+                type: 'mpegts', url, isLive: true,
+                enableStashBuffer: false,
             });
-        } else if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            const p = mpegts.createPlayer({ type: 'mpegts', url, isLive: true });
-            p.attachMediaElement(v);
-            p.load();
+            _mpegts.attachMediaElement(v);
+            _mpegts.load();
             v.play().catch(() => {});
-            p.on(mpegts.Events.ERROR, () => showErr('Stream no disponible o formato no compatible.'));
+            _mpegts.on(mpegts.Events.ERROR, (t, d) => {
+                console.warn('[mpegts]', t, d);
+                showError('Stream no disponible. Pulsa Reintentar.');
+            });
+        } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+            // HLS
+            _hls = new Hls({
+                liveSyncDurationCount: 3,
+                manifestLoadingMaxRetry: 4,
+                fragLoadingMaxRetry: 4,
+                xhrSetup: xhr => { xhr.withCredentials = false; },
+            });
+            _hls.loadSource(url);
+            _hls.attachMedia(v);
+            _hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+            _hls.on(Hls.Events.ERROR, (_, d) => {
+                if (d.fatal) showError('Stream no disponible. Pulsa Reintentar.');
+            });
         } else {
             v.src = url;
-            v.onerror = () => showErr('Stream no disponible o formato no compatible.');
+            v.onerror = () => showError('Formato no compatible con este navegador.');
         }
+    }
+
+    showLoading();
+    start();
     </script>
 </body>
 </html>

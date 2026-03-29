@@ -744,6 +744,25 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
         return;
     }
 
+    // Canales live HTTP en página HTTPS: el VPS no puede retransmitirlos
+    // (el proveedor IPTV bloquea IPs de datacenter para /live/).
+    // Abrimos el player HTTP en popup reutilizable — el navegador conecta
+    // directamente desde la IP doméstica del usuario, igual que la APK.
+    const urlLow0 = url.toLowerCase().split('?')[0];
+    if (location.protocol === 'https:' && url.startsWith('http://') &&
+        (urlLow0.includes('/live/') || urlLow0.endsWith('.ts'))) {
+        const pw = Math.round(screen.width  * 0.82);
+        const ph = Math.round(screen.height * 0.82);
+        const pl = Math.round((screen.width  - pw) / 2);
+        const pt = Math.round((screen.height - ph) / 2);
+        window.open(
+            `http://${location.hostname}/player?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title || '')}`,
+            'cinecadiz_live_player',
+            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,noopener`
+        );
+        return;
+    }
+
     _destroyHls();
     // Cerrar el modal de detalles si está abierto para que no quede atrapado detrás
     el.detailsModal.style.display = 'none';
