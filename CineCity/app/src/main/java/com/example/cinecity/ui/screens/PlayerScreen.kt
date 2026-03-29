@@ -112,10 +112,11 @@ fun PlayerScreen(
     }
 
     // ── Live failover state ───────────────────────────────────
-    var liveActiveUrl by remember(currentItem) { mutableStateOf(currentItem.streamUrl) }
-    var liveFailoverTried by remember(currentItem) { mutableStateOf(false) }
+    var liveActiveUrl       by remember(currentItem) { mutableStateOf(currentItem.streamUrl) }
+    var liveStreamProxyTried by remember(currentItem) { mutableStateOf(false) }
     var liveHlsFallbackTried by remember(currentItem) { mutableStateOf(false) }
-    var liveUnavailable by remember(currentItem) { mutableStateOf(false) }
+    var liveFailoverTried    by remember(currentItem) { mutableStateOf(false) }
+    var liveUnavailable      by remember(currentItem) { mutableStateOf(false) }
 
     // ── Server picker state ───────────────────────────────────
     val liveUrls = currentItem.liveUrls
@@ -124,27 +125,13 @@ fun PlayerScreen(
     var servers by remember(currentItem) { mutableStateOf<List<LiveServer>>(emptyList()) }
     var serversLoading by remember(currentItem) { mutableStateOf(false) }
 
-    // ── URL del stream ────────────────────────────────────────
-    val streamUrl = remember(currentItem, liveActiveUrl) {
-        ApiClient.streamUrl(
-            if (currentItem.type == "live") liveActiveUrl else currentItem.streamUrl
-        )
-    }
+    // ── URL del stream (siempre directa; proxy solo como fallback) ────
+    val rawStreamUrl = if (currentItem.type == "live") liveActiveUrl else currentItem.streamUrl
 
     // ── Estado de error y fallback ────────────────────────────
     var playerError by remember(currentItem) { mutableStateOf<String?>(null) }
-    var reportSent by remember(currentItem) { mutableStateOf(false) }
+    var reportSent  by remember(currentItem) { mutableStateOf(false) }
     var proxyFallbackTried by remember(currentItem) { mutableStateOf(false) }
-
-    val rawUrl = remember(streamUrl) {
-        if (streamUrl.contains("/api/hls-proxy?url=")) {
-            try {
-                java.net.URLDecoder.decode(
-                    streamUrl.substringAfter("/api/hls-proxy?url="), "UTF-8"
-                )
-            } catch (_: Exception) { null }
-        } else null
-    }
 
     // ── Estado del OSD ────────────────────────────────────────
     var osdVisible by remember { mutableStateOf(false) }
@@ -180,7 +167,7 @@ fun PlayerScreen(
     var hasRestored by remember(currentItem.id) { mutableStateOf(false) }
 
     // ── ExoPlayer ─────────────────────────────────────────────
-    val exoPlayer = remember(streamUrl) {
+    val exoPlayer = remember(rawStreamUrl) {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
             .setDefaultRequestProperties(mapOf("Icy-MetaData" to "0"))
@@ -189,14 +176,13 @@ fun PlayerScreen(
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
             .build().apply {
-                val mediaItem = when {
-                    streamUrl.contains("/api/hls-proxy") ||
-                    streamUrl.lowercase().contains(".m3u8") ->
-                        MediaItem.Builder()
-                            .setUri(Uri.parse(streamUrl))
-                            .setMimeType(MimeTypes.APPLICATION_M3U8)
-                            .build()
-                    else -> MediaItem.fromUri(Uri.parse(streamUrl))
+                val mediaItem = if (rawStreamUrl.lowercase().contains(".m3u8")) {
+                    MediaItem.Builder()
+                        .setUri(Uri.parse(rawStreamUrl))
+                        .setMimeType(MimeTypes.APPLICATION_M3U8)
+                        .build()
+                } else {
+                    MediaItem.fromUri(Uri.parse(rawStreamUrl))
                 }
                 setMediaItem(mediaItem)
                 prepare()
@@ -258,32 +244,37 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // Fallback para VOD
+                // VOD: directo → stream-proxy
                 if (currentItem.type != "live" && !proxyFallbackTried) {
                     proxyFallbackTried = true
                     exoPlayer.stop()
-                    val fallbackItem = if (rawUrl != null) {
-                        MediaItem.fromUri(Uri.parse(rawUrl))
-                    } else {
-                        val enc = java.net.URLEncoder.encode(currentItem.streamUrl, "UTF-8")
-                        MediaItem.fromUri(Uri.parse("${ApiClient.BASE_URL}api/stream-proxy?url=$enc"))
-                    }
-                    exoPlayer.setMediaItem(fallbackItem)
+                    exoPlayer.setMediaItem(
+                        MediaItem.fromUri(Uri.parse(ApiClient.streamProxyUrl(currentItem.streamUrl)))
+                    )
                     exoPlayer.prepare()
                     exoPlayer.play()
                     return
                 }
 
-                // Live: stream-proxy → hls-proxy
-                if (currentItem.type == "live" && !liveHlsFallbackTried
-                    && streamUrl.contains("/api/stream-proxy")) {
+                // Live fallback 1: directo falló → stream-proxy
+                if (currentItem.type == "live" && !liveStreamProxyTried) {
+                    liveStreamProxyTried = true
+                    exoPlayer.stop()
+                    exoPlayer.setMediaItem(
+                        MediaItem.fromUri(Uri.parse(ApiClient.streamProxyUrl(liveActiveUrl)))
+                    )
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+                    return
+                }
+
+                // Live fallback 2: stream-proxy falló → hls-proxy
+                if (currentItem.type == "live" && !liveHlsFallbackTried) {
                     liveHlsFallbackTried = true
-                    val hlsUrl = "${ApiClient.BASE_URL}api/hls-proxy?url=" +
-                        java.net.URLEncoder.encode(liveActiveUrl, "UTF-8")
                     exoPlayer.stop()
                     exoPlayer.setMediaItem(
                         MediaItem.Builder()
-                            .setUri(Uri.parse(hlsUrl))
+                            .setUri(Uri.parse(ApiClient.hlsProxyUrl(liveActiveUrl)))
                             .setMimeType(MimeTypes.APPLICATION_M3U8)
                             .build()
                     )
@@ -292,7 +283,7 @@ fun PlayerScreen(
                     return
                 }
 
-                // Live: failover al siguiente servidor
+                // Live fallback 3: todo falló → intentar servidor alternativo
                 if (currentItem.type == "live" && !liveFailoverTried) {
                     liveFailoverTried = true
                     scope.launch {
@@ -301,18 +292,13 @@ fun PlayerScreen(
                             val response = repo.reportDown(currentItem.id, liveActiveUrl)
                             if (response.channelStillAlive && response.nextUrl != null) {
                                 liveActiveUrl = response.nextUrl
-                                liveFailoverTried = false
-                                val newStreamUrl = ApiClient.streamUrl(response.nextUrl)
+                                // reset fallback flags for the new URL
+                                liveStreamProxyTried = false
+                                liveHlsFallbackTried = false
+                                liveFailoverTried    = false
                                 exoPlayer.stop()
                                 exoPlayer.setMediaItem(
-                                    MediaItem.Builder()
-                                        .setUri(Uri.parse(newStreamUrl))
-                                        .apply {
-                                            if (newStreamUrl.contains("/api/hls-proxy") ||
-                                                newStreamUrl.lowercase().contains(".m3u8")) {
-                                                setMimeType(MimeTypes.APPLICATION_M3U8)
-                                            }
-                                        }.build()
+                                    MediaItem.fromUri(Uri.parse(response.nextUrl))
                                 )
                                 exoPlayer.prepare()
                                 exoPlayer.play()
@@ -669,20 +655,20 @@ fun PlayerScreen(
                                     .clickable {
                                         showServerPicker = false
                                         liveActiveUrl = srv.url
+                                        liveStreamProxyTried = false
+                                        liveHlsFallbackTried = false
                                         liveFailoverTried = false
                                         liveUnavailable = false
                                         playerError = null
-                                        val newUrl = ApiClient.streamUrl(srv.url)
                                         exoPlayer.stop()
                                         exoPlayer.setMediaItem(
-                                            MediaItem.Builder()
-                                                .setUri(Uri.parse(newUrl))
-                                                .apply {
-                                                    if (newUrl.contains("/api/hls-proxy") ||
-                                                        newUrl.lowercase().contains(".m3u8")) {
-                                                        setMimeType(MimeTypes.APPLICATION_M3U8)
-                                                    }
-                                                }.build()
+                                            if (srv.url.lowercase().contains(".m3u8"))
+                                                MediaItem.Builder()
+                                                    .setUri(Uri.parse(srv.url))
+                                                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                                                    .build()
+                                            else
+                                                MediaItem.fromUri(Uri.parse(srv.url))
                                         )
                                         exoPlayer.prepare()
                                         exoPlayer.play()

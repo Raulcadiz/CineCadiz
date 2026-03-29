@@ -101,4 +101,12 @@ interface ApiService {
         @Path("id") id: Int,
         @Body body: SetServerRequest,
     ): Response<Unit>
+
+    @GET("api/version")
+    suspend fun getAppVersion(): AppVersionResponse
+
+    @GET("api/canales-curados")
+    suspend fun getCanalesCurados(): List<Contenido>
 }
+
+data class AppVersionResponse(val version: String, val apk_url: String)

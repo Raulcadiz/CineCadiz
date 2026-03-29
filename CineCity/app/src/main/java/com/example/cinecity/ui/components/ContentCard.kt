@@ -23,6 +23,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,8 @@ import coil.compose.AsyncImage
 import com.example.cinecity.data.api.ApiClient
 import com.example.cinecity.ui.theme.CineCard
 import com.example.cinecity.ui.theme.CineSubtext
+import com.example.cinecity.ui.theme.LocalTtsOnFocus
+import com.example.cinecity.ui.theme.LocalTtsSpeakFn
 
 private val FocusColor = Color(0xFFFFD700)
 
@@ -50,16 +54,23 @@ fun ContentCard(
         label = "cardScale",
     )
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val ttsOnFocus  = LocalTtsOnFocus.current
+    val ttsSpeakFn  = LocalTtsSpeakFn.current
 
     LaunchedEffect(isFocused) {
-        if (isFocused) bringIntoViewRequester.bringIntoView()
+        if (isFocused) {
+            bringIntoViewRequester.bringIntoView()
+            if (ttsOnFocus) ttsSpeakFn?.invoke(title)
+        }
     }
 
+    val desc = if (subtitle != null) "$title · $subtitle" else title
     Column(
         modifier = modifier
             .width(width)
             .scale(scale)
             .bringIntoViewRequester(bringIntoViewRequester)
+            .semantics { contentDescription = desc }
             .onFocusChanged { isFocused = it.isFocused }
             .clickable(onClick = onClick),
     ) {
@@ -127,16 +138,23 @@ fun LiveChannelRow(
         label = "rowScale",
     )
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val ttsOnFocus  = LocalTtsOnFocus.current
+    val ttsSpeakFn  = LocalTtsSpeakFn.current
 
     LaunchedEffect(isFocused) {
-        if (isFocused) bringIntoViewRequester.bringIntoView()
+        if (isFocused) {
+            bringIntoViewRequester.bringIntoView()
+            if (ttsOnFocus) ttsSpeakFn?.invoke(title)
+        }
     }
 
+    val desc = if (!groupTitle.isNullOrBlank()) "$title · $groupTitle" else title
     Row(
         modifier = modifier
             .fillMaxWidth()
             .scale(scale)
             .bringIntoViewRequester(bringIntoViewRequester)
+            .semantics { contentDescription = desc }
             .onFocusChanged { isFocused = it.isFocused }
             .then(
                 if (isFocused) Modifier.border(1.dp, FocusColor, RoundedCornerShape(6.dp))
