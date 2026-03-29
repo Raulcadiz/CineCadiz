@@ -547,6 +547,51 @@ async function showSeriesDetail(baseTitle) {
 // ── Reproductor ────────────────────────────────────────────
 let _hls = null;   // instancia HLS.js activa
 
+// Detecta Android WebView (workers con limitaciones en versiones antiguas)
+const _isWebView = /wv/.test(navigator.userAgent) ||
+    (/Android/.test(navigator.userAgent) && /Version\/\d/.test(navigator.userAgent));
+
+/**
+ * Config HLS.js optimizada para live/IPTV.
+ * Segura también para VOD: liveDurationInfinity solo activa en playlists live;
+ * liveBackBufferLength=0 solo aplica cuando la playlist es live.
+ */
+function _buildHlsConfig() {
+    return {
+        enableWorker:                   !_isWebView,  // desactivar en WebView por compatibilidad
+        liveDurationInfinity:           true,          // live sin EXT-X-ENDLIST no termina
+        liveBackBufferLength:           0,             // liberar memoria detrás del live edge
+        liveSyncDurationCount:          3,             // target = live_edge - 3 segmentos
+        liveMaxLatencyDurationCount:    8,             // si >8 segs de retraso → resync al edge
+        maxBufferLength:                20,            // buffer adelante (segundos)
+        maxMaxBufferLength:             40,            // límite superior
+        maxBufferSize:                  30 * 1000 * 1000,   // 30 MB
+        manifestLoadingMaxRetry:        10,
+        manifestLoadingRetryDelay:      500,
+        manifestLoadingMaxRetryTimeout: 32000,
+        fragLoadingMaxRetry:            6,
+        fragLoadingRetryDelay:          500,
+        fragLoadingMaxRetryTimeout:     16000,
+        levelLoadingMaxRetry:           6,
+        levelLoadingRetryDelay:         500,
+        levelLoadingMaxRetryTimeout:    16000,
+        xhrSetup: xhr => { xhr.withCredentials = false; },
+    };
+}
+
+/** Muestra badge "🔴 EN VIVO" junto al título del reproductor (solo una vez). */
+function _showLiveIndicator() {
+    const titleEl = document.getElementById('playerTitle');
+    if (!titleEl || titleEl.querySelector('.cc-live-badge')) return;
+    const badge = document.createElement('span');
+    badge.className = 'cc-live-badge';
+    badge.textContent = '🔴 EN VIVO';
+    badge.style.cssText = 'margin-left:.5rem;font-size:.68rem;font-weight:700;' +
+        'color:#e53;letter-spacing:.05em;vertical-align:middle;' +
+        'background:rgba(229,51,51,.15);padding:.1rem .35rem;border-radius:3px;';
+    titleEl.appendChild(badge);
+}
+
 /** Muestra/oculta el spinner de carga dentro del reproductor. */
 function _setPlayerLoading(on) {
     el.player?.querySelectorAll('.player-loading').forEach(e => e.remove());
@@ -575,6 +620,8 @@ function _destroyHls() {
     el.videoPlayer.load();   // cancela la descarga HTTP en curso
     el.videoPlayer.onerror = null;
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
+    // Limpiar badge "EN VIVO" al destruir el reproductor
+    document.getElementById('playerTitle')?.querySelector('.cc-live-badge')?.remove();
     _setPlayerLoading(false);
 }
 
@@ -664,23 +711,24 @@ function _showPlayerError(msg) {
 
 /** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
 function _loadHls(url) {
-    _hls = new Hls({
-        maxBufferLength:            30,
-        maxBufferSize:              60 * 1000 * 1000,
-        liveSyncDurationCount:      3,
-        liveBackBufferLength:       30,
-        manifestLoadingMaxRetry:    6,
-        manifestLoadingRetryDelay:  1000,
-        fragLoadingMaxRetry:        6,
-        fragLoadingRetryDelay:      1000,
-        levelLoadingMaxRetry:       6,
-        levelLoadingRetryDelay:     1000,
-        xhrSetup: (xhr) => { xhr.withCredentials = false; },
-    });
+    _hls = new Hls(_buildHlsConfig());
     _hls.loadSource(url);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
         el.videoPlayer.play().catch(() => {});
+    });
+    _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+        if (data.details && data.details.live) {
+            _showLiveIndicator();
+            // Asegurar config live en caliente (por si se creó con defaults)
+            _hls.config.liveDurationInfinity = true;
+            _hls.config.liveBackBufferLength = 0;
+        } else {
+            // VOD confirmado: ampliar buffer para scrubbing suave
+            _hls.config.maxBufferLength    = 60;
+            _hls.config.maxMaxBufferLength = 120;
+            _hls.config.maxBufferSize      = 120 * 1000 * 1000;
+        }
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
@@ -899,23 +947,22 @@ function _loadHlsDirect(url) {
         return;
     }
 
-    _hls = new Hls({
-        maxBufferLength:            30,
-        maxBufferSize:              60 * 1000 * 1000,
-        liveSyncDurationCount:      3,
-        liveBackBufferLength:       30,
-        manifestLoadingMaxRetry:    6,
-        manifestLoadingRetryDelay:  1000,
-        fragLoadingMaxRetry:        6,
-        fragLoadingRetryDelay:      1000,
-        levelLoadingMaxRetry:       6,
-        levelLoadingRetryDelay:     1000,
-        xhrSetup: xhr => { xhr.withCredentials = false; },
-    });
+    _hls = new Hls(_buildHlsConfig());
     _hls.loadSource(hlsUrl);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
         el.videoPlayer.play().catch(() => {});
+    });
+    _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+        if (data.details && data.details.live) {
+            _showLiveIndicator();
+            _hls.config.liveDurationInfinity = true;
+            _hls.config.liveBackBufferLength = 0;
+        } else {
+            _hls.config.maxBufferLength    = 60;
+            _hls.config.maxMaxBufferLength = 120;
+            _hls.config.maxBufferSize      = 120 * 1000 * 1000;
+        }
     });
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;

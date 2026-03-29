@@ -6,23 +6,45 @@
     <title>{{ title or 'Directo' }} — CineCadiz</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; height: 100vh; display: flex; flex-direction: column; font-family: sans-serif; overflow: hidden; }
+        body {
+            background: #000; height: 100vh;
+            display: flex; flex-direction: column;
+            font-family: sans-serif; overflow: hidden;
+            /* Evitar zoom por doble-tap en Android WebView */
+            touch-action: manipulation;
+        }
         #bar {
             color: #ddd; font-size: .85rem; padding: .35rem .9rem;
             background: #111; flex-shrink: 0;
-            display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+            display: flex; align-items: center; justify-content: space-between;
+            gap: .5rem; flex-wrap: wrap;
         }
-        #bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #bar-left { display: flex; align-items: center; gap: .4rem; min-width: 0; flex: 1; }
+        #bar-left span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #bar-actions { display: flex; gap: .4rem; flex-shrink: 0; }
         #bar button {
             background: #222; border: 1px solid #444; color: #ccc;
-            border-radius: 4px; padding: .15rem .55rem; font-size: .78rem; cursor: pointer; flex-shrink: 0;
+            border-radius: 4px; padding: .15rem .55rem; font-size: .78rem;
+            cursor: pointer; flex-shrink: 0; white-space: nowrap;
         }
         #bar button:hover { background: #333; }
-        video { flex: 1; width: 100%; display: block; background: #000; }
+        #bar button.active { color: #4f8; border-color: #4f8; }
+        #live-badge {
+            display: inline-block; color: #e53; font-size: .7rem; font-weight: 700;
+            letter-spacing: .05em; background: rgba(229,51,51,.15);
+            padding: .1rem .35rem; border-radius: 3px; flex-shrink: 0;
+        }
+        video {
+            flex: 1; width: 100%; display: block; background: #000;
+            /* Necesario para WebView con hardware acceleration */
+            -webkit-transform: translateZ(0); transform: translateZ(0);
+        }
+        #wrap { position: relative; flex: 1; display: flex; flex-direction: column; }
         #overlay {
             position: absolute; inset: 0; background: rgba(0,0,0,.82);
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            gap: .8rem; color: #eee; font-size: .95rem;
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: .8rem; color: #eee; font-size: .95rem;
+            padding: 1rem; text-align: center;
         }
         #overlay.hidden { display: none; }
         #overlay .spin {
@@ -30,111 +52,280 @@
             border-top-color: #e53; border-radius: 50%;
             animation: spin .8s linear infinite;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        #overlay .status-icon { font-size: 2rem; }
         #overlay button {
             margin-top: .4rem; background: #e53; border: none; color: #fff;
             padding: .45rem 1.1rem; border-radius: 6px; font-size: .88rem; cursor: pointer;
         }
         #overlay button:hover { background: #c33; }
+        #retry-count {
+            font-size: .75rem; color: #888; margin-top: -.3rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     {% if title %}
     <div id="bar">
-        <span>📡 {{ title }}</span>
-        <button onclick="reconnect()">↺ Reconectar</button>
+        <div id="bar-left">
+            <span>📡 {{ title }}</span>
+            <span id="live-badge" style="display:none">🔴 EN VIVO</span>
+        </div>
+        <div id="bar-actions">
+            <button id="btn-ll" onclick="toggleLowLatency()" title="Alternar baja latencia">⚡ Baja latencia</button>
+            <button onclick="manualReconnect()">↺ Reconectar</button>
+        </div>
     </div>
     {% endif %}
-    <div style="position:relative;flex:1;display:flex;flex-direction:column;">
-        <video id="v" controls autoplay playsinline></video>
+
+    <div id="wrap">
+        <video id="v" controls autoplay playsinline webkit-playsinline
+               x-webkit-airplay="allow" preload="none"></video>
         <div id="overlay">
-            <div class="spin"></div>
+            <div class="spin" id="spin"></div>
+            <div class="status-icon" id="status-icon" style="display:none">📺</div>
             <span id="msg">Conectando…</span>
-            <button onclick="reconnect()" style="display:none" id="btn-retry">↺ Reintentar</button>
+            <div id="retry-count"></div>
+            <button onclick="manualReconnect()" style="display:none" id="btn-retry">↺ Reintentar</button>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
     <script>
-    const v    = document.getElementById('v');
-    const ovl  = document.getElementById('overlay');
-    const msg  = document.getElementById('msg');
-    const spin = ovl.querySelector('.spin');
-    const btnR = document.getElementById('btn-retry');
-    const url  = {{ url | tojson }};
+    // ── Elementos ───────────────────────────────────────────────────
+    const v          = document.getElementById('v');
+    const ovl        = document.getElementById('overlay');
+    const msgEl      = document.getElementById('msg');
+    const spinEl     = document.getElementById('spin');
+    const statusIcon = document.getElementById('status-icon');
+    const btnRetry   = document.getElementById('btn-retry');
+    const retryCount = document.getElementById('retry-count');
+    const liveBadge  = document.getElementById('live-badge');
+    const btnLl      = document.getElementById('btn-ll');
+    const url        = {{ url | tojson }};
 
-    let _hls, _mpegts, _retries = 0;
+    // ── Detección Android WebView ────────────────────────────────────
+    // Los Web Workers pueden dar problemas en WebView antiguo (API <33)
+    const isWebView = /wv/.test(navigator.userAgent) ||
+        (/Android/.test(navigator.userAgent) && /Version\/\d/.test(navigator.userAgent));
 
+    // ── Estado ──────────────────────────────────────────────────────
+    let _hls       = null;
+    let _mpegts    = null;
+    let _retries   = 0;
+    const MAX_RETRIES = 10;
+    let _retryTimer   = null;
+    let _isLive       = false;
+    let _lowLatency   = false;
+    let _started      = false;
+
+    // ── Helpers de UI ───────────────────────────────────────────────
     function showLoading(text) {
         ovl.classList.remove('hidden');
-        spin.style.display = 'block';
-        btnR.style.display = 'none';
-        msg.textContent = text || 'Conectando…';
+        spinEl.style.display    = 'block';
+        statusIcon.style.display = 'none';
+        btnRetry.style.display  = 'none';
+        retryCount.textContent  = '';
+        msgEl.textContent = text || 'Conectando…';
     }
-    function showError(text) {
+
+    function showError(text, showRetryBtn = true) {
         ovl.classList.remove('hidden');
-        spin.style.display = 'none';
-        btnR.style.display = 'block';
-        msg.textContent = text || 'Error de stream';
+        spinEl.style.display    = 'none';
+        statusIcon.style.display = 'block';
+        btnRetry.style.display  = showRetryBtn ? 'inline-block' : 'none';
+        msgEl.textContent = text || 'Stream no disponible';
     }
-    function hideOverlay() { ovl.classList.add('hidden'); }
 
-    v.addEventListener('playing', hideOverlay);
-    v.addEventListener('waiting', () => showLoading('Buffering…'));
+    function hideOverlay() {
+        ovl.classList.add('hidden');
+        retryCount.textContent = '';
+        _retries = 0;   // reset al reproducir OK
+    }
 
+    function setLiveBadge(on) {
+        if (liveBadge) liveBadge.style.display = on ? 'inline-block' : 'none';
+    }
+
+    // ── Eventos del <video> ─────────────────────────────────────────
+    v.addEventListener('playing',  hideOverlay);
+    v.addEventListener('waiting',  () => {
+        // No mostrar spinner si ya está visible un error
+        if (!ovl.classList.contains('hidden')) return;
+        showLoading(_isLive ? 'Buffering en directo…' : 'Buffering…');
+    });
+    v.addEventListener('stalled', () => {
+        if (_isLive && ovl.classList.contains('hidden')) {
+            showLoading('Stream inestable, esperando señal…');
+        }
+    });
+    v.addEventListener('error', (e) => {
+        // Solo actuar si no hay un reproductor HLS/mpegts activo manejando el error
+        if (_hls || _mpegts) return;
+        console.warn('[video] error nativo', e);
+        showError('Stream no compatible con este reproductor.');
+    });
+
+    // ── Config HLS.js optimizada para live + compatible con VOD ─────
+    function buildHlsConfig() {
+        return {
+            enableWorker:                   !isWebView,
+            liveDurationInfinity:           true,
+            liveBackBufferLength:           0,
+            liveSyncDurationCount:          3,
+            liveMaxLatencyDurationCount:    _lowLatency ? 4 : 8,
+            maxBufferLength:                _lowLatency ? 8 : 20,
+            maxMaxBufferLength:             _lowLatency ? 16 : 40,
+            maxBufferSize:                  30 * 1000 * 1000,
+            manifestLoadingMaxRetry:        10,
+            manifestLoadingRetryDelay:      500,
+            manifestLoadingMaxRetryTimeout: 32000,
+            fragLoadingMaxRetry:            6,
+            fragLoadingRetryDelay:          500,
+            fragLoadingMaxRetryTimeout:     16000,
+            levelLoadingMaxRetry:           6,
+            levelLoadingRetryDelay:         500,
+            levelLoadingMaxRetryTimeout:    16000,
+            xhrSetup: xhr => { xhr.withCredentials = false; },
+        };
+    }
+
+    // ── Destrucción limpia ──────────────────────────────────────────
     function destroy() {
-        try { _hls?.destroy(); } catch(_) {}
-        try { _mpegts?.destroy(); } catch(_) {}
-        _hls = null; _mpegts = null;
-        v.pause(); v.removeAttribute('src'); v.load();
+        clearTimeout(_retryTimer);
+        if (_hls)    { try { _hls.destroy(); }    catch (_) {} _hls = null; }
+        if (_mpegts) { try { _mpegts.destroy(); } catch (_) {} _mpegts = null; }
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+        _isLive = false;
+        setLiveBadge(false);
     }
 
-    function reconnect() {
+    // ── Reconexión con backoff exponencial ─────────────────────────
+    // Delay: 1s → 1.5s → 2.25s → 3.4s → 5s → 7.6s → 11.4s → …  (máx 30s)
+    function scheduleReconnect() {
         _retries++;
-        showLoading(_retries > 1 ? `Reintentando (${_retries})…` : 'Reconectando…');
+        if (_retries > MAX_RETRIES) {
+            showError(`Sin señal tras ${MAX_RETRIES} intentos.\n¿Está el canal en directo ahora?`);
+            return;
+        }
+        const delay = Math.min(1000 * Math.pow(1.5, _retries - 1), 30000);
+        const sec   = Math.round(delay / 1000);
+        showLoading('Reconectando…');
+        retryCount.textContent = `Intento ${_retries}/${MAX_RETRIES} · espera ${sec}s`;
         destroy();
-        setTimeout(start, 800);
+        _retryTimer = setTimeout(start, delay);
     }
 
+    // Reconexión manual (botón Reintentar / Reconectar)
+    function manualReconnect() {
+        _retries = 0;   // reset contador
+        showLoading('Reconectando…');
+        destroy();
+        setTimeout(start, 300);
+    }
+    window.manualReconnect = manualReconnect;   // exponer al onclick del botón
+
+    // ── Toggle baja latencia ────────────────────────────────────────
+    function toggleLowLatency() {
+        _lowLatency = !_lowLatency;
+        if (btnLl) {
+            btnLl.classList.toggle('active', _lowLatency);
+            btnLl.textContent = _lowLatency ? '⚡ Baja lat. ON' : '⚡ Baja latencia';
+        }
+        // Aplicar en caliente si hay instancia HLS activa
+        if (_hls) {
+            _hls.config.liveMaxLatencyDurationCount = _lowLatency ? 4 : 8;
+            _hls.config.maxBufferLength             = _lowLatency ? 8 : 20;
+            _hls.config.maxMaxBufferLength          = _lowLatency ? 16 : 40;
+        }
+    }
+    window.toggleLowLatency = toggleLowLatency;
+
+    // ── Inicio del stream ───────────────────────────────────────────
     function start() {
+        _started = true;
         const urlLow = url.toLowerCase().split('?')[0];
         const isTs   = urlLow.endsWith('.ts');
 
         if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            // MPEG-TS directo (canales live Xtream Codes)
-            _mpegts = mpegts.createPlayer({
-                type: 'mpegts', url, isLive: true,
-                enableStashBuffer: false,
-            });
+            // ── MPEG-TS directo (canales Xtream Codes /live/USER/PASS/ID.ts) ──
+            _mpegts = mpegts.createPlayer(
+                { type: 'mpegts', url, isLive: true },
+                {
+                    enableWorker:        !isWebView,
+                    enableStashBuffer:   false,
+                    lazyLoadMaxDuration: 10,
+                    seekType:            'range',
+                }
+            );
             _mpegts.attachMediaElement(v);
             _mpegts.load();
             v.play().catch(() => {});
-            _mpegts.on(mpegts.Events.ERROR, (t, d) => {
-                console.warn('[mpegts]', t, d);
-                showError('Stream no disponible. Pulsa Reintentar.');
+            _isLive = true;
+            setLiveBadge(true);
+
+            _mpegts.on(mpegts.Events.ERROR, (type, detail) => {
+                console.warn('[mpegts] error', type, detail);
+                try { _mpegts.destroy(); } catch (_) {}
+                _mpegts = null;
+                scheduleReconnect();
             });
+
         } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-            // HLS
-            _hls = new Hls({
-                liveSyncDurationCount: 3,
-                manifestLoadingMaxRetry: 4,
-                fragLoadingMaxRetry: 4,
-                xhrSetup: xhr => { xhr.withCredentials = false; },
-            });
+            // ── HLS.js ────────────────────────────────────────────────────
+            _hls = new Hls(buildHlsConfig());
             _hls.loadSource(url);
             _hls.attachMedia(v);
-            _hls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
-            _hls.on(Hls.Events.ERROR, (_, d) => {
-                if (d.fatal) showError('Stream no disponible. Pulsa Reintentar.');
+
+            _hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                v.play().catch(() => {});
             });
-        } else {
+
+            // Detectar live/VOD tras cargar el primer nivel de playlist
+            _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+                if (data.details && data.details.live) {
+                    _isLive = true;
+                    setLiveBadge(true);
+                    _hls.config.liveDurationInfinity = true;
+                    _hls.config.liveBackBufferLength = 0;
+                } else {
+                    // VOD: ampliar buffer para scrubbing
+                    _hls.config.maxBufferLength    = 60;
+                    _hls.config.maxMaxBufferLength = 120;
+                    _hls.config.maxBufferSize      = 120 * 1000 * 1000;
+                }
+            });
+
+            _hls.on(Hls.Events.ERROR, (_, d) => {
+                console.warn('[hls] error', d.type, d.details, 'fatal:', d.fatal);
+                if (!d.fatal) return;
+
+                const code = d.response?.code;
+                if (code === 403 || code === 401) {
+                    destroy();
+                    showError('Acceso denegado al stream (error 403).\nEl canal puede estar protegido o caído.', true);
+                    return;
+                }
+                scheduleReconnect();
+            });
+
+        } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+            // ── HLS nativo (Safari / WKWebView iOS) ──────────────────────
             v.src = url;
-            v.onerror = () => showError('Formato no compatible con este navegador.');
+            v.play().catch(() => {});
+
+        } else {
+            // ── Fallback nativo ───────────────────────────────────────────
+            v.src = url;
+            v.play().catch(() => {});
         }
     }
 
-    showLoading();
+    // ── Arrancar ────────────────────────────────────────────────────
+    showLoading('Conectando…');
     start();
     </script>
 </body>
