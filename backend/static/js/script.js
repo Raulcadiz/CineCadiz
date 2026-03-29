@@ -721,7 +721,10 @@ function _showPlayerError(msg, errCode) {
 
 /** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
 function _loadHls(url) {
-    _hls = new Hls(_buildHlsConfig());
+    // manifestLoadingMaxRetry: 0 — si el proxy devuelve error en el manifest, fallar
+    // inmediatamente sin reintentos. El proxy es same-origin y fiable; si falla es porque
+    // el servidor IPTV está bloqueado, no por un problema de red transitorio.
+    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: 0 });
     _hls.loadSource(url);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -933,7 +936,11 @@ function _playWithMpegts(url, isLive) {
         try { player.destroy(); } catch (_) {}
         window._mpegtsPlayer = null;
         _setPlayerLoading(false);
-        _showPlayerError('Stream MPEG-TS no disponible o bloqueado en el servidor');
+        if (errType === mpegts.ErrorTypes.NETWORK_ERROR || errType === 'NetworkError') {
+            _showPlayerError('El servidor IPTV puede estar bloqueando las peticiones desde el proxy.', 2);
+        } else {
+            _showPlayerError('Stream MPEG-TS no disponible o bloqueado en el servidor');
+        }
     });
 }
 
@@ -1035,15 +1042,21 @@ function _tryNative(url) {
         console.warn('[player] _tryNative onerror src=proxy?', src === proxyUrl, 'code', code, el.videoPlayer.error?.message);
         el.videoPlayer.onerror = null;
         if (src === proxyUrl) {
-            // Diagnóstico: ver qué devuelve realmente el proxy
+            // Probe: determinar si el proxy está bloqueado (502/403) o si es un problema de codec
             fetch(proxyUrl, { method: 'GET', headers: { Range: 'bytes=0-63' } })
                 .then(r => r.text().then(t => {
                     console.warn('[proxy-diag] status:', r.status,
                         '| ct:', r.headers.get('content-type'),
                         '| body[0..64]:', JSON.stringify(t.slice(0, 64)));
+                    if (r.status === 502 || r.status === 403 || r.status === 401) {
+                        // Proxy detectó que el servidor IPTV bloqueó o devolvió respuesta inválida
+                        _setPlayerLoading(false);
+                        _showPlayerError('El servidor IPTV puede estar bloqueando las peticiones desde el proxy.', 2);
+                    } else {
+                        _lastResort();
+                    }
                 }))
-                .catch(e => console.warn('[proxy-diag] fetch error:', e));
-            _lastResort();
+                .catch(e => { console.warn('[proxy-diag] fetch error:', e); _lastResort(); });
             return;
         }
         // Directo falló → reintentar via proxy
