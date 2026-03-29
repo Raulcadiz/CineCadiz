@@ -704,8 +704,25 @@ def stream_proxy():
     # Referer = origen del servidor IPTV; valida sesión de segmentos HLS (/hlsr/)
     _p = _urlparse(url)
     hdrs['Referer'] = f'{_p.scheme}://{_p.netloc}/'
-    if request.headers.get('Range'):          # soporte parcial de contenido (seeking)
-        hdrs['Range'] = request.headers['Range']
+    _range_hdr = request.headers.get('Range')
+    if _range_hdr:
+        hdrs['Range'] = _range_hdr
+
+    # Para VOD (mp4, mkv, etc.) sin Range header: hacer HEAD para obtener Content-Length.
+    # Chrome necesita el tamaño del archivo para buscar el moov atom (metadatos) mediante
+    # Range requests. Sin Content-Length el reproductor falla si el moov está al final.
+    _vod_exts = ('.mp4', '.mkv', '.avi', '.m4v', '.mov', '.webm', '.flv', '.wmv', '.mpg', '.mpeg')
+    _url_path_low = _urlparse(url).path.lower()
+    _is_vod_url = any(_url_path_low.endswith(ext) for ext in _vod_exts)
+    _head_extra: dict = {}
+    if _is_vod_url and not _range_hdr:
+        try:
+            _hr = requests.head(url, headers=hdrs, timeout=5, proxies={}, allow_redirects=True)
+            for _h in ('Content-Length', 'Accept-Ranges'):
+                if _h in _hr.headers:
+                    _head_extra[_h] = _hr.headers[_h]
+        except Exception:
+            pass
 
     # Reintentar hasta 3 veces (para servidores inestables tipo dplatino que
     # VLC tiene que reintentar 3-4 veces antes de que el servidor responda OK).
@@ -752,6 +769,10 @@ def stream_proxy():
     for h in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
         if h in up.headers:
             out_hdrs[h] = up.headers[h]
+    # Añadir headers del HEAD (Content-Length / Accept-Ranges para seeking en VOD)
+    for h, v in _head_extra.items():
+        if h not in out_hdrs:
+            out_hdrs[h] = v
 
     def _gen():
         try:

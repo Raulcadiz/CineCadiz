@@ -982,19 +982,29 @@ function _tryNative(url) {
     const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(url)}`;
     const urlLow   = url.toLowerCase().split('?')[0];
     const isTsUrl  = urlLow.endsWith('.ts');
+    // Extensiones VOD conocidas: el <video> nativo es el único camino; mpegts no ayuda
+    const isKnownVod = ['.mp4','.mkv','.avi','.mov','.webm','.flv','.wmv','.mpg','.mpeg','.m4v']
+        .some(ext => urlLow.endsWith(ext));
 
-    // Para .ts → mpegts.js directo a través del proxy (Chrome no puede reproducir
-    // video/mp2t nativo; además el proxy resuelve CORS y mixed-content).
+    // .ts → mpegts.js siempre via proxy (Chrome no puede reproducir video/mp2t nativo)
     if (isTsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
         _playWithMpegts(proxyUrl, true);
         return;
     }
 
-    // Para el resto: intentar <video src> directo primero.
-    // Si la URL es HTTP en un sitio HTTPS (mixed-content) saltamos directo al proxy.
+    // Mixed-content: saltar directo al proxy
     const src = (url.startsWith('http://') && location.protocol === 'https:')
-        ? proxyUrl
-        : url;
+        ? proxyUrl : url;
+
+    // Última bala: mpegts para URLs sin extensión conocida (streams live sin .ts)
+    function _lastResort() {
+        if (!isKnownVod && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            _playWithMpegts(proxyUrl, true);
+        } else {
+            _setPlayerLoading(false);
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+        }
+    }
 
     el.videoPlayer.onerror = null;
     el.videoPlayer.src = src;
@@ -1002,28 +1012,18 @@ function _tryNative(url) {
     el.videoPlayer.play().catch(() => {});
     el.videoPlayer.onerror = () => {
         el.videoPlayer.onerror = null;
-        // Si ya estábamos usando el proxy → intentar mpegts.js como último recurso
         if (src === proxyUrl) {
-            if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-                _playWithMpegts(proxyUrl, false);
-            } else {
-                _setPlayerLoading(false);
-                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-            }
+            _lastResort();
             return;
         }
-        // Intentar a través del proxy, y si también falla → mpegts.js
+        // Directo falló → reintentar via proxy
+        el.videoPlayer.onerror = null;
         el.videoPlayer.src = proxyUrl;
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
             el.videoPlayer.onerror = null;
-            if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-                _playWithMpegts(proxyUrl, false);
-            } else {
-                _setPlayerLoading(false);
-                _showPlayerError('Stream no disponible o formato no compatible con el navegador');
-            }
+            _lastResort();
         };
     };
 }
