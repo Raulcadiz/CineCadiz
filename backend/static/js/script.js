@@ -628,7 +628,11 @@ function _destroyHls() {
 }
 
 /** Muestra overlay de error dentro del reproductor con mensaje amigable + botón Reportar. */
-function _showPlayerError(msg) {
+function _showPlayerError(msg, errCode) {
+    const code = errCode ?? el.videoPlayer?.error?.code;
+    const codeNames = {1:'ABORTED',2:'NETWORK',3:'DECODE',4:'SRC_NOT_SUPPORTED'};
+    if (code) console.error('[player] error', code, codeNames[code] || '?', '|', msg);
+    else console.error('[player] error (no code) |', msg);
     el.player?.querySelectorAll('.player-error').forEach(e => e.remove());
     const itemId   = el.player?.dataset.itemId   || '';
     const streamUrl = el.player?.dataset.streamUrl || '';
@@ -734,6 +738,7 @@ function _loadHls(url) {
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
+        console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', data.response?.code, 'url:', data.url);
         _destroyHls();
         // 403/401 = IP del servidor bloqueada por el proveedor IPTV → sin reintentos
         const httpCode = data.response?.code;
@@ -893,9 +898,11 @@ function _playWithMpegts(url, isLive) {
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
+            const code = el.videoPlayer.error?.code;
+            console.warn('[player] mpegts-fallback native onerror code', code, el.videoPlayer.error?.message);
             el.videoPlayer.onerror = null;
             _setPlayerLoading(false);
-            _showPlayerError('Stream no disponible o formato no compatible con el navegador');
+            _showPlayerError('Stream no disponible o formato no compatible con el navegador', code);
         };
         return;
     }
@@ -909,7 +916,7 @@ function _playWithMpegts(url, isLive) {
     el.videoPlayer.play().catch(() => {});
     window._mpegtsPlayer = player;
     player.on(mpegts.Events.ERROR, (errType, errDetail) => {
-        console.warn('[mpegts] error', errType, errDetail);
+        console.warn('[mpegts] error', errType, errDetail, '| url:', url);
         try { player.destroy(); } catch (_) {}
         window._mpegtsPlayer = null;
         _setPlayerLoading(false);
@@ -1011,6 +1018,8 @@ function _tryNative(url) {
     el.videoPlayer.load();
     el.videoPlayer.play().catch(() => {});
     el.videoPlayer.onerror = () => {
+        const code = el.videoPlayer.error?.code;
+        console.warn('[player] _tryNative onerror src=proxy?', src === proxyUrl, 'code', code, el.videoPlayer.error?.message);
         el.videoPlayer.onerror = null;
         if (src === proxyUrl) {
             _lastResort();
@@ -1022,6 +1031,7 @@ function _tryNative(url) {
         el.videoPlayer.load();
         el.videoPlayer.play().catch(() => {});
         el.videoPlayer.onerror = () => {
+            console.warn('[player] _tryNative proxy onerror code', el.videoPlayer.error?.code, el.videoPlayer.error?.message);
             el.videoPlayer.onerror = null;
             _lastResort();
         };
