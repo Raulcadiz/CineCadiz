@@ -755,7 +755,13 @@ def stream_proxy():
     if up is None:
         return ('', 504) if isinstance(last_exc, requests.exceptions.Timeout) else ('', 502)
 
-    ct = _content_type_for_url(url, up.headers.get('Content-Type', ''))
+    _server_ct = up.headers.get('Content-Type', '')
+    # Si el servidor IPTV devuelve Content-Type texto → es página de error, no video
+    if 'text/html' in _server_ct or 'text/plain' in _server_ct or 'text/xml' in _server_ct:
+        up.close()
+        return '', 502
+
+    ct = _content_type_for_url(url, _server_ct)
 
     out_hdrs = {
         'Access-Control-Allow-Origin':  '*',
@@ -774,8 +780,32 @@ def stream_proxy():
         if h not in out_hdrs:
             out_hdrs[h] = v
 
+    # Leer el primer chunk para detectar páginas HTML de error que el servidor IPTV
+    # devuelve con status 200 cuando bloquea la IP del VPS.
+    # Chrome recibe HTML y falla con FFmpegDemuxer: open context failed (code 4).
+    # Detectarlo aquí permite devolver 502 → Chrome dispara MEDIA_ERR_NETWORK (code 2)
+    # y el usuario ve "el servidor puede estar bloqueando las peticiones desde el proxy".
+    _first_chunk = None
+    try:
+        for _c in up.iter_content(chunk_size=256):
+            if _c:
+                _first_chunk = _c
+                break
+    except Exception:
+        pass
+
+    if _first_chunk is None:
+        up.close()
+        return '', 502
+
+    _tip = _first_chunk.lstrip()[:10].lower()
+    if _tip.startswith(b'<!') or _tip.startswith(b'<html'):
+        up.close()
+        return '', 502
+
     def _gen():
         try:
+            yield _first_chunk
             for chunk in up.iter_content(chunk_size=32768):
                 if chunk:
                     yield chunk
@@ -815,6 +845,11 @@ def hls_proxy():
         resp = requests.get(url, headers=mfst_hdrs, timeout=15,
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
+
+        # Verificar que la respuesta es realmente un playlist M3U8
+        _body = resp.text.strip()
+        if not (_body.startswith('#EXTM3U') or _body.startswith('#EXT-X-')):
+            return '', 502
 
         base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
         ps = request.host_url.rstrip('/') + '/api/stream-proxy'

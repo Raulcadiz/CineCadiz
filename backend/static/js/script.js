@@ -645,7 +645,7 @@ function _showPlayerError(msg, errCode) {
           ${code === 4
             ? 'El codec del stream (probablemente H.265/HEVC) no está soportado en Chrome.<br>Prueba con <strong>Edge</strong>, <strong>Safari</strong> o abre en la app.'
             : code === 2
-            ? 'Error de red: el servidor puede estar bloqueando las peticiones desde el proxy.'
+            ? 'El servidor IPTV puede estar bloqueando las peticiones desde el proxy.<br>Pulsa <strong>Ver en pestaña</strong> para reproducirlo directamente desde tu navegador.'
             : 'El stream puede estar caído o no ser compatible con el navegador.'}
         </p>
         <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">
