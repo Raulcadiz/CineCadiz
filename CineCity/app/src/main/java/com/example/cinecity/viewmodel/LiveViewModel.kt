@@ -6,12 +6,14 @@ import com.example.cinecity.data.model.Contenido
 import com.example.cinecity.data.model.ScanConfig
 import com.example.cinecity.data.model.ScanReport
 import com.example.cinecity.data.repository.ContentRepository
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 data class LiveUiState(
     val items: List<Contenido> = emptyList(),
+    val curados: List<Contenido> = emptyList(),   // canales curados por el admin
     val isLoading: Boolean = true,
     val error: String? = null,
     val query: String = "",
@@ -44,6 +46,10 @@ class LiveViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = LiveUiState(isLoading = true)
             try {
+                // Cargar canales curados y todos los canales live en paralelo
+                val curadosDeferred = kotlinx.coroutines.async {
+                    try { repo.getCanalesCurados() } catch (_: Exception) { emptyList() }
+                }
                 val collected = mutableListOf<Contenido>()
                 var page = 1
                 while (true) {
@@ -53,7 +59,8 @@ class LiveViewModel : ViewModel() {
                     page++
                 }
                 allItems = collected
-                _state.value = LiveUiState(isLoading = false, items = allItems)
+                val curados = curadosDeferred.await()
+                _state.value = LiveUiState(isLoading = false, items = allItems, curados = curados)
             } catch (e: Exception) {
                 _state.value = LiveUiState(isLoading = false, error = e.message)
             }
@@ -61,10 +68,11 @@ class LiveViewModel : ViewModel() {
     }
 
     fun onQueryChange(q: String) {
-        _state.value = _state.value.copy(query = q)
         val filtered = if (q.isBlank()) allItems
         else allItems.filter { it.title.contains(q, ignoreCase = true) }
-        _state.value = _state.value.copy(items = filtered)
+        val curadoFiltered = if (q.isBlank()) _state.value.curados
+        else _state.value.curados.filter { it.title.contains(q, ignoreCase = true) }
+        _state.value = _state.value.copy(query = q, items = filtered, curados = curadoFiltered)
     }
 
     // ── Scan config ───────────────────────────────────────────

@@ -32,6 +32,8 @@ class ContentRepository {
 
     suspend fun getLive(page: Int = 1): PagedResponse<Contenido> = api.getLive(page, 100)
 
+    suspend fun getCanalesCurados(): List<Contenido> = api.getCanalesCurados()
+
     suspend fun getContenido(id: Int): Contenido = api.getContenido(id)
 
     suspend fun getSerieEpisodios(titulo: String): List<Contenido> = api.getSerieEpisodios(titulo)
