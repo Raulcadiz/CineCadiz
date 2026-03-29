@@ -642,7 +642,11 @@ function _showPlayerError(msg, errCode) {
         <div style="font-size:2.5rem;margin-bottom:.7rem">📺</div>
         <p style="margin:.3rem 0;font-size:1.1rem;font-weight:600">Este canal no va, prueba otro canal</p>
         <p style="color:#999;font-size:.82rem;margin-top:.4rem;margin-bottom:1.4rem">
-          El stream puede estar caído o no ser compatible con el navegador.
+          ${code === 4
+            ? 'El codec del stream (probablemente H.265/HEVC) no está soportado en Chrome.<br>Prueba con <strong>Edge</strong>, <strong>Safari</strong> o abre en la app.'
+            : code === 2
+            ? 'Error de red: el servidor puede estar bloqueando las peticiones desde el proxy.'
+            : 'El stream puede estar caído o no ser compatible con el navegador.'}
         </p>
         <div style="display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center">
             <button class="err-btn" data-action="close-player">
@@ -929,16 +933,16 @@ function _loadHlsDirect(url) {
     const urlLow = url.toLowerCase().split('?')[0];
 
     // ── Canales live Xtream Codes (.ts con /live/ en la ruta) ──────────────
-    // NO convertir a .m3u8: los segmentos HLS que genera el servidor usan tokens
-    // de sesión IP-lockeados (/hls/HASH/...ts → 403 desde IPs de datacenter).
-    // La URL directa /live/USER/PASS/ID.ts usa autenticación por credenciales,
-    // no por sesión, por lo que funciona igual que los streams de películas.
+    // Estrategia: intentar primero la variante M3U8/HLS (quitando .ts).
+    // En Xtream Codes, /live/user/pass/id devuelve un playlist M3U8; los segmentos
+    // HLS se sirven con la IP de quien hizo la petición de playlist — como el proxy
+    // hace AMBAS peticiones (playlist + segmentos) desde la misma IP del VPS,
+    // no hay session IP-lock. Si HLS falla, el error handler cae a _tryNative
+    // que finalmente prueba mpegts con el .ts directo como último recurso.
     if (urlLow.endsWith('.ts') && urlLow.includes('/live/')) {
-        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            // Siempre pasar por el proxy: resuelve CORS y mixed-content independientemente del protocolo
-            _playWithMpegts(`/api/stream-proxy?url=${encodeURIComponent(url)}`, true);
-            return;
-        }
+        const m3u8Url = url.replace(/\.ts(\?|$)/i, '$1');
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(m3u8Url)}`);
+        return;
     }
 
     // ── Resto de streams HLS (URLs .m3u8, o .ts sin /live/) ────────────────
