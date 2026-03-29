@@ -135,12 +135,18 @@ function renderCard(item) {
         ? `<span class="badge-ep">S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}</span>`
         : '';
 
-    const isRss = item.source === 'rss';
+    const isRss  = item.source === 'rss';
+    const isLive = item.type  === 'live';
     const playLabel = isRss
         ? '<i class="bi bi-box-arrow-up-right"></i> Abrir'
         : '<i class="bi bi-play-fill"></i> Ver';
 
     const imgSrc = getImageUrl(item);
+
+    // Data attribute para failover en canales live con múltiples URLs
+    const liveUrlsAttr = (isLive && item.liveUrls && item.liveUrls.length > 1)
+        ? ` data-live-urls="${encodeURIComponent(JSON.stringify(item.liveUrls))}"`
+        : '';
 
     return `
     <div class="movie-card" data-id="${item.id}" data-type="${item.type || 'movie'}">
@@ -149,7 +155,8 @@ function renderCard(item) {
                  alt="${item.title}"
                  loading="lazy"
                  onerror="this.src='${PLACEHOLDER}'">
-            ${isRss ? '<span class="rss-badge">WEB</span>' : ''}
+            ${isLive ? '<span class="live-badge">🔴 LIVE</span>' : ''}
+            ${isRss  ? '<span class="rss-badge">WEB</span>'      : ''}
         </div>
         <div class="movie-info">
             <h3 class="movie-title">${item.title}</h3>
@@ -164,7 +171,7 @@ function renderCard(item) {
                     data-source="${item.source || 'm3u'}"
                     data-title="${item.title}"
                     data-id="${item.id}"
-                    data-image="${encodeURIComponent(imgSrc)}">
+                    data-image="${encodeURIComponent(imgSrc)}"${liveUrlsAttr}>
                 ${playLabel}
             </button>
             <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
@@ -228,6 +235,7 @@ function renderLiveGroupCard(group, idx) {
         <div class="card-img-wrap">
             <img src="${img}" alt="${group.title}" loading="lazy"
                  onerror="this.src='${PLACEHOLDER}'">
+            <span class="live-badge">🔴 LIVE</span>
             ${count > 1 ? `<span class="live-variants-badge">📡 ${count}</span>` : ''}
         </div>
         <div class="movie-info">
@@ -286,18 +294,22 @@ function showLiveGroupDetail(group) {
         </div>
         <div class="live-channels-list">
             ${channels.map(ch => {
-                const streamUrl = ch.streamUrl || ch.url_stream || '';
-                const encStream = encodeURIComponent(streamUrl);
-                const encImg    = encodeURIComponent(ch.image || group.image || PLACEHOLDER);
-                const qlabel    = qualityLabel(ch);
-                const chTitle   = ch.title || ch.titulo || baseTitle;
+                const streamUrl  = ch.streamUrl || ch.url_stream || '';
+                const encStream  = encodeURIComponent(streamUrl);
+                const encImg     = encodeURIComponent(ch.image || group.image || PLACEHOLDER);
+                const qlabel     = qualityLabel(ch);
+                const chTitle    = ch.title || ch.titulo || baseTitle;
+                // data-live-urls para failover automático si el canal tiene backups
+                const chLiveUrls = ch.liveUrls && ch.liveUrls.length > 1
+                    ? ` data-live-urls="${encodeURIComponent(JSON.stringify(ch.liveUrls))}"`
+                    : '';
                 return `
                 <div class="live-channel-row"
                      data-stream="${encStream}"
                      data-source="${ch.source || ch.fuente || 'm3u'}"
                      data-title="${chTitle}"
                      data-id="${ch.id || ''}"
-                     data-image="${encImg}">
+                     data-image="${encImg}"${chLiveUrls}>
                     <i class="bi bi-play-circle-fill live-row-icon"></i>
                     <span class="live-row-label">${qlabel}</span>
                     <span class="live-row-play">▶ Reproducir</span>
@@ -312,8 +324,12 @@ function showLiveGroupDetail(group) {
     body.querySelectorAll('.live-channel-row').forEach(row => {
         row.addEventListener('click', () => {
             modal.style.display = 'none';
+            let rowLiveUrls = null;
+            if (row.dataset.liveUrls) {
+                try { rowLiveUrls = JSON.parse(decodeURIComponent(row.dataset.liveUrls)); } catch (_) {}
+            }
             playStream(row.dataset.stream, row.dataset.title,
-                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image);
+                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image, rowLiveUrls);
         });
     });
 }
@@ -421,7 +437,10 @@ async function showDetails(id) {
                                 data-source="${item.source || 'm3u'}"
                                 data-title="${item.title}"
                                 data-id="${item.id}"
-                                data-image="${encodeURIComponent(modalImg)}">
+                                data-image="${encodeURIComponent(modalImg)}"
+                                ${item.type === 'live' && item.liveUrls && item.liveUrls.length > 1
+                                    ? `data-live-urls="${encodeURIComponent(JSON.stringify(item.liveUrls))}"`
+                                    : ''}>
                             ${item.source === 'rss'
                                 ? '<i class="bi bi-box-arrow-up-right"></i> Abrir en web'
                                 : '<i class="bi bi-play-fill"></i> Reproducir'}
@@ -547,7 +566,9 @@ async function showSeriesDetail(baseTitle) {
 }
 
 // ── Reproductor ────────────────────────────────────────────
-let _hls = null;   // instancia HLS.js activa
+let _hls = null;           // instancia HLS.js activa
+let _failoverUrls = [];    // URLs de respaldo para el stream live actual
+let _failoverIdx  = 0;     // índice actual en la cadena de failover
 
 // Detecta Android WebView (workers con limitaciones en versiones antiguas)
 const _isWebView = /wv/.test(navigator.userAgent) ||
@@ -594,6 +615,29 @@ function _showLiveIndicator() {
     titleEl.appendChild(badge);
 }
 
+/**
+ * Intenta el siguiente servidor de respaldo cuando el stream actual falla.
+ * Muestra un toast no intrusivo y vuelve a cargar sin mostrar pantalla de error.
+ * Devuelve true si hay backup disponible (carga iniciada), false si se agotaron las opciones.
+ */
+function _tryFailover() {
+    if (!_failoverUrls.length || _failoverIdx >= _failoverUrls.length - 1) return false;
+    _failoverIdx++;
+    const nextUrl = _normalizeStreamUrl(_failoverUrls[_failoverIdx]);
+    showNotification('Cambiando a servidor de respaldo…');
+    _destroyHls();
+    _setPlayerLoading(true);
+    setTimeout(() => {
+        el.player.dataset.streamUrl = nextUrl;
+        if (_isLikelyHls(nextUrl)) {
+            _loadHlsDirect(nextUrl);
+        } else {
+            _tryNative(nextUrl);
+        }
+    }, 1000);
+    return true;
+}
+
 /** Muestra/oculta el spinner de carga dentro del reproductor. */
 function _setPlayerLoading(on) {
     el.player?.querySelectorAll('.player-loading').forEach(e => e.remove());
@@ -629,6 +673,9 @@ function _destroyHls() {
 
 /** Muestra overlay de error dentro del reproductor con mensaje amigable + botón Reportar. */
 function _showPlayerError(msg, errCode) {
+    // Antes de mostrar el error, intentar el siguiente servidor de respaldo
+    if (_tryFailover()) return;
+
     const code = errCode ?? el.videoPlayer?.error?.code;
     const codeNames = {1:'ABORTED',2:'NETWORK',3:'DECODE',4:'SRC_NOT_SUPPORTED'};
     if (code) console.error('[player] error', code, codeNames[code] || '?', '|', msg);
@@ -679,8 +726,11 @@ function _showPlayerError(msg, errCode) {
                 document.querySelector('.btn-close-player')?.click();
             } else if (action === 'open-tab') {
                 const title = document.getElementById('playerTitle')?.textContent || '';
+                const liveUrlsParam = _failoverUrls.length > 1
+                    ? '&live_urls=' + encodeURIComponent(JSON.stringify(_failoverUrls))
+                    : '';
                 window.open(
-                    `http://${location.hostname}/player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(title)}`,
+                    `http://${location.hostname}/player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(title)}${liveUrlsParam}`,
                     '_blank', 'noopener,noreferrer'
                 );
             } else if (action === 'open-app') {
@@ -792,11 +842,27 @@ function _loadHls(url) {
  *   2. Error de red/CORS → reintenta a través de /api/hls-proxy (VPS como relay)
  *   3. Error de parseo   → no es HLS → intenta <video src> nativo (MP4, MKV…)
  *   4. Nativo falla      → reintenta a través de /api/stream-proxy
- *   5. Todo falla        → overlay con botones VLC / copiar / intentar HLS
+ *   5. Todo falla        → failover a la siguiente URL de respaldo (si las hay)
+ *   6. Sin backups       → overlay con botones Reportar / VLC / copiar
+ *
+ * @param {string[]} liveUrls  Array completo de URLs de respaldo para failover automático.
+ *                             Solo aplica a canales live. Si null/vacío, comportamiento idéntico al original.
  */
-function playStream(streamUrl, title, source, itemId = '', image = '') {
+function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls = null) {
     const url = decodeURIComponent(streamUrl);
     const imgDecoded = image ? decodeURIComponent(image) : '';
+
+    // ── Configurar failover para canales live ───────────────────
+    // Siempre resetear al inicio de una nueva reproducción
+    _failoverUrls = [];
+    _failoverIdx  = 0;
+    if (liveUrls && Array.isArray(liveUrls) && liveUrls.length > 1) {
+        _failoverUrls = liveUrls.map(u => (u || '').trim()).filter(Boolean);
+        // Localizar la URL activa en la cadena para empezar desde el índice correcto
+        const norm = _normalizeStreamUrl(url);
+        const idx  = _failoverUrls.findIndex(u => _normalizeStreamUrl(u) === norm);
+        if (idx > 0) _failoverIdx = idx;
+    }
 
     // Historial local
     let hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
@@ -974,7 +1040,9 @@ function _loadHlsDirect(url) {
         return;
     }
 
-    _hls = new Hls(_buildHlsConfig());
+    // Para el intento directo usamos manifestLoadingMaxRetry: 2 (en vez de 10)
+    // para caer rápido al proxy si el servidor IPTV no responde o bloquea.
+    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: 2 });
     _hls.loadSource(hlsUrl);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -994,7 +1062,7 @@ function _loadHlsDirect(url) {
     _hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
         _destroyHls();
-        // Reintentar siempre a través del proxy (resuelve CORS y mixed-content en HTTP y HTTPS)
+        // Reintentar a través del proxy (VLC User-Agent + relay)
         _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
     });
 }
@@ -1339,12 +1407,17 @@ function setupEvents() {
         const playBtn = e.target.closest('[data-stream]');
         if (playBtn) {
             e.stopPropagation();
+            let btnLiveUrls = null;
+            if (playBtn.dataset.liveUrls) {
+                try { btnLiveUrls = JSON.parse(decodeURIComponent(playBtn.dataset.liveUrls)); } catch (_) {}
+            }
             playStream(
                 playBtn.dataset.stream,
                 playBtn.dataset.title,
                 playBtn.dataset.source || 'm3u',
                 playBtn.dataset.id || '',
                 playBtn.dataset.image || '',
+                btnLiveUrls,
             );
             return;
         }
@@ -1739,6 +1812,13 @@ async function loadLiveListas() {
         sel.innerHTML = '<option value="">📋 Todas las listas</option>' +
             listas.map(l => `<option value="${l.id}">${l.nombre}</option>`).join('');
 
+        // Auto-seleccionar la lista predeterminada (si existe y el usuario no eligió otra)
+        const defaultLista = listas.find(l => l.isDefault);
+        if (defaultLista && !state.currentListaId) {
+            sel.value = String(defaultLista.id);
+            await _reloadLiveByLista(defaultLista.id);
+        }
+
         // Mostrar la barra si estamos en vista live
         if (state.currentType === 'live') {
             bar.style.display = 'flex';
@@ -2091,12 +2171,20 @@ async function init() {
     }, 800);
 }
 
-// Animación slideIn para notificaciones (no se puede poner en CSS estático fácilmente)
+// Animación slideIn + estilos dinámicos del reproductor
 const _style = document.createElement('style');
 _style.textContent = `
     @keyframes slideIn {
         from { transform:translateX(110%); opacity:0; }
         to   { transform:translateX(0);    opacity:1; }
+    }
+    /* Badge rojo "🔴 LIVE" sobre las tarjetas de canales en directo */
+    .live-badge {
+        position:absolute; top:6px; left:6px; z-index:2;
+        background:rgba(229,51,51,.88); color:#fff;
+        font-size:.6rem; font-weight:700; padding:.15rem .4rem;
+        border-radius:3px; letter-spacing:.06em; pointer-events:none;
+        text-shadow:0 1px 2px rgba(0,0,0,.5);
     }
 `;
 document.head.appendChild(_style);

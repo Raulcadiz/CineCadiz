@@ -194,8 +194,15 @@
             </thead>
             <tbody>
             {% for lista in listas %}
-            <tr id="lista-row-{{ lista.id }}">
-                <td><strong>{{ lista.nombre }}</strong></td>
+            <tr id="lista-row-{{ lista.id }}" {% if lista.es_defecto %}class="table-warning table-warning-custom"{% endif %}>
+                <td>
+                    <strong>{{ lista.nombre }}</strong>
+                    {% if lista.es_defecto %}
+                    <span class="badge bg-warning text-dark ms-1" title="Lista predeterminada para la web, APK e IPTV">
+                        <i class="bi bi-star-fill"></i> Default
+                    </span>
+                    {% endif %}
+                </td>
                 <td>
                     <span class="text-muted small" title="{{ lista.url }}">
                         {{ lista.url[:40] }}{% if lista.url|length > 40 %}…{% endif %}
@@ -293,6 +300,13 @@
                             <i class="bi bi-pencil-square"></i>
                         </button>
 
+                        <button type="button"
+                                class="btn btn-sm btn-set-default {% if lista.es_defecto %}btn-warning{% else %}btn-outline-secondary{% endif %}"
+                                data-id="{{ lista.id }}"
+                                title="{% if lista.es_defecto %}Quitar como lista predeterminada{% else %}Marcar como lista predeterminada (web + APK + IPTV){% endif %}">
+                            <i class="bi bi-star{% if lista.es_defecto %}-fill{% endif %}"></i>
+                        </button>
+
                         <form action="{{ url_for('admin.eliminar_lista', lista_id=lista.id) }}"
                               method="post" class="d-inline"
                               onsubmit="return confirm('¿Eliminar lista y TODO su contenido? Esta acción no se puede deshacer.')">
@@ -375,6 +389,53 @@
 
 {% block scripts %}
 <script>
+// ── Lista predeterminada ─────────────────────────────────────────
+document.querySelectorAll('.btn-set-default').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        try {
+            const res  = await fetch(`/admin/listas/${id}/set-default`, { method: 'POST' });
+            const data = await res.json();
+            if (!data.ok) { btn.disabled = false; return; }
+
+            // Actualizar TODOS los botones y filas de la tabla
+            document.querySelectorAll('.btn-set-default').forEach(b => {
+                const isThis = b.dataset.id === id && data.es_defecto;
+                // Icono
+                b.querySelector('i').className = isThis ? 'bi bi-star-fill' : 'bi bi-star';
+                // Color
+                b.className = b.className.replace(/btn-warning|btn-outline-secondary/g, '');
+                b.classList.add(isThis ? 'btn-warning' : 'btn-outline-secondary');
+                b.title = isThis
+                    ? 'Quitar como lista predeterminada'
+                    : 'Marcar como lista predeterminada (web + APK + IPTV)';
+                // Badge en la celda nombre
+                const row    = document.getElementById('lista-row-' + b.dataset.id);
+                const strong = row?.querySelector('td:first-child strong');
+                const badge  = row?.querySelector('.badge.bg-warning');
+                if (isThis) {
+                    row?.classList.add('table-warning-custom');
+                    if (!badge && strong) {
+                        const span = document.createElement('span');
+                        span.className = 'badge bg-warning text-dark ms-1';
+                        span.title = 'Lista predeterminada para la web, APK e IPTV';
+                        span.innerHTML = '<i class="bi bi-star-fill"></i> Default';
+                        strong.after(span);
+                    }
+                } else {
+                    row?.classList.remove('table-warning-custom');
+                    badge?.remove();
+                }
+                b.disabled = false;
+            });
+        } catch (e) {
+            console.error('set-default error', e);
+            btn.disabled = false;
+        }
+    });
+});
+
 // ════════════════════════════════════════════════════════════════
 // Constantes de tipo
 // ════════════════════════════════════════════════════════════════

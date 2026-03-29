@@ -607,14 +607,14 @@ def get_live_categorias():
 def get_live_listas():
     """Listas M3U que contienen al menos un canal en directo activo."""
     rows = (
-        db.session.query(Lista.id, Lista.nombre)
+        db.session.query(Lista.id, Lista.nombre, Lista.es_defecto)
         .join(Contenido, Contenido.lista_id == Lista.id)
         .filter(Contenido.activo == True, Contenido.tipo == 'live', Lista.activa == True)
-        .group_by(Lista.id, Lista.nombre)
-        .order_by(Lista.nombre.asc())
+        .group_by(Lista.id, Lista.nombre, Lista.es_defecto)
+        .order_by(Lista.es_defecto.desc(), Lista.nombre.asc())
         .all()
     )
-    return jsonify([{'id': r.id, 'nombre': r.nombre} for r in rows])
+    return jsonify([{'id': r.id, 'nombre': r.nombre, 'isDefault': bool(r.es_defecto)} for r in rows])
 
 
 @api_bp.get('/serie-episodios')

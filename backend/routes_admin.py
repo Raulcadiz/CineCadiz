@@ -364,6 +364,27 @@ def toggle_lista(lista_id):
     return redirect(url_for('admin.listas'))
 
 
+@admin_bp.post('/listas/<int:lista_id>/set-default')
+@login_required
+def set_default_lista(lista_id):
+    """
+    Marca una lista como predeterminada (solo puede haber una).
+    Si se llama sobre la lista ya marcada, la desmarca (toggle).
+    La lista predeterminada se pre-selecciona en la web, APK y IPTV.
+    """
+    lista = Lista.query.get_or_404(lista_id)
+    if lista.es_defecto:
+        # Toggle off: quitar el default
+        lista.es_defecto = False
+        db.session.commit()
+        return jsonify({'ok': True, 'es_defecto': False, 'nombre': lista.nombre})
+    # Quitar default de cualquier lista anterior
+    Lista.query.filter(Lista.es_defecto == True).update({'es_defecto': False})
+    lista.es_defecto = True
+    db.session.commit()
+    return jsonify({'ok': True, 'es_defecto': True, 'nombre': lista.nombre})
+
+
 # ── Gestión de fuentes RSS ──────────────────────────────────────
 
 @admin_bp.get('/rss')
@@ -659,6 +680,58 @@ def toggle_contenido(item_id):
     item.activo = not item.activo
     db.session.commit()
     return jsonify({'activo': item.activo})
+
+
+@admin_bp.get('/contenido/<int:item_id>/backup-urls')
+@login_required
+def get_backup_urls(item_id):
+    """Devuelve las URLs de respaldo de un canal live."""
+    import json as _j
+    item = Contenido.query.get_or_404(item_id)
+    try:
+        urls = _j.loads(item.live_urls_json) if item.live_urls_json else []
+    except (ValueError, TypeError):
+        urls = []
+    return jsonify({
+        'id':        item.id,
+        'titulo':    item.titulo,
+        'url_stream': item.url_stream,
+        'live_urls': urls,
+    })
+
+
+@admin_bp.post('/contenido/<int:item_id>/backup-urls')
+@login_required
+def set_backup_urls(item_id):
+    """
+    Guarda la lista de URLs de respaldo para un canal live.
+    Body JSON: {"urls": ["http://...", "http://..."]}
+    La primera URL de la lista se convierte también en url_stream (URL principal).
+    """
+    import json as _j
+    item = Contenido.query.get_or_404(item_id)
+    data = request.get_json(silent=True) or {}
+    raw = data.get('urls', [])
+    if not isinstance(raw, list):
+        return jsonify({'error': 'urls debe ser una lista'}), 400
+
+    # Limpiar y deduplicar manteniendo el orden
+    cleaned = []
+    seen = set()
+    for u in raw:
+        u = (u or '').strip()
+        if u and u not in seen:
+            cleaned.append(u)
+            seen.add(u)
+
+    if not cleaned:
+        return jsonify({'error': 'Se requiere al menos una URL'}), 400
+
+    item.live_urls_json  = _j.dumps(cleaned)
+    item.live_active_idx = 0
+    item.url_stream      = cleaned[0]   # la primera es siempre la principal
+    db.session.commit()
+    return jsonify({'ok': True, 'urls_guardadas': len(cleaned)})
 
 
 @admin_bp.post('/contenido/cambiar-servidor-live')
