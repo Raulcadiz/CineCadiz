@@ -848,10 +848,12 @@ def hls_proxy():
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
 
-        # Verificar que la respuesta es realmente un playlist M3U8
+        # Verificar que la respuesta es realmente un playlist M3U8.
+        # Devolver 403 (no 502) para que el JS ya desplegado falle inmediatamente
+        # sin reintentos de HLS.js — evita la carga infinita.
         _body = resp.text.strip()
         if not (_body.startswith('#EXTM3U') or _body.startswith('#EXT-X-')):
-            return '', 502
+            return '', 403
 
         base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
         ps = request.host_url.rstrip('/') + '/api/stream-proxy'
