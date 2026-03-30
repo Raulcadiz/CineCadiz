@@ -313,6 +313,50 @@
             }
         }, CONNECT_TIMEOUT);
 
+        // Si la página corre en HTTPS y el stream es HTTP, el navegador bloquea la
+        // petición directa como "mixed content". En ese caso enrutamos todo a través
+        // del proxy del VPS (mismo origen HTTPS → HTTP), igual que hace el reproductor
+        // embebido en script.js.
+        const needsProxy = location.protocol === 'https:' && url.startsWith('http://');
+
+        if (needsProxy && typeof Hls !== 'undefined' && Hls.isSupported()) {
+            // Xtream Codes: quitar la extensión .ts para obtener la URL HLS equivalente
+            const hlsTarget = (isTs && isIptvLive) ? url.replace(/\.ts(\?|$)/i, '$1') : url;
+            const proxyUrl  = `${location.origin}/api/hls-proxy?url=${encodeURIComponent(hlsTarget)}`;
+            console.log('[player] HTTPS+HTTP — usando proxy:', proxyUrl);
+            _hls = new Hls({ ...buildHlsConfig(), manifestLoadingMaxRetry: 0, manifestLoadingTimeOut: 8000 });
+            _hls.loadSource(proxyUrl);
+            _hls.attachMedia(v);
+            _hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => {}); });
+            _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+                if (data.details && data.details.live) {
+                    _isLive = true; setLiveBadge(true);
+                    _hls.config.liveDurationInfinity = true;
+                } else {
+                    _hls.config.maxBufferLength    = 60;
+                    _hls.config.maxMaxBufferLength = 120;
+                    _hls.config.maxBufferSize      = 120 * 1000 * 1000;
+                }
+            });
+            _hls.on(Hls.Events.ERROR, (_, d) => {
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
+                console.warn('[hls/proxy] fatal', d.details, 'httpCode:', d.response?.code);
+                try { _hls.destroy(); } catch(_) {} _hls = null;
+                // No podemos hacer acceso directo (mixed content) → reintentar via proxy
+                scheduleReconnect();
+            });
+            return;
+        }
+
         if (isTs && isIptvLive && typeof Hls !== 'undefined' && Hls.isSupported()) {
             // ── Xtream Codes (.ts + /live/): intentar variante HLS (.m3u8) primero ──
             // La mayoría de servidores Xtream sirven el mismo canal en ambos formatos.
