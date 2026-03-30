@@ -157,11 +157,35 @@
     }
 
     // ── Eventos del <video> ─────────────────────────────────────────
-    v.addEventListener('playing',  hideOverlay);
-    v.addEventListener('waiting',  () => {
+    let _waitingTimer = null;   // watchdog: live stream congelado → reconnect
+
+    v.addEventListener('playing', () => {
+        hideOverlay();
+        clearTimeout(_waitingTimer);
+        _waitingTimer = null;
+    });
+    v.addEventListener('waiting', () => {
         // No mostrar spinner si ya está visible un error
         if (!ovl.classList.contains('hidden')) return;
         showLoading(_isLive ? 'Buffering en directo…' : 'Buffering…');
+        // Watchdog: si el live sigue en "waiting" tras 15s, intentar saltar al edge o reconectar
+        if (_isLive) {
+            clearTimeout(_waitingTimer);
+            _waitingTimer = setTimeout(() => {
+                if (!_isLive) return;
+                if (_hls) {
+                    const edge = _hls.liveSyncPosition;
+                    if (edge && edge > 0) {
+                        console.warn('[player] live waiting >15s — saltando al edge:', edge.toFixed(2));
+                        v.currentTime = edge;
+                        v.play().catch(() => {});
+                        return;
+                    }
+                }
+                console.warn('[player] live waiting >15s — reconectando');
+                scheduleReconnect();
+            }, 15000);
+        }
     });
     v.addEventListener('stalled', () => {
         if (_isLive && ovl.classList.contains('hidden')) {
@@ -180,21 +204,25 @@
         return {
             enableWorker:                   !isWebView,
             liveDurationInfinity:           true,
-            liveBackBufferLength:           0,
-            liveSyncDurationCount:          3,
-            liveMaxLatencyDurationCount:    _lowLatency ? 4 : 8,
-            maxBufferLength:                _lowLatency ? 8 : 20,
-            maxMaxBufferLength:             _lowLatency ? 16 : 40,
-            maxBufferSize:                  30 * 1000 * 1000,
+            liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
+            liveSyncDuration:               3,              // 3s exactos por detrás del edge
+            liveMaxLatencyDuration:         _lowLatency ? 6 : 10,
+            // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
+            highBufferWatchdogPeriod:       2,              // detectar stalls cada 2s (default: 5s)
+            nudgeMaxRetry:                  10,
+            nudgeOffset:                    0.2,
+            maxBufferLength:                _lowLatency ? 8 : 30,
+            maxMaxBufferLength:             _lowLatency ? 16 : 60,
+            maxBufferSize:                  40 * 1000 * 1000,
             manifestLoadingMaxRetry:        10,
             manifestLoadingRetryDelay:      500,
             manifestLoadingMaxRetryTimeout: 32000,
-            fragLoadingMaxRetry:            6,
+            fragLoadingMaxRetry:            3,              // falla rápido → reconnect más ágil
             fragLoadingRetryDelay:          500,
-            fragLoadingMaxRetryTimeout:     16000,
-            levelLoadingMaxRetry:           6,
+            fragLoadingMaxRetryTimeout:     6000,
+            levelLoadingMaxRetry:           4,
             levelLoadingRetryDelay:         500,
-            levelLoadingMaxRetryTimeout:    16000,
+            levelLoadingMaxRetryTimeout:    8000,
             xhrSetup: xhr => { xhr.withCredentials = false; },
         };
     }
@@ -203,6 +231,8 @@
     function destroy() {
         clearTimeout(_retryTimer);
         clearTimeout(_connectTimer);
+        clearTimeout(_waitingTimer);
+        _waitingTimer = null;
         if (_hls)    { try { _hls.destroy(); }    catch (_) {} _hls = null; }
         if (_mpegts) { try { _mpegts.destroy(); } catch (_) {} _mpegts = null; }
         v.pause();
@@ -296,11 +326,19 @@
                 if (data.details && data.details.live) {
                     _isLive = true; setLiveBadge(true);
                     _hls.config.liveDurationInfinity = true;
-                    _hls.config.liveBackBufferLength = 0;
                 }
             });
             _hls.on(Hls.Events.ERROR, (_, d) => {
-                if (!d.fatal) return;
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
                 console.warn('[hls] fallo HLS, intentando mpegts.js con URL original');
                 try { _hls.destroy(); } catch(_) {} _hls = null;
                 // Caer a MPEG-TS directo con la URL original (.ts)
@@ -364,7 +402,6 @@
                     _isLive = true;
                     setLiveBadge(true);
                     _hls.config.liveDurationInfinity = true;
-                    _hls.config.liveBackBufferLength = 0;
                 } else {
                     // VOD: ampliar buffer para scrubbing
                     _hls.config.maxBufferLength    = 60;
@@ -375,7 +412,16 @@
 
             _hls.on(Hls.Events.ERROR, (_, d) => {
                 console.warn('[hls] error', d.type, d.details, 'fatal:', d.fatal);
-                if (!d.fatal) return;
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
 
                 const code = d.response?.code;
                 if (code === 403 || code === 401) {

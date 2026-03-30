@@ -566,9 +566,11 @@ async function showSeriesDetail(baseTitle) {
 }
 
 // ── Reproductor ────────────────────────────────────────────
-let _hls = null;           // instancia HLS.js activa
-let _failoverUrls = [];    // URLs de respaldo para el stream live actual
-let _failoverIdx  = 0;     // índice actual en la cadena de failover
+let _hls = null;                  // instancia HLS.js activa
+let _failoverUrls = [];           // URLs de respaldo para el stream live actual
+let _failoverIdx  = 0;            // índice actual en la cadena de failover
+let _isCurrentStreamLive = false; // true cuando LEVEL_LOADED confirma stream live
+let _stallTimer = null;           // watchdog: congela live → failover/reconnect
 
 // Detecta Android WebView (workers con limitaciones en versiones antiguas)
 const _isWebView = /wv/.test(navigator.userAgent) ||
@@ -577,29 +579,72 @@ const _isWebView = /wv/.test(navigator.userAgent) ||
 /**
  * Config HLS.js optimizada para live/IPTV.
  * Segura también para VOD: liveDurationInfinity solo activa en playlists live;
- * liveBackBufferLength=0 solo aplica cuando la playlist es live.
+ * liveBackBufferLength solo aplica cuando la playlist es live.
+ *
+ * Cambios clave vs versión anterior:
+ *  - liveSyncDuration: 3s explícitos (más fiable que count-based en IPTV irregular)
+ *  - liveMaxLatencyDuration: 10s → si el player se atrasa más, resync al edge
+ *  - liveBackBufferLength: 4 → buffer trasero mínimo para absorber microcortes
+ *  - highBufferWatchdogPeriod: 2 → HLS.js detecta stalls cada 2s (default=5s)
+ *  - nudgeMaxRetry: 10 → más intentos de nudge antes de rendirse
+ *  - fragLoadingMaxRetry: 3 → falla rápido en live (antes: 6 → 15s de pantalla helada)
+ *  - fragLoadingMaxRetryTimeout: 6000 → timeout de fragmento más corto
  */
 function _buildHlsConfig() {
     return {
-        enableWorker:                   !_isWebView,  // desactivar en WebView por compatibilidad
-        liveDurationInfinity:           true,          // live sin EXT-X-ENDLIST no termina
-        liveBackBufferLength:           0,             // liberar memoria detrás del live edge
-        liveSyncDurationCount:          3,             // target = live_edge - 3 segmentos
-        liveMaxLatencyDurationCount:    8,             // si >8 segs de retraso → resync al edge
-        maxBufferLength:                20,            // buffer adelante (segundos)
-        maxMaxBufferLength:             40,            // límite superior
-        maxBufferSize:                  30 * 1000 * 1000,   // 30 MB
+        enableWorker:                   !_isWebView,
+        liveDurationInfinity:           true,
+        liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
+        liveSyncDuration:               3,              // 3s por detrás del edge (segundos exactos)
+        liveMaxLatencyDuration:         10,             // reconectar si retraso > 10s
+        // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
+        highBufferWatchdogPeriod:       2,              // detectar buffer stall cada 2s (era 5s)
+        nudgeMaxRetry:                  10,             // más nudges antes de fatal
+        nudgeOffset:                    0.2,
+        maxBufferLength:                30,             // buffer adelante (era 20s)
+        maxMaxBufferLength:             60,
+        maxBufferSize:                  40 * 1000 * 1000,
         manifestLoadingMaxRetry:        10,
         manifestLoadingRetryDelay:      500,
         manifestLoadingMaxRetryTimeout: 32000,
-        fragLoadingMaxRetry:            6,
+        fragLoadingMaxRetry:            3,              // menos reintentos → falla rápido en live
         fragLoadingRetryDelay:          500,
-        fragLoadingMaxRetryTimeout:     16000,
-        levelLoadingMaxRetry:           6,
+        fragLoadingMaxRetryTimeout:     6000,           // era 16000 → menos tiempo helado
+        levelLoadingMaxRetry:           4,
         levelLoadingRetryDelay:         500,
-        levelLoadingMaxRetryTimeout:    16000,
+        levelLoadingMaxRetryTimeout:    8000,
         xhrSetup: xhr => { xhr.withCredentials = false; },
     };
+}
+
+/**
+ * Manejadores del watchdog de congelación para streams live.
+ * Se registran con addEventListener (named → se pueden eliminar con removeEventListener).
+ * _onVideoWaitingLive: arma un temporizador; si el vídeo sigue "esperando" tras 12s
+ *   intenta saltar al live edge antes de lanzar error/failover.
+ * _onVideoPlayingLive: cancela el temporizador cuando el vídeo vuelve a reproducirse.
+ */
+function _onVideoWaitingLive() {
+    if (!_isCurrentStreamLive) return;
+    clearTimeout(_stallTimer);
+    _stallTimer = setTimeout(() => {
+        if (!_isCurrentStreamLive) return;
+        console.warn('[player] live stall watchdog — video congelado >12s');
+        // Intentar saltar al live edge antes de reconectar
+        if (_hls) {
+            const edge = _hls.liveSyncPosition;
+            if (edge && edge > 0 && Math.abs(el.videoPlayer.currentTime - edge) > 3) {
+                console.warn('[player] saltando al live edge:', edge.toFixed(2));
+                el.videoPlayer.currentTime = edge;
+                el.videoPlayer.play().catch(() => {});
+                return;   // dar otra oportunidad antes de failover
+            }
+        }
+        _showPlayerError('Stream en directo interrumpido');
+    }, 12000);
+}
+function _onVideoPlayingLive() {
+    clearTimeout(_stallTimer);
 }
 
 /** Muestra badge "🔴 EN VIVO" junto al título del reproductor (solo una vez). */
@@ -651,8 +696,16 @@ function _setPlayerLoading(on) {
 
 /**
  * Destruye la instancia HLS y mpegts (si existen) y cancela descargas activas.
+ * También cancela el watchdog de congelación live.
  */
 function _destroyHls() {
+    // Limpiar watchdog de congelación live
+    clearTimeout(_stallTimer);
+    _stallTimer = null;
+    _isCurrentStreamLive = false;
+    el.videoPlayer.removeEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.removeEventListener('playing', _onVideoPlayingLive);
+
     if (window._mpegtsPlayer) {
         try { window._mpegtsPlayer.destroy(); } catch (_) {}
         window._mpegtsPlayer = null;
@@ -769,12 +822,35 @@ function _showPlayerError(msg, errCode) {
     el.player?.querySelector('.player-body')?.appendChild(errDiv);
 }
 
-/** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
-function _loadHls(url) {
-    // manifestLoadingMaxRetry: 0 — si el proxy devuelve error en el manifest, fallar
-    // inmediatamente sin reintentos. El proxy es same-origin y fiable; si falla es porque
-    // el servidor IPTV está bloqueado, no por un problema de red transitorio.
-    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: 0 });
+/**
+ * Extrae la URL real de un parámetro de proxy (/api/hls-proxy?url=... o stream-proxy?url=...).
+ * Devuelve la URL original, o null si la URL no es una URL de proxy.
+ */
+function _getUrlFromProxy(proxyUrl) {
+    try {
+        const u = new URL(proxyUrl, location.origin);
+        if (u.pathname.includes('-proxy')) {
+            const orig = u.searchParams.get('url');
+            return orig ? decodeURIComponent(orig) : null;
+        }
+    } catch (_) {}
+    return null;
+}
+
+/**
+ * Carga un stream HLS con HLS.js.
+ *
+ * @param {string}  url       URL a cargar (proxy o directa).
+ * @param {boolean} isDirect  true = intento directo (sin proxy). Evita reintentar vía proxy
+ *                            en la cadena de fallback y pasa a mpegts si falla.
+ *
+ * Cadena de fallback cuando el proxy falla (502/403):
+ *   1. _loadHls(proxy_url)        → falla 502  → extrae URL original
+ *   2. _loadHls(original_url, true) → falla CORS/net → _tryDirectMpegts(streamUrl)
+ *   3. _tryDirectMpegts           → mpegts.js directo (sin proxy) → falla → error+botón
+ */
+function _loadHls(url, isDirect = false) {
+    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: isDirect ? 2 : 0 });
     _hls.loadSource(url);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -782,10 +858,9 @@ function _loadHls(url) {
     });
     _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (data.details && data.details.live) {
+            _isCurrentStreamLive = true;
             _showLiveIndicator();
-            // Asegurar config live en caliente (por si se creó con defaults)
             _hls.config.liveDurationInfinity = true;
-            _hls.config.liveBackBufferLength = 0;
         } else {
             // VOD confirmado: ampliar buffer para scrubbing suave
             _hls.config.maxBufferLength    = 60;
@@ -795,24 +870,51 @@ function _loadHls(url) {
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
         const httpCode = data.response?.code;
-        // 502 = proxy detectó respuesta no-video del servidor IPTV (IP bloqueada).
-        // Fallar INMEDIATAMENTE sin esperar reintentos de HLS.js — evita carga infinita.
-        if (httpCode === 502) {
-            console.warn('[hls] 502 from proxy — IP blocked, failing fast');
+
+        // Proxy bloqueado (502) o rechazado (403/401) por el servidor IPTV.
+        // En lugar de mostrar error inmediatamente, intentar acceso directo desde el navegador:
+        // el navegador del usuario puede alcanzar el servidor IPTV aunque la IP del VPS esté bloqueada.
+        if (httpCode === 502 || httpCode === 403 || httpCode === 401) {
             _destroyHls();
-            _setPlayerLoading(false);
-            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso', 2);
+            if (!isDirect) {
+                const origUrl = _getUrlFromProxy(url);
+                if (origUrl) {
+                    console.warn(`[hls] proxy error ${httpCode} — intentando acceso directo desde el navegador`);
+                    _loadHls(origUrl, true);
+                    return;
+                }
+            }
+            // Modo directo, o sin URL original → intentar mpegts directo como último recurso
+            console.warn('[hls] error', httpCode, '— intentando mpegts directo');
+            _tryDirectMpegts(el.player.dataset.streamUrl);
             return;
         }
-        if (!data.fatal) return;
+
+        if (!data.fatal) {
+            // Buffer stall en stream live: intentar saltar al live edge
+            if (_isCurrentStreamLive && _hls && (
+                data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+            )) {
+                const edge = _hls.liveSyncPosition;
+                if (edge && edge > 0) {
+                    console.warn('[hls] buffer stall — saltando al live edge:', edge.toFixed(2));
+                    el.videoPlayer.currentTime = edge;
+                    el.videoPlayer.play().catch(() => {});
+                }
+            }
+            return;
+        }
+
         console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', httpCode, 'url:', data.url);
         _destroyHls();
-        // 403/401 = IP del servidor bloqueada por el proveedor IPTV → sin reintentos
-        if (httpCode === 403 || httpCode === 401) {
-            _setPlayerLoading(false);
-            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso a este stream');
+
+        if (isDirect) {
+            // Intento directo falló (CORS u otro) → probar mpegts directo
+            _tryDirectMpegts(el.player.dataset.streamUrl);
             return;
         }
+
         const originalUrl = el.player.dataset.streamUrl;
         const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
         if (!isM3u8) {
@@ -822,6 +924,27 @@ function _loadHls(url) {
             _showPlayerError('Stream no disponible o canal caído');
         }
     });
+}
+
+/**
+ * Último recurso para canales live que no son accesibles vía proxy.
+ * Intenta reproducir el stream .ts directamente desde el navegador usando mpegts.js
+ * (sin pasar por el proxy del VPS). Funciona cuando el servidor IPTV acepta CORS.
+ * Si mpegts tampoco es soportado, muestra el error con botones de acción.
+ */
+function _tryDirectMpegts(streamUrl) {
+    if (!streamUrl) { _setPlayerLoading(false); _showPlayerError('Stream no disponible'); return; }
+    const urlLow = streamUrl.toLowerCase().split('?')[0];
+    const isTs   = urlLow.endsWith('.ts');
+
+    if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+        console.warn('[player] intentando mpegts.js directo (sin proxy):', streamUrl);
+        _playWithMpegts(streamUrl, true);   // URL directa, sin /api/stream-proxy
+        return;
+    }
+    // No .ts o mpegts no disponible → mostrar error con opciones
+    _setPlayerLoading(false);
+    _showPlayerError('Canal no accesible desde el servidor. Prueba "Ver en pestaña nueva".');
 }
 
 /**
@@ -912,6 +1035,13 @@ function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls 
         el.videoPlayer.removeEventListener('playing', _onPlaying);
     };
     el.videoPlayer.addEventListener('playing', _onPlaying);
+
+    // Registrar watchdog de congelación para streams live.
+    // Los listeners son named → _destroyHls() los eliminará en la próxima reproducción.
+    el.videoPlayer.removeEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.removeEventListener('playing', _onVideoPlayingLive);
+    el.videoPlayer.addEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.addEventListener('playing', _onVideoPlayingLive);
 
     // Restaurar volumen guardado
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
@@ -1050,9 +1180,9 @@ function _loadHlsDirect(url) {
     });
     _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (data.details && data.details.live) {
+            _isCurrentStreamLive = true;
             _showLiveIndicator();
             _hls.config.liveDurationInfinity = true;
-            _hls.config.liveBackBufferLength = 0;
         } else {
             _hls.config.maxBufferLength    = 60;
             _hls.config.maxMaxBufferLength = 120;
@@ -1060,7 +1190,19 @@ function _loadHlsDirect(url) {
         }
     });
     _hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) return;
+        if (!data.fatal) {
+            if (_isCurrentStreamLive && _hls && (
+                data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+            )) {
+                const edge = _hls.liveSyncPosition;
+                if (edge && edge > 0) {
+                    el.videoPlayer.currentTime = edge;
+                    el.videoPlayer.play().catch(() => {});
+                }
+            }
+            return;
+        }
         _destroyHls();
         // Reintentar a través del proxy (VLC User-Agent + relay)
         _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
