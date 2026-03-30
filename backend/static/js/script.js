@@ -898,11 +898,18 @@ function _loadHls(url, isDirect = false) {
         _destroyHls();
 
         if (!isDirect) {
-            // Cualquier error fatal en el proxy (timeout, 502, 403, red…) →
-            // intentar el mismo stream directamente desde el navegador.
-            // El usuario puede llegar al servidor IPTV aunque la IP del VPS esté bloqueada.
             const origUrl = _getUrlFromProxy(url);
             if (origUrl) {
+                // HTTPS page + HTTP stream → el navegador bloquea peticiones directas (mixed content).
+                // No tiene sentido intentar acceso directo ni mpegts: fallarán instantáneamente.
+                // Ir directamente a mostrar el error con el botón "Ver en pestaña nueva".
+                if (location.protocol === 'https:' && origUrl.startsWith('http://')) {
+                    console.warn('[hls] HTTPS + HTTP stream — mixed content, no se puede reproducir en iframe');
+                    _setPlayerLoading(false);
+                    _showPlayerError('Este canal usa HTTP y la página es HTTPS.\nUsa el botón "Ver en pestaña nueva" para reproducirlo.');
+                    return;
+                }
+                // HTTP o HTTPS stream → intentar acceso directo desde el navegador
                 console.warn('[hls] proxy falló — intentando acceso directo:', origUrl);
                 _loadHls(origUrl, true);
                 return;
@@ -929,20 +936,25 @@ function _loadHls(url, isDirect = false) {
 
 /**
  * Último recurso para canales live que no son accesibles vía proxy.
- * Intenta reproducir el stream .ts directamente desde el navegador usando mpegts.js
- * (sin pasar por el proxy del VPS). Funciona cuando el servidor IPTV acepta CORS.
- * Si mpegts tampoco es soportado, muestra el error con botones de acción.
+ * Intenta reproducir el stream directamente desde el navegador usando mpegts.js.
+ * Solo se llega aquí si la página NO es HTTPS (mixed content ya filtrado antes).
  */
 function _tryDirectMpegts(streamUrl) {
     if (!streamUrl) { _setPlayerLoading(false); _showPlayerError('Stream no disponible'); return; }
+
+    // Doble comprobación: HTTPS + HTTP → mixed content garantizado → error inmediato
+    if (location.protocol === 'https:' && (streamUrl).startsWith('http://')) {
+        _setPlayerLoading(false);
+        _showPlayerError('Este canal usa HTTP y la página es HTTPS.\nUsa el botón "Ver en pestaña nueva" para reproducirlo.');
+        return;
+    }
+
     if (typeof mpegts === 'undefined' || !mpegts.isSupported()) {
         _setPlayerLoading(false);
         _showPlayerError('Canal no accesible desde el servidor. Prueba "Ver en pestaña nueva".');
         return;
     }
-    // mpegts.js puede reproducir tanto .ts como streams sin extensión (Xtream Codes shorthand
-    // http://host:port/user/pass/id devuelve raw MPEG-TS cuando se accede sin cabecera Accept).
-    // Intentar directamente con la URL original, sin pasar por el proxy del VPS.
+    // mpegts.js puede reproducir tanto .ts como streams sin extensión (Xtream Codes shorthand).
     console.warn('[player] mpegts.js directo (sin proxy):', streamUrl);
     _playWithMpegts(streamUrl, true);
 }
