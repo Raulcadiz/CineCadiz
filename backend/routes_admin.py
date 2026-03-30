@@ -1825,12 +1825,39 @@ def iptv_panel():
     all_groups = sorted(_seen.keys())
     # Límite IPTV del usuario actual y cuántos ha creado ya
     iptv_creados = 0 if panel_user.is_superadmin else len(usuarios)
+    from models import XtreamConfig
+    xtream_cfg = XtreamConfig.query.get(1)
+    if xtream_cfg is None:
+        xtream_cfg = XtreamConfig(id=1)
+        db.session.add(xtream_cfg)
+        db.session.commit()
     return render_template(
         'admin/iptv.html',
         usuarios=usuarios, activas=activas, panel_user=panel_user,
         all_groups=all_groups, groups_by_type=groups_by_type,
-        iptv_creados=iptv_creados,
+        iptv_creados=iptv_creados, xtream_cfg=xtream_cfg,
     )
+
+
+@admin_bp.post('/iptv/xtream-config')
+@login_required
+def iptv_xtream_config():
+    """Guarda la configuración del servidor Xtream (modo stream + tipos habilitados)."""
+    from models import XtreamConfig
+    if not _get_panel_user().is_superadmin:
+        abort(403)
+    cfg = XtreamConfig.query.get(1)
+    if cfg is None:
+        cfg = XtreamConfig(id=1)
+        db.session.add(cfg)
+    cfg.stream_mode    = 'proxy' if request.form.get('stream_mode') == 'proxy' else 'direct'
+    cfg.live_enabled   = bool(request.form.get('live_enabled'))
+    cfg.vod_enabled    = bool(request.form.get('vod_enabled'))
+    cfg.series_enabled = bool(request.form.get('series_enabled'))
+    db.session.commit()
+    from flask import flash
+    flash('Configuración Xtream guardada.', 'success')
+    return redirect(url_for('admin.iptv_panel'))
 
 
 @admin_bp.post('/iptv/crear')

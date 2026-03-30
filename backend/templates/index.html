@@ -43,7 +43,7 @@
         <a href="#series" class="nav-item" data-type="serie">
             <i class="bi bi-tv"></i><span>Series</span>
         </a>
-        <a href="#live" class="nav-item" data-type="live">
+        <a href="#live" class="nav-item" data-type="live" style="display:none">
             <i class="bi bi-broadcast"></i><span>Directo</span>
         </a>
         <a href="#search" class="nav-item" id="mobileSearchBtn">
@@ -65,7 +65,7 @@
                 <a href="#home" class="active">Inicio</a>
                 <a href="#movies" data-type="pelicula">Películas</a>
                 <a href="#series" data-type="serie">Series</a>
-                <a href="#live" data-type="live">En Directo</a>
+                <a href="#live" data-type="live" style="display:none">En Directo</a>
                 <a href="#generos" id="btnGeneros">Géneros</a>
             </nav>
         </div>
@@ -113,7 +113,7 @@
             <option value="">Todos</option>
             <option value="pelicula">Películas</option>
             <option value="serie">Series</option>
-            <option value="live">En Directo</option>
+            <option value="live" style="display:none">En Directo</option>
         </select>
         <select id="sortFilter" class="filter-select">
             <option value="recent">Más recientes</option>
@@ -181,8 +181,8 @@
             <div class="carousel" id="seriesCarousel"></div>
         </section>
 
-        <!-- En Directo -->
-        <section class="content-section" id="live">
+        <!-- En Directo — oculto en web, disponible en APK/M3U/Xtream -->
+        <section class="content-section" id="live" style="display:none">
             <div class="section-header">
                 <h2 class="section-title">📡 En Directo</h2>
                 <a href="#movies" data-type="live" class="ver-todas">Ver todos →</a>
@@ -301,7 +301,7 @@
                 <a href="#home">Inicio</a>
                 <a href="#movies">Películas</a>
                 <a href="#series">Series</a>
-                <a href="#live">En Directo</a>
+                <a href="#live" style="display:none">En Directo</a>
             </div>
             <div class="footer-section">
                 <h4>Legal</h4>

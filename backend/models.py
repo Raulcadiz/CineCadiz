@@ -634,6 +634,34 @@ class CanalCurado(db.Model):
 
 
 # ═══════════════════════════════════════════════════════════
+# XTREAM CODES — CONFIGURACIÓN DEL SERVIDOR
+# ═══════════════════════════════════════════════════════════
+
+class XtreamConfig(db.Model):
+    """
+    Configuración global del servidor Xtream Codes integrado.
+    Solo existe una fila (singleton, id=1).
+    """
+    __tablename__ = 'xtream_config'
+
+    id             = db.Column(db.Integer, primary_key=True)
+    # 'direct' → 302 redirect al proveedor original (sin pasar por VPS)
+    # 'proxy'  → el VPS retransmite el stream (oculta credenciales del proveedor)
+    stream_mode    = db.Column(db.String(10), nullable=False, default='direct')
+    live_enabled   = db.Column(db.Boolean,   nullable=False, default=True)
+    vod_enabled    = db.Column(db.Boolean,   nullable=False, default=True)
+    series_enabled = db.Column(db.Boolean,   nullable=False, default=True)
+
+    def to_dict(self):
+        return {
+            'stream_mode':    self.stream_mode,
+            'live_enabled':   self.live_enabled,
+            'vod_enabled':    self.vod_enabled,
+            'series_enabled': self.series_enabled,
+        }
+
+
+# ═══════════════════════════════════════════════════════════
 # SERVER HEALTH SNAPSHOTS
 # ═══════════════════════════════════════════════════════════
 

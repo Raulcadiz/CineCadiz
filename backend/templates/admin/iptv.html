@@ -61,6 +61,121 @@
     </div>
 </div>
 
+<!-- ── Configuración Xtream Codes ───────────────────────────────── -->
+{% if panel_user.is_superadmin %}
+<div class="form-card mb-4">
+    <h5 class="mb-3"><i class="bi bi-sliders me-2" style="color:var(--cc-red)"></i>Configuración Xtream Codes API</h5>
+    <p class="text-secondary small mb-3">
+        Ajustes del servidor Xtream integrado. Las apps IPTV (XCIPTV, IPTV Smarters, TiviMate…)
+        se conectan con: <code>{{ request.host_url.rstrip('/') }}</code> + usuario/contraseña IPTV.
+    </p>
+    <form method="post" action="/admin/iptv/xtream-config" class="row g-3 align-items-end">
+
+        <!-- Modo de stream -->
+        <div class="col-md-5">
+            <label class="form-label fw-semibold mb-2">
+                <i class="bi bi-broadcast me-1"></i>Modo de stream
+            </label>
+            <div class="d-flex gap-3">
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="stream_mode"
+                           id="modeProxy" value="proxy"
+                           {{ 'checked' if xtream_cfg.stream_mode == 'proxy' }}>
+                    <label class="form-check-label" for="modeProxy">
+                        <i class="bi bi-shield-check text-warning me-1"></i>
+                        <strong>Proxy VPS</strong>
+                        <span class="text-secondary d-block" style="font-size:.78rem">
+                            El VPS retransmite el stream.<br>Oculta credenciales del proveedor.
+                        </span>
+                    </label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="stream_mode"
+                           id="modeDirect" value="direct"
+                           {{ 'checked' if xtream_cfg.stream_mode == 'direct' }}>
+                    <label class="form-check-label" for="modeDirect">
+                        <i class="bi bi-lightning-charge text-success me-1"></i>
+                        <strong>Directo</strong>
+                        <span class="text-secondary d-block" style="font-size:.78rem">
+                            302 redirect al proveedor.<br>Sin latencia extra, recomendado.
+                        </span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tipos de contenido habilitados -->
+        <div class="col-md-4">
+            <label class="form-label fw-semibold mb-2">
+                <i class="bi bi-collection-play me-1"></i>Contenido disponible
+            </label>
+            <div class="d-flex flex-column gap-2">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           name="live_enabled" id="swLive"
+                           {{ 'checked' if xtream_cfg.live_enabled }}>
+                    <label class="form-check-label" for="swLive">
+                        <i class="bi bi-broadcast-pin text-danger me-1"></i>Live / Canales
+                    </label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           name="vod_enabled" id="swVod"
+                           {{ 'checked' if xtream_cfg.vod_enabled }}>
+                    <label class="form-check-label" for="swVod">
+                        <i class="bi bi-film text-primary me-1"></i>VOD / Películas
+                    </label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           name="series_enabled" id="swSeries"
+                           {{ 'checked' if xtream_cfg.series_enabled }}>
+                    <label class="form-check-label" for="swSeries">
+                        <i class="bi bi-tv text-info me-1"></i>Series
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botón guardar -->
+        <div class="col-md-3 d-flex align-items-end">
+            <button type="submit" class="btn btn-danger w-100">
+                <i class="bi bi-floppy me-1"></i>Guardar configuración
+            </button>
+        </div>
+
+    </form>
+
+    <!-- URLs de conexión para las apps -->
+    <hr class="border-secondary mt-4">
+    <p class="text-secondary small mb-2 fw-semibold">URLs para configurar en apps IPTV:</p>
+    <div class="row g-2">
+        <div class="col-md-6">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text text-secondary">Xtream API</span>
+                <input type="text" class="form-control form-control-sm font-monospace bg-dark text-light border-secondary"
+                       readonly value="{{ request.host_url.rstrip('/') }}/player_api.php">
+                <button class="btn btn-outline-secondary btn-sm"
+                        onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/player_api.php')">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text text-secondary">M3U (legacy)</span>
+                <input type="text" class="form-control form-control-sm font-monospace bg-dark text-light border-secondary"
+                       readonly value="{{ request.host_url.rstrip('/') }}/get.php?username=USER&password=PASS&type=m3u_plus">
+                <button class="btn btn-outline-secondary btn-sm"
+                        onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/get.php?username=USER&password=PASS&type=m3u_plus')">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Tabla de usuarios -->
 <div class="form-card p-0">
     {% if usuarios %}
