@@ -850,7 +850,14 @@ function _getUrlFromProxy(proxyUrl) {
  *   3. _tryDirectMpegts           → mpegts.js directo (sin proxy) → falla → error+botón
  */
 function _loadHls(url, isDirect = false) {
-    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: isDirect ? 2 : 0 });
+    // Para el proxy (isDirect=false): timeout corto — el proxy es same-origin y responde rápido
+    // si funciona. Si tarda más de 8s, el servidor IPTV está bloqueando o caído → fallar rápido.
+    // Para acceso directo (isDirect=true): hasta 2 reintentos con timeout normal.
+    const extraCfg = isDirect
+        ? { manifestLoadingMaxRetry: 2 }
+        : { manifestLoadingMaxRetry: 0, manifestLoadingTimeOut: 8000 };
+
+    _hls = new Hls({ ..._buildHlsConfig(), ...extraCfg });
     _hls.loadSource(url);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -869,27 +876,6 @@ function _loadHls(url, isDirect = false) {
         }
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
-        const httpCode = data.response?.code;
-
-        // Proxy bloqueado (502) o rechazado (403/401) por el servidor IPTV.
-        // En lugar de mostrar error inmediatamente, intentar acceso directo desde el navegador:
-        // el navegador del usuario puede alcanzar el servidor IPTV aunque la IP del VPS esté bloqueada.
-        if (httpCode === 502 || httpCode === 403 || httpCode === 401) {
-            _destroyHls();
-            if (!isDirect) {
-                const origUrl = _getUrlFromProxy(url);
-                if (origUrl) {
-                    console.warn(`[hls] proxy error ${httpCode} — intentando acceso directo desde el navegador`);
-                    _loadHls(origUrl, true);
-                    return;
-                }
-            }
-            // Modo directo, o sin URL original → intentar mpegts directo como último recurso
-            console.warn('[hls] error', httpCode, '— intentando mpegts directo');
-            _tryDirectMpegts(el.player.dataset.streamUrl);
-            return;
-        }
-
         if (!data.fatal) {
             // Buffer stall en stream live: intentar saltar al live edge
             if (_isCurrentStreamLive && _hls && (
@@ -906,17 +892,32 @@ function _loadHls(url, isDirect = false) {
             return;
         }
 
-        console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', httpCode, 'url:', data.url);
+        // ── Error fatal ────────────────────────────────────────────────
+        const httpCode = data.response?.code;
+        console.warn('[hls] fatal', data.details, 'httpCode:', httpCode, 'isDirect:', isDirect);
         _destroyHls();
 
+        if (!isDirect) {
+            // Cualquier error fatal en el proxy (timeout, 502, 403, red…) →
+            // intentar el mismo stream directamente desde el navegador.
+            // El usuario puede llegar al servidor IPTV aunque la IP del VPS esté bloqueada.
+            const origUrl = _getUrlFromProxy(url);
+            if (origUrl) {
+                console.warn('[hls] proxy falló — intentando acceso directo:', origUrl);
+                _loadHls(origUrl, true);
+                return;
+            }
+        }
+
+        // Modo directo falló (CORS, red, etc.) → intentar mpegts.js sin proxy
         if (isDirect) {
-            // Intento directo falló (CORS u otro) → probar mpegts directo
             _tryDirectMpegts(el.player.dataset.streamUrl);
             return;
         }
 
+        // No era una URL de proxy (era directa desde el inicio) → ruta nativa
         const originalUrl = el.player.dataset.streamUrl;
-        const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
+        const isM3u8 = (originalUrl || '').toLowerCase().includes('.m3u8');
         if (!isM3u8) {
             _tryNative(originalUrl);
         } else {
@@ -934,17 +935,16 @@ function _loadHls(url, isDirect = false) {
  */
 function _tryDirectMpegts(streamUrl) {
     if (!streamUrl) { _setPlayerLoading(false); _showPlayerError('Stream no disponible'); return; }
-    const urlLow = streamUrl.toLowerCase().split('?')[0];
-    const isTs   = urlLow.endsWith('.ts');
-
-    if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-        console.warn('[player] intentando mpegts.js directo (sin proxy):', streamUrl);
-        _playWithMpegts(streamUrl, true);   // URL directa, sin /api/stream-proxy
+    if (typeof mpegts === 'undefined' || !mpegts.isSupported()) {
+        _setPlayerLoading(false);
+        _showPlayerError('Canal no accesible desde el servidor. Prueba "Ver en pestaña nueva".');
         return;
     }
-    // No .ts o mpegts no disponible → mostrar error con opciones
-    _setPlayerLoading(false);
-    _showPlayerError('Canal no accesible desde el servidor. Prueba "Ver en pestaña nueva".');
+    // mpegts.js puede reproducir tanto .ts como streams sin extensión (Xtream Codes shorthand
+    // http://host:port/user/pass/id devuelve raw MPEG-TS cuando se accede sin cabecera Accept).
+    // Intentar directamente con la URL original, sin pasar por el proxy del VPS.
+    console.warn('[player] mpegts.js directo (sin proxy):', streamUrl);
+    _playWithMpegts(streamUrl, true);
 }
 
 /**
