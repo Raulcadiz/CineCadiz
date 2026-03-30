@@ -194,6 +194,8 @@ class Lista(db.Model):
     total_items          = db.Column(db.Integer, default=0)
     items_activos        = db.Column(db.Integer, default=0)
     error                = db.Column(db.Text)
+    # Lista predeterminada: su contenido live se pre-selecciona en la web, APK e IPTV
+    es_defecto           = db.Column(db.Boolean, nullable=False, default=False)
 
     # Multi-usuario: NULL → global; FK → privada del propietario
     owner_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -227,6 +229,7 @@ class Lista(db.Model):
             'total_items':   self.total_items,
             'items_activos': self.items_activos,
             'error':         self.error,
+            'es_defecto':    self.es_defecto,
         }
 
 

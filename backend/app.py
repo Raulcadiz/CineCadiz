@@ -81,9 +81,18 @@ def create_app(config_class=Config):
 
     @app.route('/player')
     def player():
-        url   = request.args.get('url',   '').strip()
-        title = request.args.get('title', '').strip()
-        return render_template('player.html', url=url, title=title)
+        url       = request.args.get('url',       '').strip()
+        title     = request.args.get('title',     '').strip()
+        raw_urls  = request.args.get('live_urls', '').strip()
+        try:
+            live_urls = json.loads(raw_urls) if raw_urls else []
+            if not isinstance(live_urls, list):
+                live_urls = []
+            # Sanitize: keep only valid URL strings
+            live_urls = [u for u in live_urls if isinstance(u, str) and u.startswith(('http://', 'https://', 'rtmp://', 'rtsp://'))]
+        except (ValueError, TypeError):
+            live_urls = []
+        return render_template('player.html', url=url, title=title, live_urls=live_urls)
 
     @app.route('/manifest.json')
     def manifest():
@@ -161,6 +170,8 @@ def _migrate_db():
         # Live channel failover
         'ALTER TABLE contenidos ADD COLUMN live_urls_json TEXT',
         'ALTER TABLE contenidos ADD COLUMN live_active_idx INTEGER NOT NULL DEFAULT 0',
+        # Lista predeterminada
+        'ALTER TABLE listas ADD COLUMN es_defecto BOOLEAN NOT NULL DEFAULT 0',
         # Telegram bot config (las tablas nuevas las crea db.create_all; estas son por si acaso)
         'ALTER TABLE telegram_config ADD COLUMN daily_digest BOOLEAN NOT NULL DEFAULT 1',
         'ALTER TABLE telegram_config ADD COLUMN digest_hour  INTEGER NOT NULL DEFAULT 8',

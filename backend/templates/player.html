@@ -103,7 +103,12 @@
     const retryCount = document.getElementById('retry-count');
     const liveBadge  = document.getElementById('live-badge');
     const btnLl      = document.getElementById('btn-ll');
-    const url        = {{ url | tojson }};
+    let   url        = {{ url | tojson }};
+
+    // ── URLs de respaldo para failover automático ────────────────
+    const _liveUrlsRaw = {{ live_urls | tojson }};
+    let   _fUrls  = Array.isArray(_liveUrlsRaw) && _liveUrlsRaw.length > 1 ? _liveUrlsRaw : [];
+    let   _fIdx   = _fUrls.length ? Math.max(0, _fUrls.indexOf(url)) : 0;
 
     // ── Detección Android WebView ────────────────────────────────────
     // Los Web Workers pueden dar problemas en WebView antiguo (API <33)
@@ -114,8 +119,10 @@
     let _hls       = null;
     let _mpegts    = null;
     let _retries   = 0;
-    const MAX_RETRIES = 10;
-    let _retryTimer   = null;
+    const MAX_RETRIES      = 10;
+    const CONNECT_TIMEOUT  = 12000;  // ms — si el vídeo no arranca en 12s, reconectar
+    let _retryTimer  = null;
+    let _connectTimer = null;
     let _isLive       = false;
     let _lowLatency   = false;
     let _started      = false;
@@ -139,6 +146,7 @@
     }
 
     function hideOverlay() {
+        clearTimeout(_connectTimer);   // vídeo arrancó → cancelar timeout de conexión
         ovl.classList.add('hidden');
         retryCount.textContent = '';
         _retries = 0;   // reset al reproducir OK
@@ -149,11 +157,35 @@
     }
 
     // ── Eventos del <video> ─────────────────────────────────────────
-    v.addEventListener('playing',  hideOverlay);
-    v.addEventListener('waiting',  () => {
+    let _waitingTimer = null;   // watchdog: live stream congelado → reconnect
+
+    v.addEventListener('playing', () => {
+        hideOverlay();
+        clearTimeout(_waitingTimer);
+        _waitingTimer = null;
+    });
+    v.addEventListener('waiting', () => {
         // No mostrar spinner si ya está visible un error
         if (!ovl.classList.contains('hidden')) return;
         showLoading(_isLive ? 'Buffering en directo…' : 'Buffering…');
+        // Watchdog: si el live sigue en "waiting" tras 15s, intentar saltar al edge o reconectar
+        if (_isLive) {
+            clearTimeout(_waitingTimer);
+            _waitingTimer = setTimeout(() => {
+                if (!_isLive) return;
+                if (_hls) {
+                    const edge = _hls.liveSyncPosition;
+                    if (edge && edge > 0) {
+                        console.warn('[player] live waiting >15s — saltando al edge:', edge.toFixed(2));
+                        v.currentTime = edge;
+                        v.play().catch(() => {});
+                        return;
+                    }
+                }
+                console.warn('[player] live waiting >15s — reconectando');
+                scheduleReconnect();
+            }, 15000);
+        }
     });
     v.addEventListener('stalled', () => {
         if (_isLive && ovl.classList.contains('hidden')) {
@@ -172,21 +204,25 @@
         return {
             enableWorker:                   !isWebView,
             liveDurationInfinity:           true,
-            liveBackBufferLength:           0,
-            liveSyncDurationCount:          3,
-            liveMaxLatencyDurationCount:    _lowLatency ? 4 : 8,
-            maxBufferLength:                _lowLatency ? 8 : 20,
-            maxMaxBufferLength:             _lowLatency ? 16 : 40,
-            maxBufferSize:                  30 * 1000 * 1000,
+            liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
+            liveSyncDuration:               3,              // 3s exactos por detrás del edge
+            liveMaxLatencyDuration:         _lowLatency ? 6 : 10,
+            // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
+            highBufferWatchdogPeriod:       2,              // detectar stalls cada 2s (default: 5s)
+            nudgeMaxRetry:                  10,
+            nudgeOffset:                    0.2,
+            maxBufferLength:                _lowLatency ? 8 : 30,
+            maxMaxBufferLength:             _lowLatency ? 16 : 60,
+            maxBufferSize:                  40 * 1000 * 1000,
             manifestLoadingMaxRetry:        10,
             manifestLoadingRetryDelay:      500,
             manifestLoadingMaxRetryTimeout: 32000,
-            fragLoadingMaxRetry:            6,
+            fragLoadingMaxRetry:            3,              // falla rápido → reconnect más ágil
             fragLoadingRetryDelay:          500,
-            fragLoadingMaxRetryTimeout:     16000,
-            levelLoadingMaxRetry:           6,
+            fragLoadingMaxRetryTimeout:     6000,
+            levelLoadingMaxRetry:           4,
             levelLoadingRetryDelay:         500,
-            levelLoadingMaxRetryTimeout:    16000,
+            levelLoadingMaxRetryTimeout:    8000,
             xhrSetup: xhr => { xhr.withCredentials = false; },
         };
     }
@@ -194,6 +230,9 @@
     // ── Destrucción limpia ──────────────────────────────────────────
     function destroy() {
         clearTimeout(_retryTimer);
+        clearTimeout(_connectTimer);
+        clearTimeout(_waitingTimer);
+        _waitingTimer = null;
         if (_hls)    { try { _hls.destroy(); }    catch (_) {} _hls = null; }
         if (_mpegts) { try { _mpegts.destroy(); } catch (_) {} _mpegts = null; }
         v.pause();
@@ -203,11 +242,24 @@
         setLiveBadge(false);
     }
 
+    // ── Failover: cambiar al siguiente servidor de respaldo ────────
+    function tryFailover() {
+        if (!_fUrls.length || _fIdx >= _fUrls.length - 1) return false;
+        _fIdx++;
+        url = _fUrls[_fIdx];
+        _retries = 0;
+        showLoading('Cambiando a servidor de respaldo…');
+        destroy();
+        _retryTimer = setTimeout(start, 1000);
+        return true;
+    }
+
     // ── Reconexión con backoff exponencial ─────────────────────────
     // Delay: 1s → 1.5s → 2.25s → 3.4s → 5s → 7.6s → 11.4s → …  (máx 30s)
     function scheduleReconnect() {
         _retries++;
         if (_retries > MAX_RETRIES) {
+            if (tryFailover()) return;
             showError(`Sin señal tras ${MAX_RETRIES} intentos.\n¿Está el canal en directo ahora?`);
             return;
         }
@@ -248,10 +300,114 @@
     function start() {
         _started = true;
         const urlLow = url.toLowerCase().split('?')[0];
-        const isTs   = urlLow.endsWith('.ts');
+        const isTs        = urlLow.endsWith('.ts');
+        const isIptvLive  = urlLow.includes('/live/');
 
-        if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-            // ── MPEG-TS directo (canales Xtream Codes /live/USER/PASS/ID.ts) ──
+        // Timeout de conexión: si el vídeo no arranca en CONNECT_TIMEOUT ms,
+        // llamar a scheduleReconnect() para reintentar o hacer failover.
+        clearTimeout(_connectTimer);
+        _connectTimer = setTimeout(() => {
+            if (v.readyState < 2) {
+                console.warn('[player] timeout de conexión — reconectando');
+                scheduleReconnect();
+            }
+        }, CONNECT_TIMEOUT);
+
+        // Si la página corre en HTTPS y el stream es HTTP, el navegador bloquea la
+        // petición directa como "mixed content". En ese caso enrutamos todo a través
+        // del proxy del VPS (mismo origen HTTPS → HTTP), igual que hace el reproductor
+        // embebido en script.js.
+        const needsProxy = location.protocol === 'https:' && url.startsWith('http://');
+
+        if (needsProxy && typeof Hls !== 'undefined' && Hls.isSupported()) {
+            // Xtream Codes: quitar la extensión .ts para obtener la URL HLS equivalente
+            const hlsTarget = (isTs && isIptvLive) ? url.replace(/\.ts(\?|$)/i, '$1') : url;
+            const proxyUrl  = `${location.origin}/api/hls-proxy?url=${encodeURIComponent(hlsTarget)}`;
+            console.log('[player] HTTPS+HTTP — usando proxy:', proxyUrl);
+            _hls = new Hls({ ...buildHlsConfig(), manifestLoadingMaxRetry: 0, manifestLoadingTimeOut: 8000 });
+            _hls.loadSource(proxyUrl);
+            _hls.attachMedia(v);
+            _hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => {}); });
+            _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+                if (data.details && data.details.live) {
+                    _isLive = true; setLiveBadge(true);
+                    _hls.config.liveDurationInfinity = true;
+                } else {
+                    _hls.config.maxBufferLength    = 60;
+                    _hls.config.maxMaxBufferLength = 120;
+                    _hls.config.maxBufferSize      = 120 * 1000 * 1000;
+                }
+            });
+            _hls.on(Hls.Events.ERROR, (_, d) => {
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
+                console.warn('[hls/proxy] fatal', d.details, 'httpCode:', d.response?.code);
+                try { _hls.destroy(); } catch(_) {} _hls = null;
+                // No podemos hacer acceso directo (mixed content) → reintentar via proxy
+                scheduleReconnect();
+            });
+            return;
+        }
+
+        if (isTs && isIptvLive && typeof Hls !== 'undefined' && Hls.isSupported()) {
+            // ── Xtream Codes (.ts + /live/): intentar variante HLS (.m3u8) primero ──
+            // La mayoría de servidores Xtream sirven el mismo canal en ambos formatos.
+            // HLS permite negociar calidad y funciona mejor con el proxy del VPS.
+            const m3u8url = url.replace(/\.ts(\?|$)/i, '$1');
+            _hls = new Hls(buildHlsConfig());
+            _hls.loadSource(m3u8url);
+            _hls.attachMedia(v);
+            _hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => {}); });
+            _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+                if (data.details && data.details.live) {
+                    _isLive = true; setLiveBadge(true);
+                    _hls.config.liveDurationInfinity = true;
+                }
+            });
+            _hls.on(Hls.Events.ERROR, (_, d) => {
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
+                console.warn('[hls] fallo HLS, intentando mpegts.js con URL original');
+                try { _hls.destroy(); } catch(_) {} _hls = null;
+                // Caer a MPEG-TS directo con la URL original (.ts)
+                if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+                    _mpegts = mpegts.createPlayer(
+                        { type: 'mpegts', url, isLive: true },
+                        { enableWorker: !isWebView, enableStashBuffer: false,
+                          lazyLoadMaxDuration: 10, seekType: 'range' }
+                    );
+                    _mpegts.attachMediaElement(v);
+                    _mpegts.load();
+                    v.play().catch(() => {});
+                    _isLive = true; setLiveBadge(true);
+                    _mpegts.on(mpegts.Events.ERROR, (type, detail) => {
+                        console.warn('[mpegts] error tras fallo HLS', type, detail);
+                        try { _mpegts.destroy(); } catch(_) {} _mpegts = null;
+                        scheduleReconnect();
+                    });
+                } else {
+                    scheduleReconnect();
+                }
+            });
+
+        } else if (isTs && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+            // ── MPEG-TS directo (canales Xtream Codes /live/USER/PASS/ID.ts sin HLS) ──
             _mpegts = mpegts.createPlayer(
                 { type: 'mpegts', url, isLive: true },
                 {
@@ -290,7 +446,6 @@
                     _isLive = true;
                     setLiveBadge(true);
                     _hls.config.liveDurationInfinity = true;
-                    _hls.config.liveBackBufferLength = 0;
                 } else {
                     // VOD: ampliar buffer para scrubbing
                     _hls.config.maxBufferLength    = 60;
@@ -301,7 +456,16 @@
 
             _hls.on(Hls.Events.ERROR, (_, d) => {
                 console.warn('[hls] error', d.type, d.details, 'fatal:', d.fatal);
-                if (!d.fatal) return;
+                if (!d.fatal) {
+                    if (_isLive && _hls && (
+                        d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                        d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                    )) {
+                        const edge = _hls.liveSyncPosition;
+                        if (edge && edge > 0) { v.currentTime = edge; v.play().catch(() => {}); }
+                    }
+                    return;
+                }
 
                 const code = d.response?.code;
                 if (code === 403 || code === 401) {

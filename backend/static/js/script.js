@@ -135,12 +135,18 @@ function renderCard(item) {
         ? `<span class="badge-ep">S${String(item.season).padStart(2,'0')}E${String(item.episode||0).padStart(2,'0')}</span>`
         : '';
 
-    const isRss = item.source === 'rss';
+    const isRss  = item.source === 'rss';
+    const isLive = item.type  === 'live';
     const playLabel = isRss
         ? '<i class="bi bi-box-arrow-up-right"></i> Abrir'
         : '<i class="bi bi-play-fill"></i> Ver';
 
     const imgSrc = getImageUrl(item);
+
+    // Data attribute para failover en canales live con múltiples URLs
+    const liveUrlsAttr = (isLive && item.liveUrls && item.liveUrls.length > 1)
+        ? ` data-live-urls="${encodeURIComponent(JSON.stringify(item.liveUrls))}"`
+        : '';
 
     return `
     <div class="movie-card" data-id="${item.id}" data-type="${item.type || 'movie'}">
@@ -149,7 +155,8 @@ function renderCard(item) {
                  alt="${item.title}"
                  loading="lazy"
                  onerror="this.src='${PLACEHOLDER}'">
-            ${isRss ? '<span class="rss-badge">WEB</span>' : ''}
+            ${isLive ? '<span class="live-badge">🔴 LIVE</span>' : ''}
+            ${isRss  ? '<span class="rss-badge">WEB</span>'      : ''}
         </div>
         <div class="movie-info">
             <h3 class="movie-title">${item.title}</h3>
@@ -164,7 +171,7 @@ function renderCard(item) {
                     data-source="${item.source || 'm3u'}"
                     data-title="${item.title}"
                     data-id="${item.id}"
-                    data-image="${encodeURIComponent(imgSrc)}">
+                    data-image="${encodeURIComponent(imgSrc)}"${liveUrlsAttr}>
                 ${playLabel}
             </button>
             <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
@@ -228,6 +235,7 @@ function renderLiveGroupCard(group, idx) {
         <div class="card-img-wrap">
             <img src="${img}" alt="${group.title}" loading="lazy"
                  onerror="this.src='${PLACEHOLDER}'">
+            <span class="live-badge">🔴 LIVE</span>
             ${count > 1 ? `<span class="live-variants-badge">📡 ${count}</span>` : ''}
         </div>
         <div class="movie-info">
@@ -286,18 +294,22 @@ function showLiveGroupDetail(group) {
         </div>
         <div class="live-channels-list">
             ${channels.map(ch => {
-                const streamUrl = ch.streamUrl || ch.url_stream || '';
-                const encStream = encodeURIComponent(streamUrl);
-                const encImg    = encodeURIComponent(ch.image || group.image || PLACEHOLDER);
-                const qlabel    = qualityLabel(ch);
-                const chTitle   = ch.title || ch.titulo || baseTitle;
+                const streamUrl  = ch.streamUrl || ch.url_stream || '';
+                const encStream  = encodeURIComponent(streamUrl);
+                const encImg     = encodeURIComponent(ch.image || group.image || PLACEHOLDER);
+                const qlabel     = qualityLabel(ch);
+                const chTitle    = ch.title || ch.titulo || baseTitle;
+                // data-live-urls para failover automático si el canal tiene backups
+                const chLiveUrls = ch.liveUrls && ch.liveUrls.length > 1
+                    ? ` data-live-urls="${encodeURIComponent(JSON.stringify(ch.liveUrls))}"`
+                    : '';
                 return `
                 <div class="live-channel-row"
                      data-stream="${encStream}"
                      data-source="${ch.source || ch.fuente || 'm3u'}"
                      data-title="${chTitle}"
                      data-id="${ch.id || ''}"
-                     data-image="${encImg}">
+                     data-image="${encImg}"${chLiveUrls}>
                     <i class="bi bi-play-circle-fill live-row-icon"></i>
                     <span class="live-row-label">${qlabel}</span>
                     <span class="live-row-play">▶ Reproducir</span>
@@ -312,8 +324,12 @@ function showLiveGroupDetail(group) {
     body.querySelectorAll('.live-channel-row').forEach(row => {
         row.addEventListener('click', () => {
             modal.style.display = 'none';
+            let rowLiveUrls = null;
+            if (row.dataset.liveUrls) {
+                try { rowLiveUrls = JSON.parse(decodeURIComponent(row.dataset.liveUrls)); } catch (_) {}
+            }
             playStream(row.dataset.stream, row.dataset.title,
-                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image);
+                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image, rowLiveUrls);
         });
     });
 }
@@ -421,7 +437,10 @@ async function showDetails(id) {
                                 data-source="${item.source || 'm3u'}"
                                 data-title="${item.title}"
                                 data-id="${item.id}"
-                                data-image="${encodeURIComponent(modalImg)}">
+                                data-image="${encodeURIComponent(modalImg)}"
+                                ${item.type === 'live' && item.liveUrls && item.liveUrls.length > 1
+                                    ? `data-live-urls="${encodeURIComponent(JSON.stringify(item.liveUrls))}"`
+                                    : ''}>
                             ${item.source === 'rss'
                                 ? '<i class="bi bi-box-arrow-up-right"></i> Abrir en web'
                                 : '<i class="bi bi-play-fill"></i> Reproducir'}
@@ -547,7 +566,11 @@ async function showSeriesDetail(baseTitle) {
 }
 
 // ── Reproductor ────────────────────────────────────────────
-let _hls = null;   // instancia HLS.js activa
+let _hls = null;                  // instancia HLS.js activa
+let _failoverUrls = [];           // URLs de respaldo para el stream live actual
+let _failoverIdx  = 0;            // índice actual en la cadena de failover
+let _isCurrentStreamLive = false; // true cuando LEVEL_LOADED confirma stream live
+let _stallTimer = null;           // watchdog: congela live → failover/reconnect
 
 // Detecta Android WebView (workers con limitaciones en versiones antiguas)
 const _isWebView = /wv/.test(navigator.userAgent) ||
@@ -556,29 +579,72 @@ const _isWebView = /wv/.test(navigator.userAgent) ||
 /**
  * Config HLS.js optimizada para live/IPTV.
  * Segura también para VOD: liveDurationInfinity solo activa en playlists live;
- * liveBackBufferLength=0 solo aplica cuando la playlist es live.
+ * liveBackBufferLength solo aplica cuando la playlist es live.
+ *
+ * Cambios clave vs versión anterior:
+ *  - liveSyncDuration: 3s explícitos (más fiable que count-based en IPTV irregular)
+ *  - liveMaxLatencyDuration: 10s → si el player se atrasa más, resync al edge
+ *  - liveBackBufferLength: 4 → buffer trasero mínimo para absorber microcortes
+ *  - highBufferWatchdogPeriod: 2 → HLS.js detecta stalls cada 2s (default=5s)
+ *  - nudgeMaxRetry: 10 → más intentos de nudge antes de rendirse
+ *  - fragLoadingMaxRetry: 3 → falla rápido en live (antes: 6 → 15s de pantalla helada)
+ *  - fragLoadingMaxRetryTimeout: 6000 → timeout de fragmento más corto
  */
 function _buildHlsConfig() {
     return {
-        enableWorker:                   !_isWebView,  // desactivar en WebView por compatibilidad
-        liveDurationInfinity:           true,          // live sin EXT-X-ENDLIST no termina
-        liveBackBufferLength:           0,             // liberar memoria detrás del live edge
-        liveSyncDurationCount:          3,             // target = live_edge - 3 segmentos
-        liveMaxLatencyDurationCount:    8,             // si >8 segs de retraso → resync al edge
-        maxBufferLength:                20,            // buffer adelante (segundos)
-        maxMaxBufferLength:             40,            // límite superior
-        maxBufferSize:                  30 * 1000 * 1000,   // 30 MB
+        enableWorker:                   !_isWebView,
+        liveDurationInfinity:           true,
+        liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
+        liveSyncDuration:               3,              // 3s por detrás del edge (segundos exactos)
+        liveMaxLatencyDuration:         10,             // reconectar si retraso > 10s
+        // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
+        highBufferWatchdogPeriod:       2,              // detectar buffer stall cada 2s (era 5s)
+        nudgeMaxRetry:                  10,             // más nudges antes de fatal
+        nudgeOffset:                    0.2,
+        maxBufferLength:                30,             // buffer adelante (era 20s)
+        maxMaxBufferLength:             60,
+        maxBufferSize:                  40 * 1000 * 1000,
         manifestLoadingMaxRetry:        10,
         manifestLoadingRetryDelay:      500,
         manifestLoadingMaxRetryTimeout: 32000,
-        fragLoadingMaxRetry:            6,
+        fragLoadingMaxRetry:            3,              // menos reintentos → falla rápido en live
         fragLoadingRetryDelay:          500,
-        fragLoadingMaxRetryTimeout:     16000,
-        levelLoadingMaxRetry:           6,
+        fragLoadingMaxRetryTimeout:     6000,           // era 16000 → menos tiempo helado
+        levelLoadingMaxRetry:           4,
         levelLoadingRetryDelay:         500,
-        levelLoadingMaxRetryTimeout:    16000,
+        levelLoadingMaxRetryTimeout:    8000,
         xhrSetup: xhr => { xhr.withCredentials = false; },
     };
+}
+
+/**
+ * Manejadores del watchdog de congelación para streams live.
+ * Se registran con addEventListener (named → se pueden eliminar con removeEventListener).
+ * _onVideoWaitingLive: arma un temporizador; si el vídeo sigue "esperando" tras 12s
+ *   intenta saltar al live edge antes de lanzar error/failover.
+ * _onVideoPlayingLive: cancela el temporizador cuando el vídeo vuelve a reproducirse.
+ */
+function _onVideoWaitingLive() {
+    if (!_isCurrentStreamLive) return;
+    clearTimeout(_stallTimer);
+    _stallTimer = setTimeout(() => {
+        if (!_isCurrentStreamLive) return;
+        console.warn('[player] live stall watchdog — video congelado >12s');
+        // Intentar saltar al live edge antes de reconectar
+        if (_hls) {
+            const edge = _hls.liveSyncPosition;
+            if (edge && edge > 0 && Math.abs(el.videoPlayer.currentTime - edge) > 3) {
+                console.warn('[player] saltando al live edge:', edge.toFixed(2));
+                el.videoPlayer.currentTime = edge;
+                el.videoPlayer.play().catch(() => {});
+                return;   // dar otra oportunidad antes de failover
+            }
+        }
+        _showPlayerError('Stream en directo interrumpido');
+    }, 12000);
+}
+function _onVideoPlayingLive() {
+    clearTimeout(_stallTimer);
 }
 
 /** Muestra badge "🔴 EN VIVO" junto al título del reproductor (solo una vez). */
@@ -594,6 +660,29 @@ function _showLiveIndicator() {
     titleEl.appendChild(badge);
 }
 
+/**
+ * Intenta el siguiente servidor de respaldo cuando el stream actual falla.
+ * Muestra un toast no intrusivo y vuelve a cargar sin mostrar pantalla de error.
+ * Devuelve true si hay backup disponible (carga iniciada), false si se agotaron las opciones.
+ */
+function _tryFailover() {
+    if (!_failoverUrls.length || _failoverIdx >= _failoverUrls.length - 1) return false;
+    _failoverIdx++;
+    const nextUrl = _normalizeStreamUrl(_failoverUrls[_failoverIdx]);
+    showNotification('Cambiando a servidor de respaldo…');
+    _destroyHls();
+    _setPlayerLoading(true);
+    setTimeout(() => {
+        el.player.dataset.streamUrl = nextUrl;
+        if (_isLikelyHls(nextUrl)) {
+            _loadHlsDirect(nextUrl);
+        } else {
+            _tryNative(nextUrl);
+        }
+    }, 1000);
+    return true;
+}
+
 /** Muestra/oculta el spinner de carga dentro del reproductor. */
 function _setPlayerLoading(on) {
     el.player?.querySelectorAll('.player-loading').forEach(e => e.remove());
@@ -607,8 +696,16 @@ function _setPlayerLoading(on) {
 
 /**
  * Destruye la instancia HLS y mpegts (si existen) y cancela descargas activas.
+ * También cancela el watchdog de congelación live.
  */
 function _destroyHls() {
+    // Limpiar watchdog de congelación live
+    clearTimeout(_stallTimer);
+    _stallTimer = null;
+    _isCurrentStreamLive = false;
+    el.videoPlayer.removeEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.removeEventListener('playing', _onVideoPlayingLive);
+
     if (window._mpegtsPlayer) {
         try { window._mpegtsPlayer.destroy(); } catch (_) {}
         window._mpegtsPlayer = null;
@@ -629,6 +726,9 @@ function _destroyHls() {
 
 /** Muestra overlay de error dentro del reproductor con mensaje amigable + botón Reportar. */
 function _showPlayerError(msg, errCode) {
+    // Antes de mostrar el error, intentar el siguiente servidor de respaldo
+    if (_tryFailover()) return;
+
     const code = errCode ?? el.videoPlayer?.error?.code;
     const codeNames = {1:'ABORTED',2:'NETWORK',3:'DECODE',4:'SRC_NOT_SUPPORTED'};
     if (code) console.error('[player] error', code, codeNames[code] || '?', '|', msg);
@@ -679,8 +779,11 @@ function _showPlayerError(msg, errCode) {
                 document.querySelector('.btn-close-player')?.click();
             } else if (action === 'open-tab') {
                 const title = document.getElementById('playerTitle')?.textContent || '';
+                const liveUrlsParam = _failoverUrls.length > 1
+                    ? '&live_urls=' + encodeURIComponent(JSON.stringify(_failoverUrls))
+                    : '';
                 window.open(
-                    `http://${location.hostname}/player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(title)}`,
+                    `http://${location.hostname}/player?url=${encodeURIComponent(streamUrl)}&title=${encodeURIComponent(title)}${liveUrlsParam}`,
                     '_blank', 'noopener,noreferrer'
                 );
             } else if (action === 'open-app') {
@@ -719,12 +822,42 @@ function _showPlayerError(msg, errCode) {
     el.player?.querySelector('.player-body')?.appendChild(errDiv);
 }
 
-/** Carga un stream HLS con HLS.js (vía proxy). Si falla, cae a native solo si no es HLS. */
-function _loadHls(url) {
-    // manifestLoadingMaxRetry: 0 — si el proxy devuelve error en el manifest, fallar
-    // inmediatamente sin reintentos. El proxy es same-origin y fiable; si falla es porque
-    // el servidor IPTV está bloqueado, no por un problema de red transitorio.
-    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: 0 });
+/**
+ * Extrae la URL real de un parámetro de proxy (/api/hls-proxy?url=... o stream-proxy?url=...).
+ * Devuelve la URL original, o null si la URL no es una URL de proxy.
+ */
+function _getUrlFromProxy(proxyUrl) {
+    try {
+        const u = new URL(proxyUrl, location.origin);
+        if (u.pathname.includes('-proxy')) {
+            const orig = u.searchParams.get('url');
+            return orig ? decodeURIComponent(orig) : null;
+        }
+    } catch (_) {}
+    return null;
+}
+
+/**
+ * Carga un stream HLS con HLS.js.
+ *
+ * @param {string}  url       URL a cargar (proxy o directa).
+ * @param {boolean} isDirect  true = intento directo (sin proxy). Evita reintentar vía proxy
+ *                            en la cadena de fallback y pasa a mpegts si falla.
+ *
+ * Cadena de fallback cuando el proxy falla (502/403):
+ *   1. _loadHls(proxy_url)        → falla 502  → extrae URL original
+ *   2. _loadHls(original_url, true) → falla CORS/net → _tryDirectMpegts(streamUrl)
+ *   3. _tryDirectMpegts           → mpegts.js directo (sin proxy) → falla → error+botón
+ */
+function _loadHls(url, isDirect = false) {
+    // Para el proxy (isDirect=false): timeout corto — el proxy es same-origin y responde rápido
+    // si funciona. Si tarda más de 8s, el servidor IPTV está bloqueando o caído → fallar rápido.
+    // Para acceso directo (isDirect=true): hasta 2 reintentos con timeout normal.
+    const extraCfg = isDirect
+        ? { manifestLoadingMaxRetry: 2 }
+        : { manifestLoadingMaxRetry: 0, manifestLoadingTimeOut: 8000 };
+
+    _hls = new Hls({ ..._buildHlsConfig(), ...extraCfg });
     _hls.loadSource(url);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -732,10 +865,9 @@ function _loadHls(url) {
     });
     _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (data.details && data.details.live) {
+            _isCurrentStreamLive = true;
             _showLiveIndicator();
-            // Asegurar config live en caliente (por si se creó con defaults)
             _hls.config.liveDurationInfinity = true;
-            _hls.config.liveBackBufferLength = 0;
         } else {
             // VOD confirmado: ampliar buffer para scrubbing suave
             _hls.config.maxBufferLength    = 60;
@@ -744,27 +876,55 @@ function _loadHls(url) {
         }
     });
     _hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) {
+            // Buffer stall en stream live: intentar saltar al live edge
+            if (_isCurrentStreamLive && _hls && (
+                data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+            )) {
+                const edge = _hls.liveSyncPosition;
+                if (edge && edge > 0) {
+                    console.warn('[hls] buffer stall — saltando al live edge:', edge.toFixed(2));
+                    el.videoPlayer.currentTime = edge;
+                    el.videoPlayer.play().catch(() => {});
+                }
+            }
+            return;
+        }
+
+        // ── Error fatal ────────────────────────────────────────────────
         const httpCode = data.response?.code;
-        // 502 = proxy detectó respuesta no-video del servidor IPTV (IP bloqueada).
-        // Fallar INMEDIATAMENTE sin esperar reintentos de HLS.js — evita carga infinita.
-        if (httpCode === 502) {
-            console.warn('[hls] 502 from proxy — IP blocked, failing fast');
-            _destroyHls();
-            _setPlayerLoading(false);
-            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso', 2);
-            return;
-        }
-        if (!data.fatal) return;
-        console.warn('[hls] fatal error', data.type, data.details, 'httpCode:', httpCode, 'url:', data.url);
+        console.warn('[hls] fatal', data.details, 'httpCode:', httpCode, 'isDirect:', isDirect);
         _destroyHls();
-        // 403/401 = IP del servidor bloqueada por el proveedor IPTV → sin reintentos
-        if (httpCode === 403 || httpCode === 401) {
-            _setPlayerLoading(false);
-            _showPlayerError('Canal bloqueado — la IP del servidor no tiene acceso a este stream');
+
+        if (!isDirect) {
+            const origUrl = _getUrlFromProxy(url);
+            if (origUrl) {
+                // HTTPS page + HTTP stream → el navegador bloquea peticiones directas (mixed content).
+                // No tiene sentido intentar acceso directo ni mpegts: fallarán instantáneamente.
+                // Ir directamente a mostrar el error con el botón "Ver en pestaña nueva".
+                if (location.protocol === 'https:' && origUrl.startsWith('http://')) {
+                    console.warn('[hls] HTTPS + HTTP stream — mixed content, no se puede reproducir en iframe');
+                    _setPlayerLoading(false);
+                    _showPlayerError('Este canal usa HTTP y la página es HTTPS.\nUsa el botón "Ver en pestaña nueva" para reproducirlo.');
+                    return;
+                }
+                // HTTP o HTTPS stream → intentar acceso directo desde el navegador
+                console.warn('[hls] proxy falló — intentando acceso directo:', origUrl);
+                _loadHls(origUrl, true);
+                return;
+            }
+        }
+
+        // Modo directo falló (CORS, red, etc.) → intentar mpegts.js sin proxy
+        if (isDirect) {
+            _tryDirectMpegts(el.player.dataset.streamUrl);
             return;
         }
+
+        // No era una URL de proxy (era directa desde el inicio) → ruta nativa
         const originalUrl = el.player.dataset.streamUrl;
-        const isM3u8 = originalUrl && originalUrl.toLowerCase().includes('.m3u8');
+        const isM3u8 = (originalUrl || '').toLowerCase().includes('.m3u8');
         if (!isM3u8) {
             _tryNative(originalUrl);
         } else {
@@ -772,6 +932,31 @@ function _loadHls(url) {
             _showPlayerError('Stream no disponible o canal caído');
         }
     });
+}
+
+/**
+ * Último recurso para canales live que no son accesibles vía proxy.
+ * Intenta reproducir el stream directamente desde el navegador usando mpegts.js.
+ * Solo se llega aquí si la página NO es HTTPS (mixed content ya filtrado antes).
+ */
+function _tryDirectMpegts(streamUrl) {
+    if (!streamUrl) { _setPlayerLoading(false); _showPlayerError('Stream no disponible'); return; }
+
+    // Doble comprobación: HTTPS + HTTP → mixed content garantizado → error inmediato
+    if (location.protocol === 'https:' && (streamUrl).startsWith('http://')) {
+        _setPlayerLoading(false);
+        _showPlayerError('Este canal usa HTTP y la página es HTTPS.\nUsa el botón "Ver en pestaña nueva" para reproducirlo.');
+        return;
+    }
+
+    if (typeof mpegts === 'undefined' || !mpegts.isSupported()) {
+        _setPlayerLoading(false);
+        _showPlayerError('Canal no accesible desde el servidor. Prueba "Ver en pestaña nueva".');
+        return;
+    }
+    // mpegts.js puede reproducir tanto .ts como streams sin extensión (Xtream Codes shorthand).
+    console.warn('[player] mpegts.js directo (sin proxy):', streamUrl);
+    _playWithMpegts(streamUrl, true);
 }
 
 /**
@@ -792,11 +977,27 @@ function _loadHls(url) {
  *   2. Error de red/CORS → reintenta a través de /api/hls-proxy (VPS como relay)
  *   3. Error de parseo   → no es HLS → intenta <video src> nativo (MP4, MKV…)
  *   4. Nativo falla      → reintenta a través de /api/stream-proxy
- *   5. Todo falla        → overlay con botones VLC / copiar / intentar HLS
+ *   5. Todo falla        → failover a la siguiente URL de respaldo (si las hay)
+ *   6. Sin backups       → overlay con botones Reportar / VLC / copiar
+ *
+ * @param {string[]} liveUrls  Array completo de URLs de respaldo para failover automático.
+ *                             Solo aplica a canales live. Si null/vacío, comportamiento idéntico al original.
  */
-function playStream(streamUrl, title, source, itemId = '', image = '') {
+function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls = null) {
     const url = decodeURIComponent(streamUrl);
     const imgDecoded = image ? decodeURIComponent(image) : '';
+
+    // ── Configurar failover para canales live ───────────────────
+    // Siempre resetear al inicio de una nueva reproducción
+    _failoverUrls = [];
+    _failoverIdx  = 0;
+    if (liveUrls && Array.isArray(liveUrls) && liveUrls.length > 1) {
+        _failoverUrls = liveUrls.map(u => (u || '').trim()).filter(Boolean);
+        // Localizar la URL activa en la cadena para empezar desde el índice correcto
+        const norm = _normalizeStreamUrl(url);
+        const idx  = _failoverUrls.findIndex(u => _normalizeStreamUrl(u) === norm);
+        if (idx > 0) _failoverIdx = idx;
+    }
 
     // Historial local
     let hist = JSON.parse(localStorage.getItem('cc_history') || '[]');
@@ -846,6 +1047,13 @@ function playStream(streamUrl, title, source, itemId = '', image = '') {
         el.videoPlayer.removeEventListener('playing', _onPlaying);
     };
     el.videoPlayer.addEventListener('playing', _onPlaying);
+
+    // Registrar watchdog de congelación para streams live.
+    // Los listeners son named → _destroyHls() los eliminará en la próxima reproducción.
+    el.videoPlayer.removeEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.removeEventListener('playing', _onVideoPlayingLive);
+    el.videoPlayer.addEventListener('waiting', _onVideoWaitingLive);
+    el.videoPlayer.addEventListener('playing', _onVideoPlayingLive);
 
     // Restaurar volumen guardado
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
@@ -974,7 +1182,9 @@ function _loadHlsDirect(url) {
         return;
     }
 
-    _hls = new Hls(_buildHlsConfig());
+    // Para el intento directo usamos manifestLoadingMaxRetry: 2 (en vez de 10)
+    // para caer rápido al proxy si el servidor IPTV no responde o bloquea.
+    _hls = new Hls({ ..._buildHlsConfig(), manifestLoadingMaxRetry: 2 });
     _hls.loadSource(hlsUrl);
     _hls.attachMedia(el.videoPlayer);
     _hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -982,9 +1192,9 @@ function _loadHlsDirect(url) {
     });
     _hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (data.details && data.details.live) {
+            _isCurrentStreamLive = true;
             _showLiveIndicator();
             _hls.config.liveDurationInfinity = true;
-            _hls.config.liveBackBufferLength = 0;
         } else {
             _hls.config.maxBufferLength    = 60;
             _hls.config.maxMaxBufferLength = 120;
@@ -992,9 +1202,21 @@ function _loadHlsDirect(url) {
         }
     });
     _hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) return;
+        if (!data.fatal) {
+            if (_isCurrentStreamLive && _hls && (
+                data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+            )) {
+                const edge = _hls.liveSyncPosition;
+                if (edge && edge > 0) {
+                    el.videoPlayer.currentTime = edge;
+                    el.videoPlayer.play().catch(() => {});
+                }
+            }
+            return;
+        }
         _destroyHls();
-        // Reintentar siempre a través del proxy (resuelve CORS y mixed-content en HTTP y HTTPS)
+        // Reintentar a través del proxy (VLC User-Agent + relay)
         _loadHls(`/api/hls-proxy?url=${encodeURIComponent(hlsUrl)}`);
     });
 }
@@ -1339,12 +1561,17 @@ function setupEvents() {
         const playBtn = e.target.closest('[data-stream]');
         if (playBtn) {
             e.stopPropagation();
+            let btnLiveUrls = null;
+            if (playBtn.dataset.liveUrls) {
+                try { btnLiveUrls = JSON.parse(decodeURIComponent(playBtn.dataset.liveUrls)); } catch (_) {}
+            }
             playStream(
                 playBtn.dataset.stream,
                 playBtn.dataset.title,
                 playBtn.dataset.source || 'm3u',
                 playBtn.dataset.id || '',
                 playBtn.dataset.image || '',
+                btnLiveUrls,
             );
             return;
         }
@@ -1739,6 +1966,13 @@ async function loadLiveListas() {
         sel.innerHTML = '<option value="">📋 Todas las listas</option>' +
             listas.map(l => `<option value="${l.id}">${l.nombre}</option>`).join('');
 
+        // Auto-seleccionar la lista predeterminada (si existe y el usuario no eligió otra)
+        const defaultLista = listas.find(l => l.isDefault);
+        if (defaultLista && !state.currentListaId) {
+            sel.value = String(defaultLista.id);
+            await _reloadLiveByLista(defaultLista.id);
+        }
+
         // Mostrar la barra si estamos en vista live
         if (state.currentType === 'live') {
             bar.style.display = 'flex';
@@ -2091,12 +2325,20 @@ async function init() {
     }, 800);
 }
 
-// Animación slideIn para notificaciones (no se puede poner en CSS estático fácilmente)
+// Animación slideIn + estilos dinámicos del reproductor
 const _style = document.createElement('style');
 _style.textContent = `
     @keyframes slideIn {
         from { transform:translateX(110%); opacity:0; }
         to   { transform:translateX(0);    opacity:1; }
+    }
+    /* Badge rojo "🔴 LIVE" sobre las tarjetas de canales en directo */
+    .live-badge {
+        position:absolute; top:6px; left:6px; z-index:2;
+        background:rgba(229,51,51,.88); color:#fff;
+        font-size:.6rem; font-weight:700; padding:.15rem .4rem;
+        border-radius:3px; letter-spacing:.06em; pointer-events:none;
+        text-shadow:0 1px 2px rgba(0,0,0,.5);
     }
 `;
 document.head.appendChild(_style);

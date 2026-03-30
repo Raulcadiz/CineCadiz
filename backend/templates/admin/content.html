@@ -88,6 +88,7 @@
                     <th>Servidor</th>
                     <th>Verificado</th>
                     <th class="text-center">Estado</th>
+                    <th class="text-center">Backups</th>
                 </tr>
             </thead>
             <tbody>
@@ -111,6 +112,8 @@
                 <td>
                     {% if item.tipo == 'pelicula' %}
                         <i class="bi bi-camera-film text-primary"></i>
+                    {% elif item.tipo == 'live' %}
+                        <span class="badge bg-danger" style="font-size:.65rem">LIVE</span>
                     {% else %}
                         <i class="bi bi-tv text-success"></i>
                     {% endif %}
@@ -132,6 +135,19 @@
                             title="{% if item.activo %}Activo — click para desactivar{% else %}Inactivo — click para activar{% endif %}">
                         <i class="bi {% if item.activo %}bi-check-circle-fill{% else %}bi-x-circle{% endif %}"></i>
                     </button>
+                </td>
+                <td class="text-center">
+                    {% if item.tipo == 'live' %}
+                    {% set n_backups = (item.live_urls_json | fromjson | length) if item.live_urls_json else 1 %}
+                    <button class="btn btn-sm btn-outline-warning btn-backup"
+                            data-id="{{ item.id }}"
+                            title="Editar URLs de respaldo ({{ n_backups }} URL{% if n_backups != 1 %}s{% endif %})">
+                        <i class="bi bi-layers"></i>
+                        <span class="backup-count ms-1">{{ n_backups }}</span>
+                    </button>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
                 </td>
             </tr>
             {% else %}
@@ -172,6 +188,36 @@
     </nav>
     {% endif %}
 </div>
+
+<!-- Modal: Editar URLs de respaldo (failover) -->
+<div class="modal fade" id="modalBackupUrls" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-layers me-2 text-warning"></i>URLs de respaldo
+                    <small class="text-muted ms-2 fw-normal" id="backup-canal-nombre"></small>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2">
+                    Una URL por línea. La <strong>primera</strong> es la URL principal (activa).
+                    Si falla, el reproductor probará las siguientes en orden.
+                </p>
+                <textarea id="backup-urls-textarea" class="form-control bg-dark text-light border-secondary font-monospace"
+                          rows="6" placeholder="http://servidor1.com/live/user/pass/canal&#10;http://servidor2.com/live/user/pass/canal&#10;rtmp://servidor3.com/live/canal"></textarea>
+                <div id="backup-urls-alert" class="alert d-none py-2 small mt-2"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" id="btn-backup-save" class="btn btn-warning btn-sm">
+                    <i class="bi bi-floppy me-1"></i>Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -192,6 +238,75 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
             btn.title = 'Inactivo — click para activar';
         }
     });
+});
+
+// ── Editar URLs de respaldo (failover) ──────────────────────────
+let _backupItemId = null;
+
+document.querySelectorAll('.btn-backup').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        _backupItemId = btn.dataset.id;
+        const alert  = document.getElementById('backup-urls-alert');
+        const ta     = document.getElementById('backup-urls-textarea');
+        alert.className = 'alert d-none py-2 small mt-2';
+        ta.value = '';
+        document.getElementById('backup-canal-nombre').textContent = '';
+        const modal = new bootstrap.Modal(document.getElementById('modalBackupUrls'));
+        modal.show();
+        try {
+            const res  = await fetch(`/admin/contenido/${_backupItemId}/backup-urls`);
+            const data = await res.json();
+            document.getElementById('backup-canal-nombre').textContent = data.titulo || '';
+            const urls = data.live_urls && data.live_urls.length
+                ? data.live_urls
+                : [data.url_stream].filter(Boolean);
+            ta.value = urls.join('\n');
+        } catch (e) {
+            alert.className = 'alert alert-danger py-2 small mt-2';
+            alert.textContent = 'Error al cargar las URLs';
+        }
+    });
+});
+
+document.getElementById('btn-backup-save')?.addEventListener('click', async () => {
+    const ta    = document.getElementById('backup-urls-textarea');
+    const alert = document.getElementById('backup-urls-alert');
+    const btn   = document.getElementById('btn-backup-save');
+    alert.className = 'alert d-none py-2 small mt-2';
+
+    const urls = ta.value.split('\n').map(u => u.trim()).filter(Boolean);
+    if (!urls.length) {
+        alert.className = 'alert alert-danger py-2 small mt-2';
+        alert.textContent = 'Introduce al menos una URL.';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+    try {
+        const res  = await fetch(`/admin/contenido/${_backupItemId}/backup-urls`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ urls }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert.className = 'alert alert-success py-2 small mt-2';
+            alert.textContent = `✓ ${data.urls_guardadas} URL${data.urls_guardadas !== 1 ? 's' : ''} guardadas`;
+            // Actualizar el contador en la tabla
+            const row = document.querySelector(`.btn-backup[data-id="${_backupItemId}"] .backup-count`);
+            if (row) row.textContent = data.urls_guardadas;
+        } else {
+            alert.className = 'alert alert-danger py-2 small mt-2';
+            alert.textContent = data.error || 'Error al guardar';
+        }
+    } catch (e) {
+        alert.className = 'alert alert-danger py-2 small mt-2';
+        alert.textContent = 'Error de conexión';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Guardar';
+    }
 });
 
 // Cambiar servidor live

@@ -607,14 +607,14 @@ def get_live_categorias():
 def get_live_listas():
     """Listas M3U que contienen al menos un canal en directo activo."""
     rows = (
-        db.session.query(Lista.id, Lista.nombre)
+        db.session.query(Lista.id, Lista.nombre, Lista.es_defecto)
         .join(Contenido, Contenido.lista_id == Lista.id)
         .filter(Contenido.activo == True, Contenido.tipo == 'live', Lista.activa == True)
-        .group_by(Lista.id, Lista.nombre)
-        .order_by(Lista.nombre.asc())
+        .group_by(Lista.id, Lista.nombre, Lista.es_defecto)
+        .order_by(Lista.es_defecto.desc(), Lista.nombre.asc())
         .all()
     )
-    return jsonify([{'id': r.id, 'nombre': r.nombre} for r in rows])
+    return jsonify([{'id': r.id, 'nombre': r.nombre, 'isDefault': bool(r.es_defecto)} for r in rows])
 
 
 @api_bp.get('/serie-episodios')
@@ -848,10 +848,34 @@ def hls_proxy():
                             proxies={}, allow_redirects=True)
         resp.raise_for_status()
 
-        # Verificar que la respuesta es realmente un playlist M3U8.
-        # Devolver 403 (no 502) para que el JS ya desplegado falle inmediatamente
-        # sin reintentos de HLS.js — evita la carga infinita.
         _body = resp.text.strip()
+
+        # Si la URL no tiene extensión .m3u8 y la respuesta no es un playlist HLS,
+        # puede ser un shorthand de Xtream Codes (/user/pass/id) que devuelve TS raw.
+        # Intentamos añadir .m3u8 — Xtream siempre expone ambos formatos.
+        _url_low = url.lower().split('?')[0]
+        if not (_body.startswith('#EXTM3U') or _body.startswith('#EXT-X-')):
+            if not _url_low.endswith('.m3u8') and not _url_low.endswith('.ts'):
+                m3u8_url = url.split('?')[0].rstrip('/') + '.m3u8'
+                _qs = _urlparse(url).query
+                if _qs:
+                    m3u8_url += '?' + _qs
+                try:
+                    resp2 = requests.get(m3u8_url, headers=mfst_hdrs, timeout=15,
+                                         proxies={}, allow_redirects=True)
+                    resp2.raise_for_status()
+                    _body2 = resp2.text.strip()
+                    if _body2.startswith('#EXTM3U') or _body2.startswith('#EXT-X-'):
+                        url   = m3u8_url
+                        resp  = resp2
+                        _body = _body2
+                        parsed = _urlparse(url)
+                except Exception:
+                    pass
+
+        # Verificar que la respuesta es realmente un playlist M3U8.
+        # Devolver 403 (no 502) para que el JS falle inmediatamente
+        # sin reintentos de HLS.js — evita la carga infinita.
         if not (_body.startswith('#EXTM3U') or _body.startswith('#EXT-X-')):
             return '', 403
 
