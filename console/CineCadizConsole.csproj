@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>cinecadiz</AssemblyName>
+    <RootNamespace>CineCadizConsole</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.49.1" />
+  </ItemGroup>
+  <!-- Copia mpv/ al directorio de salida al compilar -->
+  <ItemGroup>
+    <Content Include="mpv\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
