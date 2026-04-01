@@ -204,6 +204,36 @@
                                        Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,2,0,0"/>
                         </StackPanel>
                     </StackPanel>
+                    <!-- Status indicator -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,6,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="#F44336"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RemoteIsRunning}" Value="True">
+                                            <Setter Property="Fill" Value="#4CAF50"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock VerticalAlignment="Center" FontSize="12">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="Servidor no iniciado"/>
+                                    <Setter Property="Foreground" Value="#F44336"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RemoteIsRunning}" Value="True">
+                                            <Setter Property="Text" Value="Servidor activo — abre la URL en el móvil"/>
+                                            <Setter Property="Foreground" Value="#4CAF50"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+
                     <Border Background="#0D0D0D" CornerRadius="6" Padding="14,10" Margin="0,0,0,4">
                         <TextBlock Text="{Binding RemoteUrl}"
                                    Foreground="{StaticResource AccentRed}"
@@ -211,9 +241,27 @@
                                    FontFamily="Consolas"
                                    TextAlignment="Center"/>
                     </Border>
+
+                    <!-- Extra IPs if more than one adapter -->
+                    <TextBlock Text="{Binding AllRemoteIps}"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="11" FontFamily="Consolas"
+                               TextWrapping="Wrap" Margin="0,4,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding AllRemoteIps.Length, FallbackValue=0}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <TextBlock Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,8,0,0"
                                TextWrapping="Wrap">
-                        Controla reproducción, volumen y navegación desde cualquier dispositivo en tu red local.
+                        PC y móvil deben estar en el <Run Foreground="White" FontWeight="SemiBold">mismo WiFi</Run>. Si no conecta, pulsa el botón de Firewall abajo.
                     </TextBlock>
                     <Button Command="{Binding OpenFirewallRuleCommand}"
                             Style="{StaticResource MaterialDesignOutlinedButton}"

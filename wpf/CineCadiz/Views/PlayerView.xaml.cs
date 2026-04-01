@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -7,6 +8,8 @@ namespace CineCadiz.Views
 {
     public partial class PlayerView : UserControl
     {
+        private DateTime _lastClickTime = DateTime.MinValue;
+
         public PlayerView()
         {
             InitializeComponent();
@@ -35,10 +38,26 @@ namespace CineCadiz.Views
             PlayerViewModel.Instance.ShowControls();
         }
 
-        // Clicking the transparent overlay also shows controls
+        /// <summary>
+        /// Single click → show controls.
+        /// Double-click (within 400 ms) → toggle fullscreen.
+        /// </summary>
         private void ClickCatcher_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            PlayerViewModel.Instance.ShowControls();
+            var now   = DateTime.UtcNow;
+            var delta = (now - _lastClickTime).TotalMilliseconds;
+
+            if (delta < 400)
+            {
+                // Double-click → fullscreen
+                PlayerViewModel.Instance.ToggleFullscreenCommand.Execute(null);
+                _lastClickTime = DateTime.MinValue; // reset so triple-click doesn't re-trigger
+            }
+            else
+            {
+                PlayerViewModel.Instance.ShowControls();
+                _lastClickTime = now;
+            }
         }
     }
 }

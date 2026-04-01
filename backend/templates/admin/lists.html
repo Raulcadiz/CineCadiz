@@ -172,12 +172,50 @@
 
 </div>
 
-<!-- ═══════════════ TABLA DE LISTAS ═══════════════════════════ -->
+<!-- ═══════════════ STATS ═══════════════════════════════════ -->
 {% if listas %}
+{% set total_activos = listas | sum(attribute='items_activos') %}
+{% set total_items   = listas | sum(attribute='total_items') %}
+{% set listas_global  = listas | selectattr('visibilidad', 'equalto', 'global')  | list | length %}
+{% set listas_private = listas | selectattr('visibilidad', 'equalto', 'private') | list | length %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="form-card py-3 text-center h-100">
+            <div class="fs-2 fw-bold text-info">{{ listas|length }}</div>
+            <div class="text-muted small">Listas totales</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="form-card py-3 text-center h-100">
+            <div class="fs-2 fw-bold text-success">{{ total_activos }}</div>
+            <div class="text-muted small">Contenidos activos</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="form-card py-3 text-center h-100 border border-success border-opacity-25">
+            <div class="fs-2 fw-bold text-success">{{ listas_global }}</div>
+            <div class="text-muted small"><i class="bi bi-globe2 me-1"></i>Listas globales</div>
+            <div class="small text-muted mt-1" style="font-size:.7rem">Visibles en WPF / APK</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="form-card py-3 text-center h-100 border border-warning border-opacity-25">
+            <div class="fs-2 fw-bold text-warning">{{ listas_private }}</div>
+            <div class="text-muted small"><i class="bi bi-lock me-1"></i>Listas privadas</div>
+            <div class="small text-warning mt-1" style="font-size:.7rem">¡No aparecen en WPF / APK!</div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════ TABLA DE LISTAS ═══════════════════════════ -->
 <div class="form-card">
-    <h5 class="mb-3"><i class="bi bi-list-ul me-2"></i>Listas registradas ({{ listas|length }})</h5>
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Listas registradas ({{ listas|length }})</h5>
+        <input type="text" id="search-listas" class="form-control form-control-sm w-auto bg-dark text-light border-secondary"
+               placeholder="🔍 Buscar lista..." style="min-width:200px">
+    </div>
     <div class="table-responsive">
-        <table class="table table-dark table-hover align-middle mb-0">
+        <table class="table table-dark table-hover align-middle mb-0" id="tabla-listas">
             <thead>
                 <tr>
                     <th>Nombre</th>
@@ -187,6 +225,7 @@
                     <th class="text-center">Proxy</th>
                     <th class="text-center">Activos</th>
                     <th class="text-center">Total</th>
+                    <th class="text-center">Visibilidad</th>
                     <th>Actualización</th>
                     <th>Estado</th>
                     <th>Acciones</th>
@@ -234,6 +273,18 @@
                 </td>
                 <td class="text-center fw-bold text-success">{{ lista.items_activos or 0 }}</td>
                 <td class="text-center text-secondary">{{ lista.total_items or 0 }}</td>
+                <td class="text-center">
+                    <button type="button"
+                            class="btn btn-sm btn-toggle-visibility {% if lista.visibilidad == 'global' %}btn-outline-success{% else %}btn-outline-warning{% endif %}"
+                            data-id="{{ lista.id }}"
+                            title="{% if lista.visibilidad == 'global' %}Lista global: visible en WPF/APK. Click para hacerla privada.{% else %}Lista privada: NO visible en WPF/APK. Click para hacerla global.{% endif %}">
+                        {% if lista.visibilidad == 'global' %}
+                            <i class="bi bi-globe2"></i>
+                        {% else %}
+                            <i class="bi bi-lock-fill"></i>
+                        {% endif %}
+                    </button>
+                </td>
                 <td class="small text-muted">
                     {% if lista.ultima_actualizacion %}
                         {{ lista.ultima_actualizacion.strftime('%d/%m/%Y %H:%M') }}
@@ -320,7 +371,7 @@
             </tr>
             {% if lista.error %}
             <tr class="bg-danger bg-opacity-10">
-                <td colspan="10" class="small text-danger py-1 px-3">
+                <td colspan="11" class="small text-danger py-1 px-3">
                     <i class="bi bi-exclamation-triangle me-1"></i>{{ lista.error }}
                 </td>
             </tr>
@@ -329,7 +380,7 @@
             </tbody>
         </table>
     </div>
-</div>
+</div><!-- /form-card tabla -->
 
 {% else %}
 <div class="form-card text-center py-5 text-muted">
@@ -389,6 +440,59 @@
 
 {% block scripts %}
 <script>
+// ── Buscador rápido de listas ────────────────────────────────────
+document.getElementById('search-listas')?.addEventListener('input', function () {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('#tabla-listas tbody tr').forEach(tr => {
+        // Omitir las filas de error (solo tienen 1 td colspan)
+        if (tr.querySelector('td[colspan]')) return;
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+});
+
+// ── Toggle visibilidad (global ↔ private) ────────────────────────
+document.querySelectorAll('.btn-toggle-visibility').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        try {
+            const res  = await fetch(`/admin/listas/${id}/toggle-visibility`, { method: 'POST' });
+            const data = await res.json();
+            if (!data.ok) { btn.disabled = false; return; }
+
+            const isGlobal = data.visibilidad === 'global';
+            // Actualizar icono
+            btn.querySelector('i').className = isGlobal ? 'bi bi-globe2' : 'bi bi-lock-fill';
+            // Actualizar color
+            btn.className = btn.className
+                .replace(/btn-outline-success|btn-outline-warning/g, '')
+                .trim() + (isGlobal ? ' btn-outline-success' : ' btn-outline-warning');
+            btn.title = isGlobal
+                ? 'Lista global: visible en WPF/APK. Click para hacerla privada.'
+                : 'Lista privada: NO visible en WPF/APK. Click para hacerla global.';
+
+            // Toast rápido
+            const msg = isGlobal
+                ? `✅ "${data.nombre}" ahora es GLOBAL (visible en WPF/APK)`
+                : `🔒 "${data.nombre}" ahora es PRIVADA (no visible en WPF/APK)`;
+            showToast(msg, isGlobal ? 'success' : 'warning');
+        } catch (e) {
+            console.error('toggle-visibility error', e);
+        }
+        btn.disabled = false;
+    });
+});
+
+function showToast(msg, type = 'success') {
+    const t = document.createElement('div');
+    t.className = `alert alert-${type} position-fixed bottom-0 end-0 m-3 shadow`;
+    t.style.zIndex = '9999';
+    t.style.maxWidth = '380px';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+}
+
 // ── Lista predeterminada ─────────────────────────────────────────
 document.querySelectorAll('.btn-set-default').forEach(btn => {
     btn.addEventListener('click', async () => {

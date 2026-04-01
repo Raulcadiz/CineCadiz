@@ -17,16 +17,22 @@ namespace CineCadiz.ViewModels
         public LibVLC LibVLC { get; } = new LibVLC("--no-video-title-show");
         public MediaPlayer MediaPlayer { get; }
 
-        [ObservableProperty] private bool _isVisible;
-        [ObservableProperty] private bool _isControlsVisible = true;
-        [ObservableProperty] private string _title = string.Empty;
-        [ObservableProperty] private bool _isLive;
-        [ObservableProperty] private bool _isPlaying;
-        [ObservableProperty] private long _currentPosition;
-        [ObservableProperty] private long _totalDuration;
-        [ObservableProperty] private int _volume = 80;
-        [ObservableProperty] private bool _isMuted;
-        [ObservableProperty] private bool _isLoading;
+        [ObservableProperty] private bool   _isVisible;
+        [ObservableProperty] private bool   _isControlsVisible = true;
+        [ObservableProperty] private string _title             = string.Empty;
+        [ObservableProperty] private bool   _isLive;
+        [ObservableProperty] private bool   _isPlaying;
+        [ObservableProperty] private long   _currentPosition;
+        [ObservableProperty] private long   _totalDuration;
+        [ObservableProperty] private int    _volume            = 80;
+        [ObservableProperty] private bool   _isMuted;
+        [ObservableProperty] private bool   _isLoading;
+        [ObservableProperty] private bool   _isFullscreen;
+
+        /// <summary>Fired when fullscreen state changes — MainWindow subscribes to this.</summary>
+        public static event Action<bool>? FullscreenChanged;
+
+        partial void OnIsFullscreenChanged(bool value) => FullscreenChanged?.Invoke(value);
 
         private ContentItem? _currentItem;
         private readonly DispatcherTimer _hideControlsTimer;
@@ -38,42 +44,34 @@ namespace CineCadiz.ViewModels
             MediaPlayer = new MediaPlayer(LibVLC);
 
             MediaPlayer.Playing += (s, e) =>
-            {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     IsPlaying = true;
                     IsLoading = false;
                 });
-            };
 
             MediaPlayer.Paused += (s, e) =>
-            {
                 Application.Current.Dispatcher.Invoke(() => IsPlaying = false);
-            };
 
             MediaPlayer.Stopped += (s, e) =>
-            {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     IsPlaying = false;
                     IsLoading = false;
                 });
-            };
 
             MediaPlayer.EndReached += (s, e) =>
-            {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     SaveProgress();
                     IsPlaying = false;
                 });
-            };
 
-            _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _hideControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             _hideControlsTimer.Tick += (s, e) =>
             {
                 _hideControlsTimer.Stop();
-                IsControlsVisible = false;
+                if (IsPlaying) IsControlsVisible = false;
             };
 
             _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -82,7 +80,7 @@ namespace CineCadiz.ViewModels
                 if (MediaPlayer.IsPlaying)
                 {
                     CurrentPosition = MediaPlayer.Time;
-                    TotalDuration = MediaPlayer.Length;
+                    TotalDuration   = MediaPlayer.Length;
                 }
             };
 
@@ -93,10 +91,10 @@ namespace CineCadiz.ViewModels
         public void Play(ContentItem item)
         {
             _currentItem = item;
-            Title = item.Title;
-            IsLive = item.Type == "live";
-            IsLoading = true;
-            IsVisible = true;
+            Title        = item.Title;
+            IsLive       = item.Type == "live";
+            IsLoading    = true;
+            IsVisible    = true;
             IsControlsVisible = true;
 
             var url = item.StreamUrl;
@@ -115,9 +113,7 @@ namespace CineCadiz.ViewModels
             {
                 var savedPos = ProgressService.Instance.GetPositionMs(item.Id);
                 if (savedPos > 5000)
-                {
                     MediaPlayer.Playing += SeekToSavedPosition;
-                }
             }
 
             _progressTimer.Start();
@@ -149,10 +145,9 @@ namespace CineCadiz.ViewModels
         [RelayCommand]
         private void TogglePlayPause()
         {
-            if (MediaPlayer.IsPlaying)
-                MediaPlayer.Pause();
-            else
-                MediaPlayer.Play();
+            if (MediaPlayer.IsPlaying) MediaPlayer.Pause();
+            else                       MediaPlayer.Play();
+            ShowControls();
         }
 
         [RelayCommand]
@@ -160,6 +155,7 @@ namespace CineCadiz.ViewModels
         {
             if (!IsLive)
                 MediaPlayer.Time = Math.Min(MediaPlayer.Time + 10000, MediaPlayer.Length);
+            ShowControls();
         }
 
         [RelayCommand]
@@ -167,6 +163,14 @@ namespace CineCadiz.ViewModels
         {
             if (!IsLive)
                 MediaPlayer.Time = Math.Max(MediaPlayer.Time - 10000, 0);
+            ShowControls();
+        }
+
+        [RelayCommand]
+        private void ToggleFullscreen()
+        {
+            IsFullscreen = !IsFullscreen;
+            ShowControls();
         }
 
         [RelayCommand]
@@ -176,8 +180,9 @@ namespace CineCadiz.ViewModels
             _progressTimer.Stop();
             _saveTimer.Stop();
             MediaPlayer.Stop();
-            IsVisible = false;
-            IsPlaying = false;
+            IsFullscreen = false;   // exit fullscreen when closing player
+            IsVisible    = false;
+            IsPlaying    = false;
             _currentItem = null;
         }
 

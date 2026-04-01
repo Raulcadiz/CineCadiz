@@ -81,11 +81,11 @@
     <Border BorderBrush="#1E1E1E" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="56"/>
+                <RowDefinition x:Name="TitleBarRow" Height="56"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="72"/>
+                <ColumnDefinition x:Name="SidebarCol" Width="72"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 

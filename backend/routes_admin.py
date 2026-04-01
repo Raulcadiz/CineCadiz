@@ -376,6 +376,16 @@ def toggle_lista(lista_id):
     return redirect(url_for('admin.listas'))
 
 
+@admin_bp.post('/listas/<int:lista_id>/toggle-visibility')
+@login_required
+def toggle_visibility_lista(lista_id):
+    """Alterna la visibilidad de una lista entre 'global' y 'private'."""
+    lista = Lista.query.get_or_404(lista_id)
+    lista.visibilidad = 'private' if lista.visibilidad == 'global' else 'global'
+    db.session.commit()
+    return jsonify({'ok': True, 'visibilidad': lista.visibilidad, 'nombre': lista.nombre})
+
+
 @admin_bp.post('/listas/<int:lista_id>/set-default')
 @login_required
 def set_default_lista(lista_id):

@@ -16,8 +16,14 @@ namespace CineCadiz.ViewModels
 
         public ObservableCollection<string> CustomM3uList { get; } = new();
 
-        public string RemoteUrl  => RemoteService.Instance.RemoteUrl;
-        public int    RemotePort => RemoteService.Port;
+        public string RemoteUrl    => RemoteService.Instance.RemoteUrl;
+        public int    RemotePort   => RemoteService.Port;
+        public bool   RemoteIsRunning => RemoteService.Instance.IsRunning;
+        public string AllRemoteIps => RemoteService.Instance.AllLocalIps.Count > 1
+            ? "También puedes probar: " + string.Join("  |  ",
+                System.Linq.Enumerable.Skip(RemoteService.Instance.AllLocalIps, 1)
+                    .Select(ip => $"http://{ip}:{RemoteService.Port}"))
+            : string.Empty;
 
         public SettingsViewModel()
         {

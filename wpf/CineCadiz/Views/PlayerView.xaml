@@ -13,8 +13,9 @@
                        VerticalAlignment="Stretch"
                        Background="Black"/>
 
-        <!-- Transparent click-catcher to show controls (sits over video area) -->
-        <Border Background="Transparent" MouseLeftButtonDown="ClickCatcher_MouseDown"/>
+        <!-- Transparent click-catcher: single click shows controls, double-click = fullscreen -->
+        <Border Background="Transparent"
+                MouseLeftButtonDown="ClickCatcher_MouseDown"/>
 
         <!-- Loading spinner -->
         <ProgressBar IsIndeterminate="True"
@@ -58,16 +59,37 @@
                            TextTrimming="CharacterEllipsis"
                            Margin="8,0"/>
 
-                <!-- Live badge or empty -->
-                <Border Grid.Column="2" Background="{StaticResource AccentRed}"
-                        CornerRadius="4" Padding="8,4" VerticalAlignment="Center"
-                        Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="6" Height="6" Fill="White"
-                                 VerticalAlignment="Center" Margin="0,0,5,0"/>
-                        <TextBlock Text="EN VIVO" FontSize="11" FontWeight="Bold" Foreground="White"/>
-                    </StackPanel>
-                </Border>
+                <!-- Live badge / fullscreen hint -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{StaticResource AccentRed}"
+                            CornerRadius="4" Padding="8,4" VerticalAlignment="Center"
+                            Margin="0,0,6,0"
+                            Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="6" Height="6" Fill="White"
+                                     VerticalAlignment="Center" Margin="0,0,5,0"/>
+                            <TextBlock Text="EN VIVO" FontSize="11" FontWeight="Bold" Foreground="White"/>
+                        </StackPanel>
+                    </Border>
+                    <!-- Fullscreen toggle button (top-right) -->
+                    <Button Command="{Binding ToggleFullscreenCommand}"
+                            Style="{StaticResource MaterialDesignIconButton}"
+                            Foreground="White" Width="38" Height="38"
+                            ToolTip="Pantalla completa (F)">
+                        <materialDesign:PackIcon Width="20" Height="20">
+                            <materialDesign:PackIcon.Style>
+                                <Style TargetType="materialDesign:PackIcon">
+                                    <Setter Property="Kind" Value="Fullscreen"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                            <Setter Property="Kind" Value="FullscreenExit"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </materialDesign:PackIcon.Style>
+                        </materialDesign:PackIcon>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -115,11 +137,12 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <!-- Left: Volume -->
+                    <!-- Left: Volume + mute -->
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Command="{Binding ToggleMuteCommand}"
                                 Style="{StaticResource MaterialDesignIconButton}"
-                                Foreground="White" Width="36" Height="36">
+                                Foreground="White" Width="36" Height="36"
+                                ToolTip="Silencio (M)">
                             <materialDesign:PackIcon Kind="{Binding IsMuted, Converter={StaticResource MuteIconConverter}}"
                                                      Width="20" Height="20"/>
                         </Button>
@@ -128,9 +151,12 @@
                                 Style="{StaticResource MaterialDesignSlider}"
                                 Foreground="White" VerticalAlignment="Center"
                                 Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                        <TextBlock Text="{Binding Volume, StringFormat={}{0}%}"
+                                   Foreground="#888" FontSize="11"
+                                   VerticalAlignment="Center" Margin="6,0,0,0"/>
                     </StackPanel>
 
-                    <!-- Center: Seek + Play/Pause -->
+                    <!-- Center: Seek back / Play-Pause / Seek forward -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
                         <Button Command="{Binding SeekBackwardCommand}"
                                 Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}"
@@ -142,7 +168,7 @@
                         <Button Command="{Binding TogglePlayPauseCommand}"
                                 Style="{StaticResource MaterialDesignIconButton}"
                                 Foreground="White" Width="54" Height="54"
-                                ToolTip="Espacio">
+                                ToolTip="Play / Pausa (Espacio)">
                             <materialDesign:PackIcon Kind="{Binding IsPlaying, Converter={StaticResource PlayPauseIconConverter}}"
                                                      Width="30" Height="30"/>
                         </Button>
@@ -155,11 +181,30 @@
                         </Button>
                     </StackPanel>
 
-                    <!-- Right: hint -->
-                    <TextBlock Grid.Column="2" Text="ESC · Space · ← →"
-                               Foreground="#555" FontSize="11"
-                               VerticalAlignment="Center" HorizontalAlignment="Right"
-                               Margin="0,0,4,0"/>
+                    <!-- Right: Fullscreen button + shortcut hints -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock Text="ESC · Space · ← → · F"
+                                   Foreground="#555" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <Button Command="{Binding ToggleFullscreenCommand}"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                Foreground="White" Width="36" Height="36"
+                                ToolTip="Pantalla completa (F)">
+                            <materialDesign:PackIcon Width="18" Height="18">
+                                <materialDesign:PackIcon.Style>
+                                    <Style TargetType="materialDesign:PackIcon">
+                                        <Setter Property="Kind" Value="Fullscreen"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                                <Setter Property="Kind" Value="FullscreenExit"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </materialDesign:PackIcon.Style>
+                            </materialDesign:PackIcon>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </StackPanel>
         </Border>

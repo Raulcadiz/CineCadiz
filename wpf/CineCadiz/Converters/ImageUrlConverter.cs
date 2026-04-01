@@ -83,7 +83,12 @@ namespace CineCadiz.Converters
     public class StringNotEmptyConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-            => value is string s && !string.IsNullOrEmpty(s) ? Visibility.Visible : Visibility.Collapsed;
+            => value switch
+            {
+                string s => !string.IsNullOrEmpty(s) ? Visibility.Visible : Visibility.Collapsed,
+                int    i => i > 0                    ? Visibility.Visible : Visibility.Collapsed,
+                _        => Visibility.Collapsed,
+            };
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
             => DependencyProperty.UnsetValue;

@@ -589,11 +589,16 @@ def get_live_categorias():
     Acepta ?lista_id=N para filtrar por lista.
     """
     lista_id = request.args.get('lista_id', type=int)
-    q = db.session.query(Contenido.group_title).filter(
-        Contenido.activo == True,
-        Contenido.tipo == 'live',
-        Contenido.group_title != None,
-        Contenido.group_title != '',
+    q = (
+        db.session.query(Contenido.group_title)
+        .outerjoin(Lista, Contenido.lista_id == Lista.id)
+        .filter(
+            Contenido.activo == True,
+            Contenido.tipo == 'live',
+            Contenido.group_title != None,
+            Contenido.group_title != '',
+            or_(Contenido.lista_id.is_(None), Lista.visibilidad == 'global'),
+        )
     )
     if lista_id:
         q = q.filter(Contenido.lista_id == lista_id)
@@ -609,7 +614,12 @@ def get_live_listas():
     rows = (
         db.session.query(Lista.id, Lista.nombre, Lista.es_defecto)
         .join(Contenido, Contenido.lista_id == Lista.id)
-        .filter(Contenido.activo == True, Contenido.tipo == 'live', Lista.activa == True)
+        .filter(
+            Contenido.activo == True,
+            Contenido.tipo == 'live',
+            Lista.activa == True,
+            Lista.visibilidad == 'global',
+        )
         .group_by(Lista.id, Lista.nombre, Lista.es_defecto)
         .order_by(Lista.es_defecto.desc(), Lista.nombre.asc())
         .all()
