@@ -57,13 +57,25 @@ def login_required(f):
 
 
 def superadmin_required(f):
-    """Requiere rol superadmin."""
+    """Requiere rol superadmin (para páginas HTML — devuelve redirect)."""
     @wraps(f)
     def decorated(*args, **kwargs):
         u = _get_panel_user()
         if not u or not u.is_superadmin:
             flash('Acceso restringido al superadmin.', 'danger')
             return redirect(url_for('admin.dashboard'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def superadmin_api_required(f):
+    """Requiere rol superadmin (para rutas /api/ — devuelve JSON en lugar de redirect)."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        u = _get_panel_user()
+        if not u or not u.is_superadmin:
+            from flask import jsonify as _jsonify
+            return _jsonify({'ok': False, 'msg': 'Acceso restringido al superadmin.'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -312,13 +324,13 @@ def eliminar_lista(lista_id):
         flash('No tienes permiso para eliminar esta lista.', 'danger')
         return redirect(url_for('admin.listas'))
     nombre = lista.nombre
-    # Borrar watch_history de los contenidos de esta lista para evitar violación NOT NULL
     contenido_ids = [c.id for c in lista.contenidos]
     if contenido_ids:
         for i in range(0, len(contenido_ids), 900):
             chunk = contenido_ids[i:i + 900]
+            # Limpiar todas las tablas con FK NOT NULL a contenidos antes de borrar
             WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
-    # Limpiar la caché de la sesión ORM para que no intente poner contenido_id=NULL
+            ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
     db.session.expire_all()
     db.session.delete(lista)
     db.session.commit()
@@ -2153,7 +2165,7 @@ def telegram_send_down():
 
 
 @admin_bp.post('/api/backup-create')
-@superadmin_required
+@superadmin_api_required
 def backup_create():
     """Crea un backup manual de la BD."""
     try:
@@ -2165,7 +2177,7 @@ def backup_create():
 
 
 @admin_bp.post('/api/backup-send')
-@superadmin_required
+@superadmin_api_required
 def backup_send():
     """Crea un backup y lo envía por Telegram."""
     try:
@@ -2179,11 +2191,27 @@ def backup_send():
 
 
 @admin_bp.get('/api/backup-list')
-@superadmin_required
+@superadmin_api_required
 def backup_list():
     """Lista los backups disponibles."""
     from backup import list_backups
     return jsonify({'ok': True, 'backups': list_backups()})
+
+
+@admin_bp.get('/api/backup-download/<filename>')
+@superadmin_api_required
+def backup_download(filename: str):
+    """Descarga un fichero de backup."""
+    import re
+    from backup import BACKUP_DIR
+    from flask import send_file, abort
+    # Validar nombre para evitar path traversal
+    if not re.match(r'^cinemacity_\d{8}_\d{6}\.db$', filename):
+        abort(400)
+    path = BACKUP_DIR / filename
+    if not path.exists():
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=filename)
 
 
 @admin_bp.post('/api/telegram-send-content')

@@ -1,0 +1,131 @@
+<Application x:Class="CineCadiz.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:views="clr-namespace:CineCadiz.Views"
+             xmlns:vm="clr-namespace:CineCadiz.ViewModels"
+             xmlns:converters="clr-namespace:CineCadiz.Converters"
+             StartupUri="Views/MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <materialDesign:BundledTheme BaseTheme="Dark"
+                                             PrimaryColor="Red"
+                                             SecondaryColor="Red" />
+                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign2.Defaults.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Converters -->
+            <converters:ImageUrlConverter x:Key="ImageUrlConverter" />
+            <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <converters:BoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter" />
+            <converters:ProgressToPercentConverter x:Key="ProgressToPercentConverter" />
+            <converters:TimeSpanConverter x:Key="TimeSpanConverter" />
+            <converters:StringNotEmptyConverter x:Key="StringNotEmptyConverter" />
+            <converters:PlayPauseIconConverter x:Key="PlayPauseIconConverter" />
+            <converters:MuteIconConverter x:Key="MuteIconConverter" />
+            <converters:PositionFractionConverter x:Key="PositionFractionConverter" />
+            <converters:NavIconColorConverter x:Key="NavIconColorConverter" />
+
+            <!-- Colors -->
+            <SolidColorBrush x:Key="AppBackground" Color="#121212" />
+            <SolidColorBrush x:Key="CardBackground" Color="#1E1E1E" />
+            <SolidColorBrush x:Key="AccentRed" Color="#E53935" />
+            <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextSecondary" Color="#B0B0B0" />
+            <SolidColorBrush x:Key="SidebarBackground" Color="#0D0D0D" />
+
+            <!-- DataTemplates: ViewModel → View mapping -->
+            <DataTemplate DataType="{x:Type vm:HomeViewModel}">
+                <views:HomeView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:MoviesViewModel}">
+                <views:MoviesView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SeriesViewModel}">
+                <views:SeriesView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SeriesDetailViewModel}">
+                <views:SeriesDetailView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:LiveViewModel}">
+                <views:LiveView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+                <views:SettingsView />
+            </DataTemplate>
+
+            <!-- Global styles -->
+            <Style TargetType="TextBlock" BasedOn="{StaticResource MaterialDesignTextBlock}">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+            </Style>
+
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource CardBackground}" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="#2A2A2A" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <Style x:Key="SectionTitle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="18" />
+                <Setter Property="FontWeight" Value="Bold" />
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                <Setter Property="Margin" Value="0,16,0,8" />
+            </Style>
+
+            <Style x:Key="NavButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Width" Value="72" />
+                <Setter Property="Height" Value="64" />
+                <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                        <Setter Property="Background" Value="#1A1A1A" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <Style x:Key="PaginationButton" TargetType="Button" BasedOn="{StaticResource MaterialDesignOutlinedButton}">
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                <Setter Property="BorderBrush" Value="#444" />
+                <Setter Property="Margin" Value="4,0" />
+                <Setter Property="Padding" Value="12,6" />
+            </Style>
+
+            <Style x:Key="CategoryChip" TargetType="Button">
+                <Setter Property="Background" Value="#2A2A2A" />
+                <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="12,6" />
+                <Setter Property="Margin" Value="4,2" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}"
+                                    CornerRadius="16"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{StaticResource AccentRed}" />
+                        <Setter Property="Foreground" Value="White" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

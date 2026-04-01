@@ -1,0 +1,172 @@
+<UserControl x:Class="CineCadiz.Views.SeriesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:models="clr-namespace:CineCadiz.Models"
+             Background="{StaticResource AppBackground}">
+
+    <UserControl.Resources>
+        <Style x:Key="SeriesCard" TargetType="Border">
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value><ScaleTransform/></Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.04" Duration="0:0:0.14"/>
+                                <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.04" Duration="0:0:0.14"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                    <Trigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.14"/>
+                                <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.14"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.ExitActions>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top bar: loading + error -->
+        <StackPanel Grid.Row="0">
+            <ProgressBar IsIndeterminate="True" Height="3"
+                         Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"
+                         Foreground="{StaticResource AccentRed}" BorderThickness="0"/>
+            <Border Background="#C62828" Padding="16,10" Margin="16,6,16,0" CornerRadius="8"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibilityConverter}}">
+                <Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="WifiOff" Foreground="White" Width="18" Height="18"
+                                                 VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding ErrorMessage}" Foreground="White"
+                                   VerticalAlignment="Center" FontSize="13"/>
+                    </StackPanel>
+                    <Button HorizontalAlignment="Right" Command="{Binding RefreshCommand}"
+                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                            BorderBrush="White" Foreground="White" Padding="12,4" FontSize="12">
+                        Reintentar
+                    </Button>
+                </Grid>
+            </Border>
+        </StackPanel>
+
+        <!-- Series grid -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,16,20,8">
+            <ItemsControl ItemsSource="{Binding SeriesList}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type models:SeriesItem}">
+                        <Border Style="{StaticResource SeriesCard}"
+                                Width="164" Height="252" Margin="0,0,14,14"
+                                MouseLeftButtonUp="SeriesCard_Click" Tag="{Binding}">
+                            <Grid ClipToBounds="True">
+                                <!-- Poster -->
+                                <Image Source="{Binding Image, Converter={StaticResource ImageUrlConverter}}"
+                                       Stretch="UniformToFill"/>
+                                <!-- Gradient overlay -->
+                                <Border>
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="Transparent" Offset="0.45"/>
+                                            <GradientStop Color="#F0000000" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <!-- Season count badge top-right -->
+                                <Border HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Margin="0,8,8,0" Background="#CC000000" CornerRadius="4" Padding="6,3">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="Television" Width="10" Height="10"
+                                                                 Foreground="{StaticResource AccentRed}"
+                                                                 VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                        <TextBlock Foreground="White" FontSize="10" FontWeight="Bold">
+                                            <Run Text="{Binding SeasonCount}"/>
+                                            <Run Text="T"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                                <!-- Info -->
+                                <StackPanel VerticalAlignment="Bottom" Margin="10,0,10,12">
+                                    <TextBlock Text="{Binding Title}" Foreground="White"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                        <TextBlock Text="{Binding YearDisplay}" Foreground="#AAA" FontSize="10"/>
+                                        <TextBlock Foreground="#555" FontSize="10" Margin="5,0">·</TextBlock>
+                                        <TextBlock Foreground="#AAA" FontSize="10">
+                                            <Run Text="{Binding EpisodeCount}"/>
+                                            <Run Text=" ep"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </StackPanel>
+                                <!-- Play icon on hover -->
+                                <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <materialDesign:PackIcon Kind="PlayCircle" Width="44" Height="44"
+                                                             Foreground="#99FFFFFF" Opacity="0"/>
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver,
+                                                    RelativeSource={RelativeSource AncestorType=Border,
+                                                    AncestorLevel=1}}" Value="True">
+                                                    <Setter Property="Opacity" Value="1"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- Pagination -->
+        <Border Grid.Row="2" Background="#0A0A0A" Padding="0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Command="{Binding PreviousPageCommand}" IsEnabled="{Binding HasPrevious}"
+                        Style="{StaticResource MaterialDesignIconButton}"
+                        Foreground="{StaticResource TextPrimary}" Width="36" Height="36">
+                    <materialDesign:PackIcon Kind="ChevronLeft" Width="22" Height="22"/>
+                </Button>
+
+                <Border CornerRadius="6" Background="{StaticResource CardBackground}"
+                        Padding="20,0" Margin="8,0">
+                    <TextBlock VerticalAlignment="Center" FontSize="13">
+                        <Run Text="Página " Foreground="{StaticResource TextSecondary}"/>
+                        <Run Text="{Binding CurrentPage}" Foreground="White" FontWeight="Bold"/>
+                        <Run Text=" / " Foreground="{StaticResource TextSecondary}"/>
+                        <Run Text="{Binding TotalPages}" Foreground="{StaticResource TextSecondary}"/>
+                    </TextBlock>
+                </Border>
+
+                <Button Command="{Binding NextPageCommand}" IsEnabled="{Binding HasNext}"
+                        Style="{StaticResource MaterialDesignIconButton}"
+                        Foreground="{StaticResource TextPrimary}" Width="36" Height="36">
+                    <materialDesign:PackIcon Kind="ChevronRight" Width="22" Height="22"/>
+                </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

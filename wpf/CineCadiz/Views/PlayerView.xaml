@@ -1,0 +1,167 @@
+<UserControl x:Class="CineCadiz.Views.PlayerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+             Background="Black"
+             MouseMove="UserControl_MouseMove">
+
+    <Grid>
+        <!-- VLC VideoView -->
+        <vlc:VideoView x:Name="VideoViewControl"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Stretch"
+                       Background="Black"/>
+
+        <!-- Transparent click-catcher to show controls (sits over video area) -->
+        <Border Background="Transparent" MouseLeftButtonDown="ClickCatcher_MouseDown"/>
+
+        <!-- Loading spinner -->
+        <ProgressBar IsIndeterminate="True"
+                     Width="56" Height="56"
+                     Style="{StaticResource MaterialDesignCircularProgressBar}"
+                     Foreground="{StaticResource AccentRed}"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}"/>
+
+        <!-- ═══ TOP BAR — always visible ═══ -->
+        <Border VerticalAlignment="Top" Height="72" Panel.ZIndex="10">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#D9000000" Offset="0"/>
+                    <GradientStop Color="Transparent" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Grid Margin="10,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Back button - always reachable -->
+                <Button Grid.Column="0"
+                        Command="{Binding CloseCommand}"
+                        Style="{StaticResource MaterialDesignIconButton}"
+                        Foreground="White" Width="42" Height="42"
+                        ToolTip="Volver (ESC)">
+                    <materialDesign:PackIcon Kind="ArrowLeft" Width="26" Height="26"/>
+                </Button>
+
+                <!-- Title -->
+                <TextBlock Grid.Column="1"
+                           Text="{Binding Title}"
+                           FontSize="15" FontWeight="SemiBold"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="8,0"/>
+
+                <!-- Live badge or empty -->
+                <Border Grid.Column="2" Background="{StaticResource AccentRed}"
+                        CornerRadius="4" Padding="8,4" VerticalAlignment="Center"
+                        Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="6" Height="6" Fill="White"
+                                 VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <TextBlock Text="EN VIVO" FontSize="11" FontWeight="Bold" Foreground="White"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- ═══ BOTTOM CONTROLS — auto-hide ═══ -->
+        <Border VerticalAlignment="Bottom" Panel.ZIndex="10"
+                Visibility="{Binding IsControlsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="Transparent" Offset="0"/>
+                    <GradientStop Color="#D9000000" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+
+            <StackPanel Margin="16,16,16,14">
+                <!-- Progress row (VOD only) -->
+                <Grid Margin="0,0,0,10"
+                      Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding CurrentPosition, Converter={StaticResource TimeSpanConverter}}"
+                               Foreground="#DDD" FontSize="12"
+                               VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <Slider Grid.Column="1"
+                            x:Name="ProgressSlider"
+                            Minimum="0" Maximum="1"
+                            Value="{Binding CurrentPosition, Converter={StaticResource PositionFractionConverter}, Mode=OneWay}"
+                            Style="{StaticResource MaterialDesignSlider}"
+                            Foreground="{StaticResource AccentRed}"
+                            VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding TotalDuration, Converter={StaticResource TimeSpanConverter}}"
+                               Foreground="#888" FontSize="12"
+                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </Grid>
+
+                <!-- Buttons row -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Volume -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Command="{Binding ToggleMuteCommand}"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                Foreground="White" Width="36" Height="36">
+                            <materialDesign:PackIcon Kind="{Binding IsMuted, Converter={StaticResource MuteIconConverter}}"
+                                                     Width="20" Height="20"/>
+                        </Button>
+                        <Slider Minimum="0" Maximum="100" Value="{Binding Volume}"
+                                Width="90"
+                                Style="{StaticResource MaterialDesignSlider}"
+                                Foreground="White" VerticalAlignment="Center"
+                                Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                    </StackPanel>
+
+                    <!-- Center: Seek + Play/Pause -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Command="{Binding SeekBackwardCommand}"
+                                Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                Foreground="White" Width="42" Height="42"
+                                ToolTip="← 10s">
+                            <materialDesign:PackIcon Kind="Rewind10" Width="22" Height="22"/>
+                        </Button>
+                        <Button Command="{Binding TogglePlayPauseCommand}"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                Foreground="White" Width="54" Height="54"
+                                ToolTip="Espacio">
+                            <materialDesign:PackIcon Kind="{Binding IsPlaying, Converter={StaticResource PlayPauseIconConverter}}"
+                                                     Width="30" Height="30"/>
+                        </Button>
+                        <Button Command="{Binding SeekForwardCommand}"
+                                Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                Foreground="White" Width="42" Height="42"
+                                ToolTip="→ 10s">
+                            <materialDesign:PackIcon Kind="FastForward10" Width="22" Height="22"/>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Right: hint -->
+                    <TextBlock Grid.Column="2" Text="ESC · Space · ← →"
+                               Foreground="#555" FontSize="11"
+                               VerticalAlignment="Center" HorizontalAlignment="Right"
+                               Margin="0,0,4,0"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>
