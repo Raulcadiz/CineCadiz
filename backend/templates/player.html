@@ -10,7 +10,6 @@
             background: #000; height: 100vh;
             display: flex; flex-direction: column;
             font-family: sans-serif; overflow: hidden;
-            /* Evitar zoom por doble-tap en Android WebView */
             touch-action: manipulation;
         }
         #bar {
@@ -34,9 +33,13 @@
             letter-spacing: .05em; background: rgba(229,51,51,.15);
             padding: .1rem .35rem; border-radius: 3px; flex-shrink: 0;
         }
+        #drm-badge {
+            display: inline-block; color: #fa0; font-size: .7rem; font-weight: 700;
+            letter-spacing: .05em; background: rgba(255,170,0,.15);
+            padding: .1rem .35rem; border-radius: 3px; flex-shrink: 0; margin-left: .3rem;
+        }
         video {
             flex: 1; width: 100%; display: block; background: #000;
-            /* Necesario para WebView con hardware acceleration */
             -webkit-transform: translateZ(0); transform: translateZ(0);
         }
         #wrap { position: relative; flex: 1; display: flex; flex-direction: column; }
@@ -70,6 +73,9 @@
         <div id="bar-left">
             <span>📡 {{ title }}</span>
             <span id="live-badge" style="display:none">🔴 EN VIVO</span>
+            {% if drm_config %}
+            <span id="drm-badge">🔐 DRM</span>
+            {% endif %}
         </div>
         <div id="bar-actions">
             <button id="btn-ll" onclick="toggleLowLatency()" title="Alternar baja latencia">⚡ Baja latencia</button>
@@ -91,9 +97,12 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.10.0/dist/shaka-player.compiled.js"></script>
     <script>
-    // ── Elementos ───────────────────────────────────────────────────
+    const drmConfig = {{ drm_config | tojson }};
+    console.log('[player] DRM config:', drmConfig);
     const v          = document.getElementById('v');
     const ovl        = document.getElementById('overlay');
     const msgEl      = document.getElementById('msg');
@@ -104,7 +113,6 @@
     const liveBadge  = document.getElementById('live-badge');
     const btnLl      = document.getElementById('btn-ll');
     let   url        = {{ url | tojson }};
-
     // ── URLs de respaldo para failover automático ────────────────
     const _liveUrlsRaw = {{ live_urls | tojson }};
     let   _fUrls  = Array.isArray(_liveUrlsRaw) && _liveUrlsRaw.length > 1 ? _liveUrlsRaw : [];
@@ -116,11 +124,14 @@
         (/Android/.test(navigator.userAgent) && /Version\/\d/.test(navigator.userAgent));
 
     // ── Estado ──────────────────────────────────────────────────────
-    let _hls       = null;
-    let _mpegts    = null;
-    let _retries   = 0;
+    let _hls         = null;
+    let _mpegts      = null;
+    let _dashPlayer  = null;
+    let _shakaPlayer = null;
+    let _shakaNet   = null;
+    let _retries    = 0;
     const MAX_RETRIES      = 10;
-    const CONNECT_TIMEOUT  = 12000;  // ms — si el vídeo no arranca en 12s, reconectar
+    const CONNECT_TIMEOUT  = 12000;
     let _retryTimer  = null;
     let _connectTimer = null;
     let _isLive       = false;
@@ -193,8 +204,8 @@
         }
     });
     v.addEventListener('error', (e) => {
-        // Solo actuar si no hay un reproductor HLS/mpegts activo manejando el error
-        if (_hls || _mpegts) return;
+        // Solo actuar si no hay un reproductor HLS/mpegts/dash activo manejando el error
+        if (_hls || _mpegts || _dashPlayer) return;
         console.warn('[video] error nativo', e);
         showError('Stream no compatible con este reproductor.');
     });
@@ -233,8 +244,11 @@
         clearTimeout(_connectTimer);
         clearTimeout(_waitingTimer);
         _waitingTimer = null;
-        if (_hls)    { try { _hls.destroy(); }    catch (_) {} _hls = null; }
-        if (_mpegts) { try { _mpegts.destroy(); } catch (_) {} _mpegts = null; }
+        if (_hls)         { try { _hls.destroy(); }         catch (_) {} _hls = null; }
+        if (_mpegts)      { try { _mpegts.destroy(); }      catch (_) {} _mpegts = null; }
+        if (_dashPlayer)  { try { _dashPlayer.reset(); }    catch (_) {} _dashPlayer = null; }
+        if (_shakaPlayer) { try { _shakaPlayer.destroy(); } catch (_) {} _shakaPlayer = null; }
+        _shakaNet = null;
         v.pause();
         v.removeAttribute('src');
         v.load();
@@ -318,6 +332,57 @@
         // del proxy del VPS (mismo origen HTTPS → HTTP), igual que hace el reproductor
         // embebido en script.js.
         const needsProxy = location.protocol === 'https:' && url.startsWith('http://');
+        const isMpd = urlLow.endsWith('.mpd') || urlLow.includes('.mpd?');
+
+        if (isMpd && drmConfig && drmConfig.type === 'clearkey' && typeof shaka !== 'undefined') {
+            console.log('[player] DASH + ClearKey DRM:', url, drmConfig);
+            const proxyUrl = `${location.origin}/api/dash-proxy?url=${encodeURIComponent(url)}`;
+            console.log('[player] Using dash-proxy:', proxyUrl);
+            shaka.Player.usesLegacyFFmpegEOS(true);
+            _shakaPlayer = new shaka.Player(v);
+            _shakaPlayer.addEventListener('error', (e) => {
+                console.error('[shaka] error:', e);
+                try { _shakaPlayer.destroy(); } catch(_) {}
+                _shakaPlayer = null;
+                showError('Error DRM: ' + (e.detail?.message || 'ClearKey no disponible'));
+            });
+            _shakaPlayer.addEventListener('loaded', () => {
+                console.log('[shaka] loaded');
+                hideOverlay();
+            });
+            _shakaPlayer.configure({
+                drm: {
+                    clearKeys: {
+                        [drmConfig.keyId]: drmConfig.key
+                    }
+                }
+            });
+            _shakaNet = new shaka.net.NetworkingEngine();
+            _shakaPlayer.setNetworkingEngine(_shakaNet);
+            _shakaPlayer.load(proxyUrl).then(() => {
+                console.log('[shaka] stream started');
+                v.play().catch(() => {});
+            }).catch((e) => {
+                console.error('[shaka] load error:', e);
+                showError('Error al cargar stream DRM: ' + (e.message || e));
+            });
+            return;
+        }
+
+        if (isMpd && typeof dashjs !== 'undefined') {
+            console.log('[player] DASH directo:', url);
+            const proxyUrl = `${location.origin}/api/dash-proxy?url=${encodeURIComponent(url)}`;
+            console.log('[player] Using dash-proxy:', proxyUrl);
+            _dashPlayer = dashjs.MediaPlayer().create();
+            _dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (err) => {
+                console.warn('[dash] error', err);
+                try { _dashPlayer.reset(); } catch(_) {}
+                _dashPlayer = null;
+                scheduleReconnect();
+            });
+            _dashPlayer.initialize(v, proxyUrl, true);
+            return;
+        }
 
         if (needsProxy && typeof Hls !== 'undefined' && Hls.isSupported()) {
             // Xtream Codes: quitar la extensión .ts para obtener la URL HLS equivalente

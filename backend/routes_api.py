@@ -931,6 +931,82 @@ def hls_proxy():
         return '', 502
 
 
+@api_bp.get('/dash-proxy')
+def dash_proxy():
+    """
+    Proxy de manifests DASH (.mpd).
+    Descarga el manifest MPD, reescribe todas las URLs de segmentos (.m4s)
+    y URLs de inicialización para que pasen por /api/stream-proxy.
+    Permite que dash.js / Shaka Player cargue streams DASH sin restricciones de CORS.
+    """
+    url = request.args.get('url', '').strip()
+    if not url or not url.lower().startswith('http'):
+        return '', 400
+    if _is_private(url):
+        return '', 403
+
+    def _fetch_mpd(url_to_fetch, attempt=0):
+        parsed = _urlparse(url_to_fetch)
+        mpd_hdrs = {
+            **_PROXY_UA,
+            'Referer': f'{parsed.scheme}://{parsed.netloc}/',
+        }
+        try:
+            resp = requests.get(url_to_fetch, headers=mpd_hdrs, timeout=15,
+                                proxies={}, allow_redirects=True)
+            # Si 403 y es la primera intento, reintentar con URL codificada
+            if resp.status_code == 403 and attempt == 0:
+                # Convertir .mpd a %2e%6d%70%64
+                if '.mpd' in parsed.path.lower():
+                    encoded_path = parsed.path.replace('.mpd', '.%2e%6d%70%64', 1)
+                    encoded_path = encoded_path.replace('.MPD', '.%2e%6d%70%64', 1)
+                    new_url = parsed._replace(path=encoded_path).geturl()
+                    print(f'[dash-proxy] 403 received, retrying with encoded URL: {new_url}')
+                    return _fetch_mpd(new_url, attempt=1)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            print(f'[dash-proxy] HTTP error: {e.response.status_code}')
+            raise
+
+    try:
+        resp = _fetch_mpd(url)
+        mpd_body = resp.text
+        if not mpd_body.strip().startswith('<?xml') and '<MPD' not in mpd_body:
+            print('[dash-proxy] Invalid MPD response')
+            return '', 403
+
+        parsed = _urlparse(url)
+        base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
+        ps = request.host_url.rstrip('/') + '/api/stream-proxy'
+
+        def _rewrite_url(m):
+            raw = m.group(1)
+            full = raw if raw.startswith('http') else _urljoin(base_url, raw)
+            return f'URL="{ps}?url={_quote(full, safe="")}"'
+
+        def _rewrite_baseurl(m):
+            raw = m.group(1).strip()
+            full = raw if raw.startswith('http') else _urljoin(base_url, raw)
+            return f'BaseURL>{ps}?url={_quote(full, safe="")}&rewrite='
+
+        mpd_body = _re.sub(r'URL="([^"]+)"', _rewrite_url, mpd_body)
+        mpd_body = _re.sub(r'>\s*BaseURL\s*>\s*([^<]+)\s*<', _rewrite_baseurl, mpd_body)
+
+        return Response(
+            mpd_body,
+            content_type='application/dash+xml; charset=utf-8',
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+            },
+        )
+    except Exception as e:
+        print(f'[dash-proxy] Error: {e}')
+        return '', 502
+
+
 @api_bp.get('/playlist/<int:item_id>.m3u')
 def item_playlist(item_id):
     """
@@ -1259,19 +1335,18 @@ def get_live_scan_config():
 def update_live_scan_config():
     """
     Actualiza la configuración del escaneo automático.
-    Body JSON: { "auto_scan_enabled": bool, "interval_hours": int (24|48|72) }
     """
     data = request.get_json(silent=True) or {}
     config = _get_or_create_scan_config()
 
     if 'auto_scan_enabled' in data:
         config.auto_scan_enabled = bool(data['auto_scan_enabled'])
-
     if 'interval_hours' in data:
         hours = int(data['interval_hours'])
-        if hours not in (24, 48, 72):
-            return jsonify({'error': 'interval_hours debe ser 24, 48 o 72'}), 400
-        config.interval_hours = hours
+        if hours in (24, 48, 72):
+            config.interval_hours = hours
+    if 'show_in_frontend' in data:
+        config.show_in_frontend = bool(data['show_in_frontend'])
 
     db.session.commit()
     return jsonify(config.to_dict())

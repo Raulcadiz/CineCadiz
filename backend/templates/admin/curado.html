@@ -14,6 +14,12 @@
     </div>
 </div>
 
+<div class="alert alert-info small mb-3">
+    <i class="bi bi-shield-check me-1"></i>
+    <strong>Listas de respaldo:</strong> Añade varias URLs por canal para failover automático. 
+    Si la primera URL falla, el sistema probará la siguiente automáticamente.
+</div>
+
 <div class="alert alert-secondary small mb-3">
     <i class="bi bi-info-circle me-1"></i>
     Lista de canales TV en directo seleccionados manualmente. Cada canal puede tener <strong>múltiples URLs</strong>
@@ -404,39 +410,82 @@ async function guardarOrden() {
                 <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2 text-info"></i>Importar canales desde M3U</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <form action="{{ url_for('admin.curado_importar_m3u') }}" method="post" enctype="multipart/form-data">
-                <div class="modal-body">
-                    <p class="text-muted small mb-3">
-                        Sube un archivo <code>.m3u</code> descargado desde tu proveedor IPTV.<br>
-                        Se importarán automáticamente todos los <strong>canales en directo</strong> (live),
-                        agrupando URLs duplicadas del mismo canal como fuentes de backup.<br>
-                        Las películas y series se ignoran.
-                    </p>
-                    <div class="alert alert-info py-2 small">
-                        <i class="bi bi-lightbulb me-1"></i>
-                        <strong>Tip Xtream Codes:</strong> En tu app IPTV copia la URL tipo<br>
-                        <code>http://servidor/get.php?username=XXX&amp;password=YYY&amp;type=m3u_plus</code><br>
-                        Ábrela en el navegador y guarda el archivo descargado.
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label text-secondary small mb-1">Archivo .m3u / .m3u8</label>
-                        <input type="file" name="archivo" class="form-control bg-dark text-light border-secondary"
-                               accept=".m3u,.m3u8,.txt" required>
-                    </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="import-reemplazar" name="reemplazar">
-                        <label class="form-check-label text-secondary small" for="import-reemplazar">
-                            Eliminar canales curados existentes antes de importar
-                        </label>
-                    </div>
-                </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="submit" class="btn btn-info btn-sm text-dark">
-                        <i class="bi bi-cloud-upload me-1"></i>Importar canales
+            <ul class="nav nav-tabs mb-3" id="importTab" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active text-light" id="tab-archivo" data-bs-toggle="tab" data-bs-target="#pane-archivo" type="button">
+                        <i class="bi bi-file-earmark me-1"></i>Desde archivo
                     </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link text-light" id="tab-url" data-bs-toggle="tab" data-bs-target="#pane-url" type="button">
+                        <i class="bi bi-link-45deg me-1"></i>Desde URL
+                    </button>
+                </li>
+            </ul>
+            <div class="tab-content" id="importTabContent">
+                <!-- Panel archivo -->
+                <div class="tab-pane fade show active" id="pane-archivo" role="tabpanel">
+                    <form action="{{ url_for('admin.curado_importar_m3u') }}" method="post" enctype="multipart/form-data">
+                        <div class="modal-body">
+                            <p class="text-muted small mb-3">
+                                Sube un archivo <code>.m3u</code> descargado desde tu proveedor IPTV.<br>
+                                Se importarán automáticamente todos los <strong>canales en directo</strong> (live),
+                                agrupando URLs duplicadas del mismo canal como fuentes de backup.
+                            </p>
+                            <div class="mb-3">
+                                <label class="form-label text-secondary small mb-1">Archivo .m3u / .m3u8</label>
+                                <input type="file" name="archivo" class="form-control bg-dark text-light border-secondary"
+                                       accept=".m3u,.m3u8,.txt" required>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="import-reemplazar" name="reemplazar">
+                                <label class="form-check-label text-secondary small" for="import-reemplazar">
+                                    Eliminar canales curados existentes antes de importar
+                                </label>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="submit" class="btn btn-info btn-sm text-dark">
+                                <i class="bi bi-cloud-upload me-1"></i>Importar desde archivo
+                            </button>
+                        </div>
+                    </form>
                 </div>
-            </form>
+                <!-- Panel URL -->
+                <div class="tab-pane fade" id="pane-url" role="tabpanel">
+                    <form action="{{ url_for('admin.curado_importar_m3u_url') }}" method="post">
+                        <div class="modal-body">
+                            <p class="text-muted small mb-3">
+                                Introduce la URL de una lista M3U. El sistema descargará la lista y extraerá los canales en directo automáticamente.
+                            </p>
+                            <div class="mb-3">
+                                <label class="form-label text-secondary small mb-1">URL de la lista M3U</label>
+                                <input type="url" name="url" class="form-control bg-dark text-light border-secondary"
+                                       placeholder="https://servidor.com/lista.m3u" required>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="import-url-proxy" name="usar_proxy">
+                                <label class="form-check-label text-secondary small" for="import-url-proxy">
+                                    Usar proxy HTTP (si el servidor bloquea IPs)
+                                </label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="import-url-reemplazar" name="reemplazar">
+                                <label class="form-check-label text-secondary small" for="import-url-reemplazar">
+                                    Eliminar canales curados existentes antes de importar
+                                </label>
+                            </div>
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="submit" class="btn btn-info btn-sm text-dark">
+                                <i class="bi bi-cloud-download me-1"></i>Importar desde URL
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
 </div>

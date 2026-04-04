@@ -147,6 +147,9 @@ function renderCard(item) {
     const liveUrlsAttr = (isLive && item.liveUrls && item.liveUrls.length > 1)
         ? ` data-live-urls="${encodeURIComponent(JSON.stringify(item.liveUrls))}"`
         : '';
+    const drmKeyIdAttr = item.drmKeyId || '';
+    const drmKeyAttr = item.drmKey || '';
+    const drmTypeAttr = item.drmLicenseType || '';
 
     return `
     <div class="movie-card" data-id="${item.id}" data-type="${item.type || 'movie'}">
@@ -157,6 +160,7 @@ function renderCard(item) {
                  onerror="this.src='${PLACEHOLDER}'">
             ${isLive ? '<span class="live-badge">🔴 LIVE</span>' : ''}
             ${isRss  ? '<span class="rss-badge">WEB</span>'      : ''}
+            ${drmTypeAttr === 'clearkey' ? '<span class="drm-badge">🔐 DRM</span>' : ''}
         </div>
         <div class="movie-info">
             <h3 class="movie-title">${item.title}</h3>
@@ -171,7 +175,10 @@ function renderCard(item) {
                     data-source="${item.source || 'm3u'}"
                     data-title="${item.title}"
                     data-id="${item.id}"
-                    data-image="${encodeURIComponent(imgSrc)}"${liveUrlsAttr}>
+                    data-image="${encodeURIComponent(imgSrc)}"${liveUrlsAttr}
+                    data-drm-key-id="${drmKeyIdAttr}"
+                    data-drm-key="${drmKeyAttr}"
+                    data-drm-type="${drmTypeAttr}">
                 ${playLabel}
             </button>
             <button class="btn-favorite ${fav ? 'active' : ''}" data-fav="${item.id}">
@@ -303,13 +310,19 @@ function showLiveGroupDetail(group) {
                 const chLiveUrls = ch.liveUrls && ch.liveUrls.length > 1
                     ? ` data-live-urls="${encodeURIComponent(JSON.stringify(ch.liveUrls))}"`
                     : '';
+                const chDrmKeyId = ch.drmKeyId || '';
+                const chDrmKey = ch.drmKey || '';
+                const chDrmType = ch.drmLicenseType || '';
                 return `
                 <div class="live-channel-row"
                      data-stream="${encStream}"
                      data-source="${ch.source || ch.fuente || 'm3u'}"
                      data-title="${chTitle}"
                      data-id="${ch.id || ''}"
-                     data-image="${encImg}"${chLiveUrls}>
+                     data-image="${encImg}"${chLiveUrls}
+                     data-drm-key-id="${chDrmKeyId}"
+                     data-drm-key="${chDrmKey}"
+                     data-drm-type="${chDrmType}">
                     <i class="bi bi-play-circle-fill live-row-icon"></i>
                     <span class="live-row-label">${qlabel}</span>
                     <span class="live-row-play">▶ Reproducir</span>
@@ -322,14 +335,19 @@ function showLiveGroupDetail(group) {
     }
 
     body.querySelectorAll('.live-channel-row').forEach(row => {
-        row.addEventListener('click', () => {
+        row.addEventListener('click', e => {
+            e.stopPropagation();
             modal.style.display = 'none';
             let rowLiveUrls = null;
             if (row.dataset.liveUrls) {
                 try { rowLiveUrls = JSON.parse(decodeURIComponent(row.dataset.liveUrls)); } catch (_) {}
             }
+            const drmKeyId = row.dataset.drmKeyId || '';
+            const drmKey = row.dataset.drmKey || '';
+            const drmType = row.dataset.drmType || '';
             playStream(row.dataset.stream, row.dataset.title,
-                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image, rowLiveUrls);
+                       row.dataset.source || 'm3u', row.dataset.id, row.dataset.image, rowLiveUrls,
+                       drmKeyId, drmKey, drmType);
         });
     });
 }
@@ -555,6 +573,7 @@ async function showSeriesDetail(baseTitle) {
                     card.dataset.source || 'm3u',
                     card.dataset.id,
                     card.dataset.image,
+                    null, '', '', ''
                 );
             });
         });
@@ -674,7 +693,9 @@ function _tryFailover() {
     _setPlayerLoading(true);
     setTimeout(() => {
         el.player.dataset.streamUrl = nextUrl;
-        if (_isLikelyHls(nextUrl)) {
+        if (_isLikelyDash(nextUrl)) {
+            _loadDashDirect(nextUrl);
+        } else if (_isLikelyHls(nextUrl)) {
             _loadHlsDirect(nextUrl);
         } else {
             _tryNative(nextUrl);
@@ -713,6 +734,14 @@ function _destroyHls() {
     if (_hls) {
         _hls.destroy();
         _hls = null;
+    }
+    if (window._dashPlayer) {
+        try { window._dashPlayer.reset(); } catch (_) {}
+        window._dashPlayer = null;
+    }
+    if (window._shakaPlayer) {
+        try { window._shakaPlayer.destroy(); } catch (_) {}
+        window._shakaPlayer = null;
     }
     el.videoPlayer.pause();
     el.videoPlayer.removeAttribute('src');
@@ -983,20 +1012,17 @@ function _tryDirectMpegts(streamUrl) {
  * @param {string[]} liveUrls  Array completo de URLs de respaldo para failover automático.
  *                             Solo aplica a canales live. Si null/vacío, comportamiento idéntico al original.
  */
-function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls = null) {
+function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls = null, drmKeyId = '', drmKey = '', drmType = '') {
     const url = decodeURIComponent(streamUrl);
     const imgDecoded = image ? decodeURIComponent(image) : '';
-
-    // ── Configurar failover para canales live ───────────────────
-    // Siempre resetear al inicio de una nueva reproducción
-    _failoverUrls = [];
-    _failoverIdx  = 0;
-    if (liveUrls && Array.isArray(liveUrls) && liveUrls.length > 1) {
-        _failoverUrls = liveUrls.map(u => (u || '').trim()).filter(Boolean);
-        // Localizar la URL activa en la cadena para empezar desde el índice correcto
-        const norm = _normalizeStreamUrl(url);
-        const idx  = _failoverUrls.findIndex(u => _normalizeStreamUrl(u) === norm);
-        if (idx > 0) _failoverIdx = idx;
+    const hasClearKey = drmType === 'clearkey' && drmKeyId && drmKey;
+    if (hasClearKey) {
+        console.log('[playStream] DRM detected:', { drmType, drmKeyId });
+        window._pendingDrmKeyId = drmKeyId;
+        window._pendingDrmKey = drmKey;
+    } else {
+        window._pendingDrmKeyId = '';
+        window._pendingDrmKey = '';
     }
 
     // Historial local
@@ -1059,16 +1085,24 @@ function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls 
     const vol = parseFloat(localStorage.getItem('cc_volume') || '1');
     if (!isNaN(vol)) el.videoPlayer.volume = Math.max(0, Math.min(1, vol));
 
-    // ── Paso 1: decidir si usar HLS.js o ir directo a nativo ──
+    // ── Paso 1: decidir si usar Shaka (DRM), HLS.js, DASH.js o ir directo a nativo ──
+    const hasPendingDrm = window._pendingDrmKeyId && window._pendingDrmKey;
+    if (hasPendingDrm && _isLikelyDash(url)) {
+        _loadShakaDrm(url, window._pendingDrmKeyId, window._pendingDrmKey);
+        window._pendingDrmKeyId = '';
+        window._pendingDrmKey = '';
+        return;
+    }
+    if (_isLikelyDash(url)) {
+        _loadDashDirect(url);
+        return;
+    }
     if (typeof Hls !== 'undefined' && Hls.isSupported() && _isLikelyHls(url)) {
-        // URL parece HLS (m3u8 o sin extensión clara) → intentar HLS.js
         _loadHlsDirect(url);
     } else if (el.videoPlayer.canPlayType('application/vnd.apple.mpegurl') && _isLikelyHls(url)) {
-        // Safari con URL HLS → HLS nativo
         el.videoPlayer.src = url;
         el.videoPlayer.play().catch(() => {});
     } else {
-        // URL es .mkv/.mp4/etc. o navegador sin soporte HLS → nativo directo
         _tryNative(url);
     }
 }
@@ -1080,13 +1114,92 @@ function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls 
  */
 function _isLikelyHls(url) {
     const path = url.toLowerCase().split('?')[0].split('#')[0];
-    // Extensiones definitivamente NO-HLS → nativo directo
-    const NON_HLS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpg', '.mpeg'];
+    const NON_HLS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpg', '.mpeg', '.mpd'];
     if (NON_HLS.some(ext => path.endsWith(ext))) return false;
-    // Extensión HLS confirmada
     if (path.endsWith('.m3u8') || path.includes('.m3u8?')) return true;
-    // Sin extensión conocida (IPTV, streams de IPTV sin extensión) → intentar HLS
     return true;
+}
+
+function _isLikelyDash(url) {
+    const path = decodeURIComponent((url || '').toLowerCase().split('?')[0]);
+    return path.endsWith('.mpd') || path.includes('.mpd?');
+}
+
+function _loadShakaDrm(url, drmKeyId, drmKey) {
+    if (typeof shaka === 'undefined') {
+        _showPlayerError('Shaka Player no está disponible en este navegador');
+        return;
+    }
+    _destroyHls();
+    console.log('[shaka] DRM load:', url, { keyId: drmKeyId, key: drmKey });
+
+    const proxyUrl = `${location.origin}/api/dash-proxy?url=${encodeURIComponent(url)}`;
+    console.log('[shaka] Using dash-proxy:', proxyUrl);
+
+    const player = new shaka.Player(el.videoPlayer);
+    window._shakaPlayer = player;
+
+    player.addEventListener('error', (e) => {
+        console.error('[shaka] error:', e);
+        try { player.destroy(); } catch (_) {}
+        window._shakaPlayer = null;
+        _showPlayerError('Error DRM: ' + (e.detail?.message || 'ClearKey no disponible'));
+    });
+
+    player.addEventListener('loaded', () => {
+        console.log('[shaka] loaded');
+        _setPlayerLoading(false);
+    });
+
+    player.configure({
+        drm: {
+            clearKeys: {
+                [drmKeyId]: drmKey
+            }
+        }
+    });
+
+    player.load(proxyUrl).then(() => {
+        console.log('[shaka] stream started');
+        el.videoPlayer.play().catch(() => {});
+    }).catch((e) => {
+        console.error('[shaka] load error:', e);
+        _showPlayerError('Error al cargar stream DRM: ' + (e.message || e));
+    });
+}
+
+function _loadDashDirect(origUrl) {
+    if (typeof dashjs === 'undefined' || typeof dashjs.MediaPlayer !== 'function') {
+        _showPlayerError('dash.js no está disponible en este navegador');
+        return;
+    }
+    _destroyHls();
+    const proxyUrl = `${location.origin}/api/dash-proxy?url=${encodeURIComponent(origUrl)}`;
+    console.warn('[dash] Using dash-proxy:', proxyUrl);
+
+    const player = dashjs.MediaPlayer().create();
+    window._dashPlayer = player;
+
+    let _videoErrorHandler = null;
+    _videoErrorHandler = () => {
+        const err = el.videoPlayer.error;
+        let msg = 'Stream DASH no disponible.';
+        if (err) {
+            const code = err.code;
+            if (code === 4) msg = 'Formato de video no soportado (error 4) — posible contenido DRM';
+            else if (code === 2) msg = 'Error de red en stream DASH';
+            else if (code === 1) msg = 'Stream DASH abortado';
+            console.warn('[dash] video element error code:', code, 'msg:', err.message);
+        }
+        el.videoPlayer.removeEventListener('error', _videoErrorHandler);
+        try { window._dashPlayer?.reset(); } catch (_) {}
+        window._dashPlayer = null;
+        _setPlayerLoading(false);
+        _showPlayerError(msg);
+    };
+    el.videoPlayer.addEventListener('error', _videoErrorHandler);
+
+    player.initialize(el.videoPlayer, proxyUrl, true);
 }
 
 /**
@@ -1565,6 +1678,9 @@ function setupEvents() {
             if (playBtn.dataset.liveUrls) {
                 try { btnLiveUrls = JSON.parse(decodeURIComponent(playBtn.dataset.liveUrls)); } catch (_) {}
             }
+            const btnDrmKeyId = playBtn.dataset.drmKeyId || '';
+            const btnDrmKey = playBtn.dataset.drmKey || '';
+            const btnDrmType = playBtn.dataset.drmType || '';
             playStream(
                 playBtn.dataset.stream,
                 playBtn.dataset.title,
@@ -1572,6 +1688,7 @@ function setupEvents() {
                 playBtn.dataset.id || '',
                 playBtn.dataset.image || '',
                 btnLiveUrls,
+                btnDrmKeyId, btnDrmKey, btnDrmType
             );
             return;
         }
@@ -2272,13 +2389,25 @@ async function init() {
     el.preloader.style.display = 'flex';
 
     try {
-        // Cargar secciones en paralelo
-        const [trending, peliculas, series, liveData] = await Promise.all([
+        // Cargar configuración de live y secciones en paralelo
+        const [liveConfig, trending, peliculas, series, liveData] = await Promise.all([
+            fetch('/api/live/scan-config').then(r => r.json()).catch(() => ({})),
             api.trending(),
             api.get('contenido', { tipo: 'pelicula', page: 1, limit: 20, sort: 'year_desc' }),
             api.get('series-agrupadas', { page: 1, limit: 20, sort: 'year_desc' }),
             api.liveAgrupados({ limit: 60 }),
         ]);
+
+        // Mostrar live según configuración del admin
+        const showLiveInFrontend = liveConfig.show_in_frontend !== false;
+        if (showLiveInFrontend) {
+            const liveNavLinks = document.querySelectorAll('a.nav-item[data-type="live"], a[data-type="live"]');
+            liveNavLinks.forEach(el => el.style.display = '');
+            const liveSec = document.getElementById('live');
+            if (liveSec) liveSec.style.display = '';
+            const liveMobile = document.querySelectorAll('a[href="#live"]');
+            liveMobile.forEach(el => el.style.display = '');
+        }
 
         renderHero(trending);
         renderCarousel(trending, el.novedades);

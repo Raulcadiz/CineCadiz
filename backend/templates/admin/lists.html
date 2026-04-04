@@ -91,6 +91,24 @@
                                 Solo español (filtro extra de idioma)
                             </label>
                         </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="url-guardar-local" checked>
+                            <label class="form-check-label text-secondary small" for="url-guardar-local">
+                                💾 Guardar .m3u local
+                            </label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="url-enviar-telegram" checked>
+                            <label class="form-check-label text-secondary small" for="url-enviar-telegram">
+                                📤 Enviar por Telegram
+                            </label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="url-live-curado" checked>
+                            <label class="form-check-label text-secondary small" for="url-live-curado">
+                                📡 Directos → Canal Curado
+                            </label>
+                        </div>
                         <span class="text-muted small ms-auto" id="sel-count-url">0 grupos seleccionados</span>
                         <button type="button" id="btn-import-url" class="btn btn-danger">
                             <i class="bi bi-cloud-download me-1"></i>Importar seleccionados
@@ -157,6 +175,18 @@
                         <div class="form-check form-switch">
                             <input class="form-check-input" type="checkbox" id="file-filtrar">
                             <label class="form-check-label text-secondary small" for="file-filtrar">Solo español</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="file-guardar-local" checked>
+                            <label class="form-check-label text-secondary small" for="file-guardar-local">💾 Guardar .m3u local</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="file-enviar-telegram" checked>
+                            <label class="form-check-label text-secondary small" for="file-enviar-telegram">📤 Enviar por Telegram</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="file-live-curado" checked>
+                            <label class="form-check-label text-secondary small" for="file-live-curado">📡 Directos → Canal Curado</label>
                         </div>
                         <span class="text-muted small ms-auto" id="sel-count-file">0 grupos seleccionados</span>
                         <button type="button" id="btn-import-file" class="btn btn-warning text-dark">
@@ -545,6 +575,8 @@ document.querySelectorAll('.btn-set-default').forEach(btn => {
 // ════════════════════════════════════════════════════════════════
 const TIPOS      = ['pelicula', 'serie', 'live', 'otro'];
 const TIPO_EMOJI = { pelicula: '🎬', serie: '📺', live: '📡', otro: '❓' };
+const CAT_BG      = { spain: '#1a7f32', latino: '#b07800', pelis: '#b91c1c', live: '#6e5494', otro: '#555' };
+const CAT_LABEL   = { spain: 'ES', latino: 'LAT', pelis: 'PELI', live: 'LIVE', otro: '' };
 const TIPO_LABEL = { pelicula: 'Películas', serie: 'Series', live: 'En directo', otro: 'Sin clasificar' };
 const TIPO_COLOR = { pelicula: 'danger',    serie: 'info',   live: 'warning',    otro: 'secondary' };
 
@@ -594,11 +626,12 @@ function updateSelCount(mode) {
 function renderGrupos(mode, groups, ctx) {
     window['_ctx_' + mode] = ctx;
     _gdata[mode] = groups.map((g, i) => ({
-        uid:     mode + '_' + i,
-        name:    g.name,
-        tipo:    TIPOS.includes(g.tipo) ? g.tipo : 'otro',
-        count:   g.count,
-        checked: g.tipo !== 'live'   // live desmarcado por defecto
+        uid:       mode + '_' + i,
+        name:      g.name,
+        tipo:      TIPOS.includes(g.tipo) ? g.tipo : 'otro',
+        categoria: g.categoria || 'otro',
+        count:     g.count,
+        checked:   g.tipo !== 'live'
     }));
     _renderDisplay(mode);
     document.getElementById('panel-' + mode).classList.remove('d-none');
@@ -653,8 +686,9 @@ function _renderDisplay(mode, focusUid = null) {
                     <label class="form-check-label small flex-grow-1 d-flex justify-content-between gap-1 min-w-0"
                            for="${g.uid}" title="${escHtml(g.name)}">
                         <span class="text-truncate">${escHtml(g.name)}</span>
-                        <span class="text-muted flex-shrink-0" style="font-size:.7rem">
-                            ${g.count.toLocaleString('es')}
+                        <span class="d-flex align-items-center gap-1 flex-shrink-0">
+                            ${g.categoria ? `<span class="badge rounded-pill" style="font-size:.6rem;padding:.15em .4em;background:${CAT_BG[g.categoria]||'#555'};color:#fff">${CAT_LABEL[g.categoria]||g.categoria}</span>` : ''}
+                            <span class="text-muted" style="font-size:.7rem">${g.count.toLocaleString('es')}</span>
                         </span>
                     </label>
                     <!-- Botón para mover el grupo a otro tipo (ciclo al hacer clic) -->
@@ -850,13 +884,14 @@ document.getElementById('btn-import-url').addEventListener('click', () => {
         showAlert('url', 'Selecciona al menos un grupo para importar.');
         return;
     }
-    const ctx    = window['_ctx_url'];
+    const ctx     = window['_ctx_url'];
     const filtrar = document.getElementById('url-filtrar').checked;
-    const form   = document.getElementById('form-url');
+    const guardar = document.getElementById('url-guardar-local').checked;
+    const telegram = document.getElementById('url-enviar-telegram').checked;
+    const curado  = document.getElementById('url-live-curado').checked;
+    const form    = document.getElementById('form-url');
 
-    // Lista de nombres seleccionados
-    const checked = checkedGroups.map(g => g.name);
-    // Mapa de tipo manual: {nombre_grupo: tipo} para todos los grupos seleccionados
+    const checked   = checkedGroups.map(g => g.name);
     const tiposMap = {};
     checkedGroups.forEach(g => { tiposMap[g.name] = g.tipo; });
 
@@ -865,8 +900,11 @@ document.getElementById('btn-import-url').addEventListener('click', () => {
     addHidden(form, 'url', ctx.url);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
     addHidden(form, 'grupos_tipos',         JSON.stringify(tiposMap));
-    if (ctx.proxy) addHidden(form, 'usar_proxy',      '1');
-    if (filtrar)   addHidden(form, 'filtrar_español', '1');
+    if (ctx.proxy)    addHidden(form, 'usar_proxy',        '1');
+    if (filtrar)       addHidden(form, 'filtrar_español',   '1');
+    if (guardar)       addHidden(form, 'guardar_local',     '1');
+    if (telegram)      addHidden(form, 'enviar_telegram',    '1');
+    if (curado)        addHidden(form, 'live_a_curado',     '1');
     form.submit();
 });
 
@@ -879,11 +917,14 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
         showAlert('file', 'Selecciona al menos un grupo para importar.');
         return;
     }
-    const ctx     = window['_ctx_file'];
-    const filtrar = document.getElementById('file-filtrar').checked;
-    const form    = document.getElementById('form-file');
+    const ctx      = window['_ctx_file'];
+    const filtrar   = document.getElementById('file-filtrar').checked;
+    const guardar   = document.getElementById('file-guardar-local').checked;
+    const telegram  = document.getElementById('file-enviar-telegram').checked;
+    const curado    = document.getElementById('file-live-curado').checked;
+    const form     = document.getElementById('form-file');
 
-    const checked = checkedGroups.map(g => g.name);
+    const checked   = checkedGroups.map(g => g.name);
     const tiposMap = {};
     checkedGroups.forEach(g => { tiposMap[g.name] = g.tipo; });
 
@@ -892,7 +933,10 @@ document.getElementById('btn-import-file').addEventListener('click', () => {
     addHidden(form, 'temp_id', ctx.temp_id);
     addHidden(form, 'grupos_seleccionados', JSON.stringify(checked));
     addHidden(form, 'grupos_tipos',         JSON.stringify(tiposMap));
-    if (filtrar) addHidden(form, 'filtrar_español', '1');
+    if (filtrar)   addHidden(form, 'filtrar_español', '1');
+    if (guardar)   addHidden(form, 'guardar_local',   '1');
+    if (telegram)  addHidden(form, 'enviar_telegram',  '1');
+    if (curado)    addHidden(form, 'live_a_curado',   '1');
     form.submit();
 });
 
@@ -948,11 +992,12 @@ async function openEditGrupos(listaId, nombre) {
         if (!d.ok) throw new Error(d.error || 'Error al cargar grupos');
 
         _egData = d.groups.map((g, i) => ({
-            uid: 'eg_' + i,
-            name: g.name,
-            tipo: TIPOS.includes(g.tipo) ? g.tipo : 'otro',
-            count: g.count,
-            checked: g.checked,
+            uid:       'eg_' + i,
+            name:      g.name,
+            tipo:      TIPOS.includes(g.tipo) ? g.tipo : 'otro',
+            categoria: g.categoria || 'otro',
+            count:     g.count,
+            checked:   g.checked,
         }));
         _egRender();
         document.getElementById('editGruposLoading').classList.add('d-none');

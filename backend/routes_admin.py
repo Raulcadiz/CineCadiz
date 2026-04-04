@@ -17,7 +17,7 @@ from flask import (
 import random
 import requests as _requests   # alias para no colisionar con el parámetro 'request' de Flask
 
-from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory, TelegramConfig, CanalCurado
+from models import db, Lista, FuenteRSS, Contenido, Proxy, User, InviteToken, Ticket, UserSession, ChannelReport, IptvUser, IptvSession, WatchHistory, TelegramConfig, CanalCurado, LiveScanConfig
 from m3u_parser import (
     fetch_and_parse, parse_and_filter,
     fetch_groups_preview, get_groups_preview, decode_m3u_bytes,
@@ -175,11 +175,21 @@ def dashboard():
     # Todas las listas M3U (para el selector del escaneo)
     all_listas = Lista.query.order_by(Lista.nombre).all() if panel_user.is_superadmin else []
 
+    # Live config
+    live_cfg = LiveScanConfig.query.first()
+    if not live_cfg:
+        live_cfg = LiveScanConfig(auto_scan_enabled=True, interval_hours=24, show_in_frontend=True)
+        db.session.add(live_cfg)
+        db.session.commit()
+
+    scan_state_with_live = dict(_scan_state)
+    scan_state_with_live['show_in_frontend'] = live_cfg.show_in_frontend
+
     return render_template(
         'admin/dashboard.html',
         stats=stats, listas=listas, fuentes=fuentes,
         all_listas=all_listas,
-        scan_state=_scan_state, online_count=online_count,
+        scan_state=scan_state_with_live, online_count=online_count,
         panel_user=panel_user,
     )
 
@@ -258,8 +268,11 @@ def listas():
 def agregar_lista():
     nombre = request.form.get('nombre', '').strip()
     url = request.form.get('url', '').strip()
-    filtrar    = 'filtrar_español' in request.form
-    usar_proxy = 'usar_proxy'      in request.form
+    filtrar       = 'filtrar_español' in request.form
+    usar_proxy   = 'usar_proxy'      in request.form
+    guardar_local  = 'guardar_local'  in request.form
+    enviar_telegram = 'enviar_telegram' in request.form
+    live_a_curado  = 'live_a_curado' in request.form
 
     if not nombre or not url:
         flash('Nombre y URL son obligatorios', 'danger')
@@ -295,6 +308,9 @@ def agregar_lista():
         usar_proxy=usar_proxy,
         grupos_seleccionados=grupos_json,
         grupos_tipos=grupos_tipos_json,
+        guardar_local=guardar_local,
+        enviar_telegram=enviar_telegram,
+        live_a_curado=live_a_curado,
         owner_id=None if panel_user.is_superadmin else panel_user.id,
         visibilidad='global' if panel_user.is_superadmin else 'private',
     )
@@ -319,22 +335,44 @@ def refresh_lista(lista_id):
 def eliminar_lista(lista_id):
     lista = Lista.query.get_or_404(lista_id)
     panel_user = _get_panel_user()
-    # Los premium solo pueden borrar sus propias listas
     if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
         flash('No tienes permiso para eliminar esta lista.', 'danger')
         return redirect(url_for('admin.listas'))
     nombre = lista.nombre
-    contenido_ids = [c.id for c in lista.contenidos]
-    if contenido_ids:
-        for i in range(0, len(contenido_ids), 900):
-            chunk = contenido_ids[i:i + 900]
-            # Limpiar todas las tablas con FK NOT NULL a contenidos antes de borrar
-            WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
-            ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
-    db.session.expire_all()
-    db.session.delete(lista)
-    db.session.commit()
-    flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')
+    total_items = lista.total_items or 0
+    
+    if total_items > 5000:
+        app = current_app._get_current_object()
+        
+        def eliminar_lista_async(app, lista_id, nombre):
+            with app.app_context():
+                lista = Lista.query.get(lista_id)
+                if not lista:
+                    return
+                contenido_ids = [c.id for c in lista.contenidos]
+                if contenido_ids:
+                    for i in range(0, len(contenido_ids), 900):
+                        chunk = contenido_ids[i:i + 900]
+                        WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
+                        ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
+                        db.session.commit()
+                db.session.expire_all()
+                db.session.delete(lista)
+                db.session.commit()
+        
+        threading.Thread(target=eliminar_lista_async, args=(app, lista_id, nombre), daemon=True).start()
+        flash(f'Eliminando lista "{nombre}" ({total_items} items) en segundo plano...', 'info')
+    else:
+        contenido_ids = [c.id for c in lista.contenidos]
+        if contenido_ids:
+            for i in range(0, len(contenido_ids), 900):
+                chunk = contenido_ids[i:i + 900]
+                WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
+                ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
+        db.session.expire_all()
+        db.session.delete(lista)
+        db.session.commit()
+        flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')
     return redirect(url_for('admin.listas'))
 
 
@@ -943,6 +981,9 @@ def subir_lista():
     """Importa un archivo .m3u subido por el admin (bypass de bloqueo IP)."""
     nombre   = request.form.get('nombre', '').strip()
     filtrar  = 'filtrar_español' in request.form
+    guardar_local   = 'guardar_local'   in request.form
+    enviar_telegram  = 'enviar_telegram'  in request.form
+    live_a_curado    = 'live_a_curado'    in request.form
     temp_id  = request.form.get('temp_id', '').strip()
 
     if not nombre:
@@ -992,6 +1033,9 @@ def subir_lista():
         usar_proxy=False,
         grupos_seleccionados=grupos_json,
         grupos_tipos=grupos_tipos_json,
+        guardar_local=guardar_local,
+        enviar_telegram=enviar_telegram,
+        live_a_curado=live_a_curado,
     )
     db.session.add(lista)
     db.session.commit()   # commit ANTES de lanzar el hilo para que el hilo vea la fila
@@ -1324,6 +1368,15 @@ def _do_bulk_insert(items: list, existing_hashes: set, lista_id: int, conflict_i
             'ultima_verificacion': None,
             'lista_id':            lista_id,
             'fuente_rss_id':       None,
+            # Campos DRM / Avanzados
+            'drm_license_type': it.get('drm_license_type'),
+            'drm_license_key':  it.get('drm_license_key'),
+            'manifest_type':     it.get('manifest_type'),
+            'catchup_type':      it.get('catchup_type'),
+            'catchup_source':     it.get('catchup_source'),
+            'catchup_days':      it.get('catchup_days'),
+            'user_agent':        it.get('user_agent'),
+            'http_referrer':     it.get('http_referrer'),
         })
 
     # ── Fase 3: Bulk INSERT en chunks ───────────────────────────────────
@@ -1449,6 +1502,32 @@ def _import_lista(app, lista_id: int):
                 except Exception:
                     pass
 
+            # ── Guardar M3U localmente y enviar por Telegram ───────
+            if lista.guardar_local or lista.enviar_telegram:
+                try:
+                    from m3u_parser import _download_m3u
+                    raw_bytes, dl_err = _download_m3u(lista.url, app.config, proxy=proxy_url)
+                    if raw_bytes and not dl_err:
+                        from pathlib import Path
+                        lists_dir = Path(app.root_path).parent / 'lists'
+                        lists_dir.mkdir(exist_ok=True)
+                        safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', lista.nombre)
+                        m3u_path = lists_dir / f'{safe_name}.m3u'
+                        m3u_path.write_bytes(raw_bytes)
+                        app.logger.info(f'[Import] M3U guardado: {m3u_path}')
+
+                        if lista.enviar_telegram:
+                            _send_m3u_telegram(app, str(m3u_path), lista.nombre, lista.url)
+                except Exception as e:
+                    app.logger.warning(f'[Import] Error guardando/enviando M3U: {e}')
+
+            # ── Canales live → CanalCurado ─────────────────────────
+            if lista.live_a_curado:
+                try:
+                    _sync_live_to_curado(app, lista.id, items)
+                except Exception as e:
+                    app.logger.warning(f'[Import] Error sync live→curado: {e}')
+
         except Exception as exc:
             app.logger.exception(f'[Import M3U] Excepción inesperada en lista {lista_id}: {exc}')
             try:
@@ -1464,6 +1543,116 @@ def _import_lista(app, lista_id: int):
                         pass
             except Exception:
                 pass
+
+
+def _send_m3u_telegram(app, m3u_path: str, lista_nombre: str, url: str):
+    """Envía el archivo M3U guardado localmente por Telegram."""
+    try:
+        import requests as _req
+        from telegram_bot import _get_config
+        token, chat_ids = _get_config(app)
+        if not token or not chat_ids:
+            app.logger.warning('[Telegram] Bot no configurado para enviar M3U')
+            return
+
+        from pathlib import Path
+        path = Path(m3u_path)
+        if not path.exists():
+            app.logger.warning(f'[Telegram] Archivo M3U no encontrado: {m3u_path}')
+            return
+
+        size_kb = path.stat().st_size // 1024
+        caption = (
+            f'📋 <b>Lista M3U</b>\n'
+            f'🔖 {lista_nombre}\n'
+            f'🔗 {url}\n'
+            f'📦 {path.name} ({size_kb} KB)'
+        )
+        ok_count = 0
+        for chat_id in chat_ids:
+            try:
+                with open(path, 'rb') as f:
+                    r = _req.post(
+                        f'https://api.telegram.org/bot{token}/sendDocument',
+                        data={'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'},
+                        files={'document': (path.name, f, 'audio/x-mpegurl')},
+                        timeout=60,
+                    )
+                if r.ok:
+                    ok_count += 1
+                else:
+                    app.logger.warning(f'[Telegram M3U] error {r.status_code} → {chat_id}: {r.text[:200]}')
+            except Exception as e:
+                app.logger.error(f'[Telegram M3U] error enviando a {chat_id}: {e}')
+        app.logger.info(f'[Telegram] M3U enviado a {ok_count}/{len(chat_ids)} destinos')
+    except Exception as e:
+        app.logger.warning(f'[Telegram M3U] error general: {e}')
+
+
+def _sync_live_to_curado(app, lista_id: int, items: list):
+    """
+    Añade canales live de la importación a CanalCurado.
+    Agrupa por nombre de canal (ignora sufijos de calidad/variante).
+    Si el canal ya existe en CanalCurado, añade la nueva URL como backup.
+    El grupo del canal se establece con el nombre de la lista.
+    """
+    lista = Lista.query.get(lista_id)
+    if not lista:
+        return
+
+    grupo_lista = lista.nombre.strip()
+
+    live_items = [it for it in items if it.get('tipo') == 'live']
+    if not live_items:
+        return
+
+    app.logger.info(f'[Curado] Sincronizando {len(live_items)} canales live → CanalCurado (grupo: {grupo_lista})')
+
+    for it in live_items:
+        nombre_raw = (it.get('titulo') or '').strip()
+        if not nombre_raw:
+            continue
+
+        nombre_norm = _normalize_base(nombre_raw)
+
+        canal = CanalCurado.query.filter_by(nombre=nombre_raw).first()
+        if not canal:
+            canal = CanalCurado(
+                nombre=nombre_raw,
+                logo=it.get('imagen') or '',
+                grupo=grupo_lista,
+                lista_id=lista_id,
+                fuente=grupo_lista,
+                urls_json=json.dumps([{'nombre': grupo_lista, 'url': it.get('url_stream', '')}]),
+            )
+            db.session.add(canal)
+        else:
+            urls = canal.urls
+            stream_url = it.get('url_stream', '')
+            if stream_url and not any(u.get('url') == stream_url for u in urls):
+                urls.append({'nombre': grupo_lista, 'url': stream_url})
+                canal.urls_json = json.dumps(urls)
+            if not canal.grupo:
+                canal.grupo = grupo_lista
+                canal.fuente = grupo_lista
+                canal.lista_id = lista_id
+
+    db.session.commit()
+    app.logger.info(f'[Curado] Sincronización completa para {lista.nombre}')
+
+
+def _normalize_base(nombre: str) -> str:
+    """
+    Normaliza el nombre de un canal para comparación.
+    Elimina sufijos de calidad, variante y separadores IPTV.
+    Ej: "LA 1 HD" → "la1"; "LA 1 (1080p)" → "la1"
+    """
+    import re as _re2
+    n = nombre.lower().strip()
+    n = _re2.sub(r'\s*[\[\(].*?[\]\)]\s*', '', n)
+    n = _re2.sub(r'\s*(hd|sd|fhd|uhd|4k|1080p|720p|576p|480p)\s*', '', n)
+    n = _re2.sub(r'[-_\s]+', '', n)
+    return n.strip()
 
 
 def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
@@ -1527,6 +1716,27 @@ def _import_from_bytes(app, lista_id: int, raw_bytes: bytes):
                 f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total '
                 f'| total {_time.monotonic()-t0:.1f}s'
             )
+
+            if lista.guardar_local and raw_bytes:
+                try:
+                    from pathlib import Path
+                    lists_dir = Path(app.root_path).parent / 'lists'
+                    lists_dir.mkdir(exist_ok=True)
+                    safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', lista.nombre)
+                    m3u_path = lists_dir / f'{safe_name}.m3u'
+                    m3u_path.write_bytes(raw_bytes)
+                    app.logger.info(f'[Import] M3U guardado: {m3u_path}')
+
+                    if lista.enviar_telegram:
+                        _send_m3u_telegram(app, str(m3u_path), lista.nombre, lista.url)
+                except Exception as e:
+                    app.logger.warning(f'[Import] Error guardando M3U: {e}')
+
+            if lista.live_a_curado:
+                try:
+                    _sync_live_to_curado(app, lista_id, items)
+                except Exception as e:
+                    app.logger.warning(f'[Import] Error sync live→curado: {e}')
 
         except Exception as exc:
             app.logger.exception(f'[Import M3U] Excepción en archivo lista {lista_id}: {exc}')
@@ -2534,4 +2744,92 @@ def curado_importar_m3u():
 
     db.session.commit()
     flash(f'✓ {creados} canales curados importados correctamente.', 'success')
+    return redirect(url_for('admin.curado'))
+
+
+@admin_bp.post('/curado/importar-m3u-url')
+@superadmin_required
+def curado_importar_m3u_url():
+    """Descarga una lista M3U desde URL e importa los canales curados."""
+    import json as _jj
+    from m3u_parser import decode_m3u_bytes, parse_extinf, is_vod_content, _download_m3u
+
+    url = request.form.get('url', '').strip()
+    usar_proxy = 'usar_proxy' in request.form
+
+    if not url or not url.lower().startswith('http'):
+        flash('URL inválida. Debe comenzar con http:// o https://', 'danger')
+        return redirect(url_for('admin.curado'))
+
+    proxy_url = None
+    if usar_proxy:
+        active_proxies = Proxy.query.filter_by(activo=True).all()
+        if active_proxies:
+            proxy_url = random.choice(active_proxies).url
+
+    raw_bytes, error = _download_m3u(url, current_app.config, proxy=proxy_url)
+    if error:
+        flash(f'Error descargando la lista: {error}', 'danger')
+        return redirect(url_for('admin.curado'))
+
+    content = decode_m3u_bytes(raw_bytes)
+
+    canales = {}
+    lines   = content.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.upper().startswith('#EXTINF:'):
+            url_stream = ''
+            j   = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if nxt and not nxt.startswith('#'):
+                    url_stream = nxt
+                    break
+                j += 1
+
+            info = parse_extinf(line)
+            info['url_stream'] = url_stream
+
+            if url_stream and not is_vod_content(info, current_app.config):
+                nombre = (info.get('titulo') or '').strip() or 'Canal'
+                logo   = info.get('imagen')      or ''
+                grupo  = info.get('group_title') or ''
+                key    = nombre.lower().strip()
+
+                if key not in canales:
+                    canales[key] = {'nombre': nombre, 'logo': logo, 'grupo': grupo, 'urls': []}
+                canales[key]['urls'].append({
+                    'nombre': 'URL ' + str(len(canales[key]['urls']) + 1),
+                    'url':    url_stream,
+                })
+            i = j + 1
+        else:
+            i += 1
+
+    if not canales:
+        flash('No se encontraron canales en directo en la lista.', 'warning')
+        return redirect(url_for('admin.curado'))
+
+    if request.form.get('reemplazar'):
+        CanalCurado.query.delete()
+        db.session.flush()
+
+    max_orden = db.session.query(db.func.max(CanalCurado.orden)).scalar() or 0
+    creados   = 0
+    for ch in canales.values():
+        canal = CanalCurado(
+            nombre   = ch['nombre'],
+            logo     = ch['logo'] or None,
+            grupo    = ch['grupo'] or None,
+            urls_json= _jj.dumps(ch['urls']),
+            orden    = max_orden + creados + 1,
+            activo   = True,
+        )
+        db.session.add(canal)
+        creados += 1
+
+    db.session.commit()
+    flash(f'✓ {creados} canales curados importados desde URL.', 'success')
     return redirect(url_for('admin.curado'))

@@ -139,8 +139,9 @@
                     <div class="d-flex gap-2 align-items-center flex-wrap">
                         <select name="role" class="form-select form-select-sm" style="width:160px;background:#111;border-color:#333;color:#fff;">
                             <option value="user">Usuario normal</option>
-                            {% if current_user and current_user.is_superadmin %}
                             <option value="premium">Premium</option>
+                            {% if current_user and current_user.is_superadmin %}
+                            <option value="superadmin">Superadmin</option>
                             {% endif %}
                         </select>
                         <button type="submit" class="btn btn-sm btn-cc">

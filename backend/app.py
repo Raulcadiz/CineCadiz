@@ -84,15 +84,20 @@ def create_app(config_class=Config):
         url       = request.args.get('url',       '').strip()
         title     = request.args.get('title',     '').strip()
         raw_urls  = request.args.get('live_urls', '').strip()
+        drm_type  = request.args.get('drm_type',  '').strip()
+        drm_key_id = request.args.get('drm_key_id', '').strip()
+        drm_key   = request.args.get('drm_key',   '').strip()
         try:
             live_urls = json.loads(raw_urls) if raw_urls else []
             if not isinstance(live_urls, list):
                 live_urls = []
-            # Sanitize: keep only valid URL strings
             live_urls = [u for u in live_urls if isinstance(u, str) and u.startswith(('http://', 'https://', 'rtmp://', 'rtsp://'))]
         except (ValueError, TypeError):
             live_urls = []
-        return render_template('player.html', url=url, title=title, live_urls=live_urls)
+        drm_config = None
+        if drm_type == 'clearkey' and drm_key_id and drm_key:
+            drm_config = {'type': 'clearkey', 'keyId': drm_key_id, 'key': drm_key}
+        return render_template('player.html', url=url, title=title, live_urls=live_urls, drm_config=drm_config)
 
     @app.route('/manifest.json')
     def manifest():
@@ -110,6 +115,11 @@ def create_app(config_class=Config):
     def serve_apk(filename):
         apk_dir = os.path.join(app.static_folder, 'app')
         return send_from_directory(apk_dir, filename, as_attachment=True)
+
+    @app.route('/lists/<path:filename>')
+    def serve_lists(filename):
+        lists_dir = os.path.join(os.path.dirname(app.root_path), 'lists')
+        return send_from_directory(lists_dir, filename, as_attachment=True)
 
     @app.route('/instalar')
     def instalar():
@@ -176,6 +186,13 @@ def _migrate_db():
         'ALTER TABLE telegram_config ADD COLUMN daily_digest BOOLEAN NOT NULL DEFAULT 1',
         'ALTER TABLE telegram_config ADD COLUMN digest_hour  INTEGER NOT NULL DEFAULT 8',
         'ALTER TABLE telegram_config ADD COLUMN alert_threshold INTEGER NOT NULL DEFAULT 80',
+        # Guardar M3U local + Telegram + live a curado
+        'ALTER TABLE listas ADD COLUMN guardar_local    BOOLEAN NOT NULL DEFAULT 1',
+        'ALTER TABLE listas ADD COLUMN enviar_telegram  BOOLEAN NOT NULL DEFAULT 1',
+        'ALTER TABLE listas ADD COLUMN live_a_curado    BOOLEAN NOT NULL DEFAULT 1',
+        # CanalCurado: origen de la lista
+        'ALTER TABLE canales_curados ADD COLUMN fuente     TEXT',
+        'ALTER TABLE canales_curados ADD COLUMN lista_id   INTEGER REFERENCES listas(id)',
     ]
     with db.engine.connect() as conn:
         for stmt in stmts:

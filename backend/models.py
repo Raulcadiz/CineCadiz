@@ -201,6 +201,12 @@ class Lista(db.Model):
     owner_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     visibilidad = db.Column(db.String(20), nullable=False, default='global')  # 'global' | 'private'
 
+    # Guardar M3U localmente y enviar por Telegram al importar
+    guardar_local = db.Column(db.Boolean, default=True)
+    enviar_telegram = db.Column(db.Boolean, default=True)
+    # Guardar canales live también en CanalCurado agrupados por nombre de lista
+    live_a_curado  = db.Column(db.Boolean, default=True)
+
     contenidos = db.relationship(
         'Contenido', backref='lista',
         foreign_keys='Contenido.lista_id',
@@ -230,6 +236,9 @@ class Lista(db.Model):
             'items_activos': self.items_activos,
             'error':         self.error,
             'es_defecto':    self.es_defecto,
+            'guardar_local':   self.guardar_local,
+            'enviar_telegram': self.enviar_telegram,
+            'live_a_curado':  self.live_a_curado,
         }
 
 
@@ -317,6 +326,21 @@ class Contenido(db.Model):
     # Índice de la URL activa en live_urls_json (0 = primera/original)
     live_active_idx = db.Column(db.Integer, nullable=False, default=0)
 
+    # ── Propiedades DRM / Avanzadas ───────────────────────────
+    # Para streams con Widevine/PlayReady/ClearKey
+    drm_license_type = db.Column(db.String(100), nullable=True)
+    drm_license_key  = db.Column(db.Text, nullable=True)
+    drm_key_id       = db.Column(db.String(64), nullable=True)
+    drm_key          = db.Column(db.String(64), nullable=True)
+    manifest_type    = db.Column(db.String(50), nullable=True)
+    # Catchup / Timeshift (reproducción desde inicio)
+    catchup_type    = db.Column(db.String(50), nullable=True)
+    catchup_source  = db.Column(db.Text, nullable=True)
+    catchup_days    = db.Column(db.Integer, nullable=True)
+    # Headers personalizados
+    user_agent      = db.Column(db.String(500), nullable=True)
+    http_referrer   = db.Column(db.String(500), nullable=True)
+
     lista_id      = db.Column(db.Integer, db.ForeignKey('listas.id'),      nullable=True)
     fuente_rss_id = db.Column(db.Integer, db.ForeignKey('fuentes_rss.id'), nullable=True)
 
@@ -367,6 +391,27 @@ class Contenido(db.Model):
         if self.tipo == 'live':
             d['liveUrls'] = all_urls or [self.url_stream]
             d['activeUrlIndex'] = active_idx
+        # Propiedades DRM / Avanzadas
+        if self.drm_license_type:
+            d['drmLicenseType'] = self.drm_license_type
+        if self.drm_license_key:
+            d['drmLicenseKey'] = self.drm_license_key
+        if self.drm_key_id:
+            d['drmKeyId'] = self.drm_key_id
+        if self.drm_key:
+            d['drmKey'] = self.drm_key
+        if self.manifest_type:
+            d['manifestType'] = self.manifest_type
+        if self.catchup_type:
+            d['catchupType'] = self.catchup_type
+        if self.catchup_source:
+            d['catchupSource'] = self.catchup_source
+        if self.catchup_days:
+            d['catchupDays'] = self.catchup_days
+        if self.user_agent:
+            d['userAgent'] = self.user_agent
+        if self.http_referrer:
+            d['httpReferrer'] = self.http_referrer
         return d
 
 
@@ -485,16 +530,18 @@ class LiveScanConfig(db.Model):
     """Configuración global del escaneo automático de canales en directo."""
     __tablename__ = 'live_scan_config'
 
-    id                = db.Column(db.Integer, primary_key=True)
-    auto_scan_enabled = db.Column(db.Boolean, nullable=False, default=True)
-    interval_hours    = db.Column(db.Integer, nullable=False, default=24)  # 24 | 48 | 72
-    last_scan         = db.Column(db.DateTime, nullable=True)
+    id                  = db.Column(db.Integer, primary_key=True)
+    auto_scan_enabled   = db.Column(db.Boolean, nullable=False, default=True)
+    interval_hours      = db.Column(db.Integer, nullable=False, default=24)  # 24 | 48 | 72
+    last_scan           = db.Column(db.DateTime, nullable=True)
+    show_in_frontend    = db.Column(db.Boolean, nullable=False, default=True)
 
     def to_dict(self):
         return {
             'auto_scan_enabled': self.auto_scan_enabled,
             'interval_hours':    self.interval_hours,
             'last_scan':         self.last_scan.isoformat() if self.last_scan else None,
+            'show_in_frontend':  self.show_in_frontend,
         }
 
 
@@ -593,8 +640,9 @@ class CanalCurado(db.Model):
     grupo      = db.Column(db.String(200), nullable=True)
     orden      = db.Column(db.Integer, nullable=False, default=0)
     activo     = db.Column(db.Boolean, nullable=False, default=True)
-    # JSON: [{"nombre": "Server 1", "url": "http://..."}, ...]
     urls_json  = db.Column(db.Text, nullable=False, default='[]')
+    fuente     = db.Column(db.String(200), nullable=True)
+    lista_id   = db.Column(db.Integer, db.ForeignKey('listas.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property

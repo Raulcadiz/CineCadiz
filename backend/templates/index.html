@@ -181,11 +181,11 @@
             <div class="carousel" id="seriesCarousel"></div>
         </section>
 
-        <!-- En Directo — oculto en web, disponible en APK/M3U/Xtream -->
+        <!-- En Directo — canales de TV en directo -->
         <section class="content-section" id="live" style="display:none">
             <div class="section-header">
                 <h2 class="section-title">📡 En Directo</h2>
-                <a href="#movies" data-type="live" class="ver-todas">Ver todos →</a>
+                <a href="#live" data-type="live" class="ver-todas">Ver todos →</a>
             </div>
             <div class="carousel" id="liveCarousel"></div>
         </section>
@@ -316,10 +316,14 @@
 
     <!-- HLS.js: reproducción de streams .m3u8 en Chrome/Firefox -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+    <!-- dash.js: reproducción de streams DASH (.mpd) en Chrome/Firefox -->
+    <script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js"></script>
     <!-- mpegts.js: reproducción de streams MPEG-TS raw (.ts) via MediaSource API -->
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+    <!-- shaka-player: reproducción de streams DASH con DRM (ClearKey, Widevine) -->
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.10.0/dist/shaka-player.compiled.js"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="/static/js/script.js?v=20260330c"></script>
+    <script src="/static/js/script.js?v=20260404c"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js')

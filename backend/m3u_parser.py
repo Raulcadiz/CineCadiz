@@ -127,6 +127,17 @@ def parse_extinf(line: str) -> dict:
         'episodio': None,
         'año': None,
         'genero': '',
+        # DRM y propiedades avanzadas
+        'drm_license_type': None,
+        'drm_license_key': None,
+        'drm_key_id': None,
+        'drm_key': None,
+        'manifest_type': None,
+        'catchup_type': None,
+        'catchup_source': None,
+        'catchup_days': None,
+        'user_agent': None,
+        'http_referrer': None,
     }
 
     # Título: todo lo que hay después de la última coma
@@ -144,6 +155,14 @@ def parse_extinf(line: str) -> dict:
     info['pais']        = _attr(line, 'tvg-country')
     info['group_title'] = _attr(line, 'group-title')
     info['genero']      = _attr(line, 'tvg-genre')
+
+    # Propiedades DRM (KODIPROP en líneas siguientes, capturadas en parse_m3u_content)
+    info['drm_license_type'] = _attr(line, 'tvg-drm-license-type') or _attr(line, 'drm-license-type')
+    info['drm_license_key'] = _attr(line, 'tvg-drm-license-key') or _attr(line, 'drm-license-key')
+    info['manifest_type'] = _attr(line, 'tvg-manifest-type') or _attr(line, 'manifest-type')
+    info['catchup_type'] = _attr(line, 'catchup-type')
+    info['catchup_source'] = _attr(line, 'catchup-source')
+    info['catchup_days'] = _attr(line, 'catchup-days')
 
     # Si tvg-genre está vacío (la mayoría de listas IPTV no lo incluyen),
     # intentar extraer el género a partir del group-title
@@ -200,6 +219,8 @@ def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]
     grupos_set: si se indica, se aplica un pre-filtro rápido por group-title
     ANTES de ejecutar parse_extinf (que es costoso). Esto evita parsear entradas
     que luego se descartarían, reduciendo drásticamente el tiempo en archivos grandes.
+
+    Soporta propiedades DRM: #KODIPROP, #EXTVLCOPT, catchup-source, etc.
     """
     items   = []
     lines   = content.splitlines()
@@ -207,6 +228,10 @@ def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]
 
     # Regex compilada una vez para el pre-filtro de group-title
     _gt_re = re.compile(r'group-title="([^"]*)"', re.IGNORECASE)
+
+    # Regex para KODIPROP y EXTVLCOPT
+    _kodi_re = re.compile(r'#KODIPROP:(?:inputstream\.adaptive\.)?(\w+(?:\.\w+)*)=(.*)', re.IGNORECASE)
+    _vlc_re  = re.compile(r'#EXTVLCOPT:(.*)', re.IGNORECASE)
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -223,6 +248,32 @@ def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]
                     current = None
                     continue
             current = parse_extinf(line)
+
+        elif line.upper().startswith('#KODIPROP:') and current is not None:
+            m = _kodi_re.match(line)
+            if m:
+                key = m.group(1).lower()
+                val = m.group(2).strip()
+                if 'license_type' in key:
+                    current['drm_license_type'] = val
+                elif 'license_key' in key:
+                    current['drm_license_key'] = val
+                    if ':' in val:
+                        parts = val.split(':', 1)
+                        if len(parts) == 2:
+                            current['drm_key_id'] = parts[0].strip()
+                            current['drm_key'] = parts[1].strip()
+                elif 'manifest_type' in key:
+                    current['manifest_type'] = val
+
+        elif line.upper().startswith('#EXTVLCOPT:') and current is not None:
+            m = _vlc_re.match(line)
+            if m:
+                opt = m.group(1).strip()
+                if 'http-user-agent' in opt.lower():
+                    current['user_agent'] = opt.split('=', 1)[-1].strip()
+                elif 'http-referrer' in opt.lower():
+                    current['http_referrer'] = opt.split('=', 1)[-1].strip()
 
         elif current is not None and re.match(r'[a-zA-Z][a-zA-Z0-9+\-.]*://', line):
             # Acepta http://, https://, rtmp://, rtsp://, etc.
@@ -461,6 +512,105 @@ def is_vod_content(item: dict, config) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────
+# Clasificación de grupos (limpiaanaliza)
+# ──────────────────────────────────────────────────────────────
+
+def _limpia_nombre(nombre: str) -> str:
+    """Limpia un nombre de grupo: elimina símbolos IPTV, normaliza y pasa a minúsculas."""
+    if not nombre:
+        return ''
+    n = nombre.strip()
+    n = re.sub(r'\|', '', n)
+    n = re.sub(r'\[', '', n)
+    n = re.sub(r'\]', '', n)
+    n = re.sub(r'◈', '', n)
+    n = re.sub(r'_', ' ', n)
+    n = re.sub(r'-', ' ', n)
+    n = re.sub(r':', ' ', n)
+    n = re.sub(r'\s+', ' ', n)
+    return n.strip().lower()
+
+
+def _kw_match(nombre: str, patrones: list) -> bool:
+    """True si alguno de los patrones regex coincide en nombre limpio."""
+    for p in patrones:
+        if re.search(p, nombre, re.IGNORECASE):
+            return True
+    return False
+
+
+def clasifica_grupo(group_title: str) -> str:
+    """
+    Clasifica un grupo M3U en una categoría basándose en palabras clave del nombre.
+    Devuelve: 'spain' | 'latino' | 'pelis' | 'live' | 'otro'
+
+    Implementación inspirada en limpiaanaliza() del parser PHP del cliente WPF.
+    """
+    if not group_title:
+        return 'otro'
+
+    orig = group_title.strip()
+    nombre = _limpia_nombre(orig)
+
+    # ── LIVE TV: palabras específicas ──────────────────────────
+    # Se comprueba antes de limpio para captar variaciones
+    if _kw_match(orig, [
+        r'\bcanal(es)?\b', r'\bchannel(s)?\b',
+        r'\btdt\b', r'\b24\s*horas?\b',
+        r'\bnews?\b', r'\bnoticias?\b',
+        r'\bsport(s)?\b', r'\bfutbol\b',
+        r'\bradio\b', r'\bweather\b',
+        r'\blive\b', r'\bdirecto\b', r'\bbroadcast\b',
+    ]):
+        return 'live'
+
+    # ── ESPAÑA ────────────────────────────────────────────────
+    if _kw_match(nombre, [
+        r'^es\s*:?\s*$', r'\bes=\b', r'\bespa[nñ]a?\b', r'\bspain\b',
+        r'\besp:\s*$', r'\bsp:\s*$',
+        r'\bcastellano\b', r'\bvod\s*es\b',
+        r'\bmovistar\b', r'\bm\+\s*$', r'\bm\.\s',
+        r'\btdt\b', r'\bdeport(?:e|es)\b', r'\blaliga\b',
+        r'\bevento\b', r'\bestilo\b',
+        r'\bauton[oó]mico\b', r'\bregional\b',
+        r'\b24\s*horas?\b',
+    ]):
+        return 'spain'
+
+    # ── LATINOAMÉRICA ────────────────────────────────────────
+    if _kw_match(nombre, [
+        r'\blatin[oa]?\b', r'\blat\b', r'\bmex\b', r'\barg\b',
+        r'\bcolombia\b', r'\bper[úu]\b', r'\bchil[ei]\b',
+        r'\bvenezuel[ae]\b', r'\becuador\b', r'\buruguay\b',
+        r'\btotalplay\b', r'\bsouth\s*america\b',
+    ]):
+        return 'latino'
+
+    # ── PELÍCULAS / SERIES ──────────────────────────────────
+    if _kw_match(nombre, [
+        r'\bpel[ií]cul?[ae]s?\b', r'\bsagas?\b',
+        r'\banimaci[oó]n\b', r'\bacci[oó]n\b', r'\baventura\b',
+        r'\bficci[oó]n\b', r'\bcomedia\b', r'\bdrama\b',
+        r'\bfantas[ií]a\b', r'\bfamiliar\b', r'\bhisto(?:ria|rico)\b',
+        r'\bmisterio\b', r'\bsuspense\b', r'\brom[aá]ntic[oa]?\b',
+        r'\bestreno\b', r'\bterror\b', r'\bthriller\b',
+        r'\bwestern\b', r'\bbiograf[ií]a\b',
+        r'\bdocumental\b', r'\banime\b', r'\bdorama\b',
+    ]):
+        return 'pelis'
+
+    # ── LIVE residual: sin grupo claro ────────────────────────
+    if _kw_match(orig, [
+        r'\bcanal(es)?\b', r'\bchannel(s)?\b', r'\blive\b',
+        r'\bdirecto\b', r'\btv\b', r'\btelevis\w*\b',
+        r'\bhd/sd\b', r'\bfhd\b', r'\bsd\b',
+    ]):
+        return 'live'
+
+    return 'otro'
+
+
+# ──────────────────────────────────────────────────────────────
 # Descarga y parseo completo
 # ──────────────────────────────────────────────────────────────
 
@@ -549,10 +699,11 @@ def get_groups_preview(content: str) -> list[dict]:
         elif any(kw in gl for kw in _PELICULA_GROUPS):
             tipo = 'pelicula'
         else:
-            tipo = item.get('tipo', 'pelicula')   # fallback a lo que detectó parse_extinf
+            tipo = item.get('tipo', 'pelicula')
+        categoria = clasifica_grupo(g)
 
         if g not in groups:
-            groups[g] = {'name': g, 'tipo': tipo, 'count': 0}
+            groups[g] = {'name': g, 'tipo': tipo, 'categoria': categoria, 'count': 0}
         groups[g]['count'] += 1
 
     return sorted(groups.values(), key=lambda x: (-x['count'], x['name']))
@@ -716,10 +867,11 @@ def fetch_groups_preview(
                     tipo = 'pelicula'
                 else:
                     tipo = 'otro'
+                categoria = clasifica_grupo(g_name)
 
                 is_new = g_name not in groups
                 if is_new:
-                    groups[g_name] = {'name': g_name, 'tipo': tipo, 'count': 0}
+                    groups[g_name] = {'name': g_name, 'tipo': tipo, 'categoria': categoria, 'count': 0}
                     since_new = 0
                 else:
                     since_new += 1

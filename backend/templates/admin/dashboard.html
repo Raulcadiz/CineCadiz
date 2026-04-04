@@ -12,6 +12,9 @@
         <i class="bi bi-radar"></i> Escanear links
         {% if scan_state.running %}<span class="spinner-border spinner-border-sm ms-1"></span>{% endif %}
     </button>
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#liveConfigModal">
+        <i class="bi bi-broadcast"></i> Directo
+    </button>
 </div>
 
 <!-- Resultado reclasificación -->
@@ -248,19 +251,20 @@
                         se procesan ~500 links/minuto. Para 7000 links → batch 7000, esperar ~15 min.
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Servidor a escanear</label>
+                        <label class="form-label fw-semibold">Servidor / Lista a escanear</label>
                         <select name="lista_id" class="form-select">
-                            <option value="0">— Todos los servidores —</option>
+                            <option value="0">— TODOS los servidores —</option>
                             {% for l in all_listas %}
                             <option value="{{ l.id }}">{{ l.nombre }}
                                 ({{ l.items_activos }}/{{ l.total_items }} activos)</option>
                             {% endfor %}
                         </select>
-                        <div class="form-text">Deja "Todos" para un escaneo global.</div>
+                        <div class="form-text">Selecciona "TODOS" para escanear toda la base de datos.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Links a verificar</label>
                         <input type="number" name="batch" class="form-control" value="500" min="50" max="10000">
+                        <div class="form-text">Cantidad de links a procesar en esta ronda.</div>
                     </div>
                     <div class="mb-2">
                         <label class="form-label fw-semibold">Hilos paralelos: <output id="workersVal">40</output></label>
@@ -276,6 +280,35 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal live config -->
+<div class="modal fade" id="liveConfigModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content bg-dark border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="bi bi-broadcast me-2"></i>Canales en directo</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="showLiveFrontend" {% if scan_state.show_in_frontend %}checked{% endif %}>
+                    <label class="form-check-label" for="showLiveFrontend">
+                        Mostrar canales en directo en la web
+                    </label>
+                </div>
+                <p class="text-muted small mt-2">
+                    Cuando está marcado, los canales en directo aparecen en la página principal.
+                </p>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveLiveConfig()">
+                    <i class="bi bi-check-lg"></i> Guardar
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -361,6 +394,9 @@ function loadServerHealth() {
                     ? 'badge bg-danger'
                     : pct >= 50 ? 'badge bg-warning text-dark' : 'badge bg-success';
                 const barFill = `background:linear-gradient(90deg,${color} ${pct}%,#2a2a2a ${pct}%)`;
+                const purgeBtn = s.dead > 0 
+                    ? `<button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="purgeServer('${s.servidor}', ${s.dead})" title="Eliminar ${s.dead} streams caídos"><i class="bi bi-trash"></i></button>`
+                    : '';
                 return `<tr>
                     <td class="text-truncate" style="max-width:220px" title="${s.servidor}">${s.servidor}</td>
                     <td><span class="${badge}">${pct}% caídos</span></td>
@@ -368,6 +404,7 @@ function loadServerHealth() {
                         <div style="height:6px;border-radius:3px;${barFill}"></div>
                     </td>
                     <td class="text-muted" style="font-size:.78rem">${s.alive}✓ / ${s.dead}✗ / ${s.total} tot.</td>
+                    <td>${purgeBtn}</td>
                 </tr>`;
             }).join('');
 
@@ -379,6 +416,7 @@ function loadServerHealth() {
                         <th>Estado</th>
                         <th style="min-width:100px">%</th>
                         <th>Conteo</th>
+                        <th style="width:80px">Acciones</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -419,5 +457,49 @@ document.getElementById('btnReclassify')?.addEventListener('click', function() {
             btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Reclasificar contenido';
         });
 });
+
+// Función para purgar servidor (eliminar streams caídos)
+async function purgeServer(servidor, deadCount) {
+    if (!confirm(`¿Eliminar ${deadCount} streams caídos del servidor "${servidor}"?\n\nEsta acción es permanente.`)) {
+        return;
+    }
+    try {
+        const r = await fetch('/admin/api/purge-server', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ servidor })
+        });
+        const d = await r.json();
+        if (d.ok) {
+            alert(`✅ ${d.deleted} streams eliminados del servidor "${servidor}".`);
+            loadServerHealth();
+        } else {
+            alert('Error: ' + (d.msg || 'Unknown error'));
+        }
+    } catch(e) {
+        alert('Error de red: ' + e.message);
+    }
+}
+
+// Guardar configuración de canales live
+async function saveLiveConfig() {
+    const showLive = document.getElementById('showLiveFrontend').checked;
+    try {
+        const r = await fetch('/api/live/scan-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ show_in_frontend: showLive })
+        });
+        const d = await r.json();
+        if (d.show_in_frontend !== undefined) {
+            bootstrap.Modal.getInstance(document.getElementById('liveConfigModal')).hide();
+            alert('✅ Configuración guardada. Refresca la página principal para ver el cambio.');
+        } else {
+            alert('Error al guardar: ' + JSON.stringify(d));
+        }
+    } catch(e) {
+        alert('Error de red: ' + e.message);
+    }
+}
 </script>
 {% endblock %}
