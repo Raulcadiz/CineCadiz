@@ -55,6 +55,16 @@ _PELICULA_GROUPS = [
     'documental', 'documentales', 'documentary',
     'estrenos', 'estreno',   # "ESTRENOS 2021", "ESTRENO", etc.
     'novedades', 'novedad',  # "NOVEDADES 2025"
+    # Géneros usados como group-title (Acción, Drama, Comedia, Terror…)
+    'accion', 'action', 'drama', 'comedia', 'comedy',
+    'terror', 'horror', 'thriller', 'suspenso',
+    'aventura', 'adventure', 'fantasia', 'fantasy',
+    'romance', 'romantica', 'romantico',
+    'western', 'musical', 'biografia', 'biopic',
+    'historica', 'historical', 'crimen', 'crime',
+    'belica', 'guerra', 'misterio', 'mystery',
+    'superheroe', 'superhero',
+    'ciencia ficcion', 'sci-fi',
 ]
 
 
@@ -866,7 +876,14 @@ def fetch_groups_preview(
                 elif any(kw in gl for kw in _PELICULA_GROUPS):
                     tipo = 'pelicula'
                 else:
-                    tipo = 'otro'
+                    # Usar clasifica_grupo como fallback inteligente en lugar de 'otro'
+                    _cat = clasifica_grupo(g_name)
+                    if _cat == 'live':
+                        tipo = 'live'
+                    elif _cat in ('pelis', 'spain', 'latino'):
+                        tipo = 'pelicula'
+                    else:
+                        tipo = 'otro'
                 categoria = clasifica_grupo(g_name)
 
                 is_new = g_name not in groups
