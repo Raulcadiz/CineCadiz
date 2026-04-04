@@ -253,7 +253,7 @@
                     <th class="text-center">Grupos</th>
                     <th class="text-center">Solo ES</th>
                     <th class="text-center">Proxy</th>
-                    <th class="text-center">Activos</th>
+                    <th class="text-center">Contenido</th>
                     <th class="text-center">Total</th>
                     <th class="text-center">Visibilidad</th>
                     <th>Actualización</th>
@@ -301,7 +301,18 @@
                         <i class="bi bi-x-circle text-secondary"></i>
                     {% endif %}
                 </td>
-                <td class="text-center fw-bold text-success">{{ lista.items_activos or 0 }}</td>
+                <td class="text-center">
+                    {% set tc = tipo_counts.get(lista.id, {}) %}
+                    {% if tc %}
+                        <span class="d-flex flex-wrap justify-content-center gap-2" style="font-size:.78rem;line-height:1.6">
+                            {% if tc.get('pelicula') %}<span class="text-danger" title="Películas">🎬 {{ tc['pelicula'] }}</span>{% endif %}
+                            {% if tc.get('serie')    %}<span class="text-info"   title="Series">📺 {{ tc['serie'] }}</span>{% endif %}
+                            {% if tc.get('live')     %}<span class="text-warning" title="En directo">📡 {{ tc['live'] }}</span>{% endif %}
+                        </span>
+                    {% else %}
+                        <span class="text-muted small">—</span>
+                    {% endif %}
+                </td>
                 <td class="text-center text-secondary">{{ lista.total_items or 0 }}</td>
                 <td class="text-center">
                     <button type="button"
@@ -631,7 +642,7 @@ function renderGrupos(mode, groups, ctx) {
         tipo:      TIPOS.includes(g.tipo) ? g.tipo : 'otro',
         categoria: g.categoria || 'otro',
         count:     g.count,
-        checked:   g.tipo !== 'live'
+        checked:   true          // todos los grupos marcados por defecto (incluido live)
     }));
     _renderDisplay(mode);
     document.getElementById('panel-' + mode).classList.remove('d-none');
@@ -658,6 +669,16 @@ function _renderDisplay(mode, focusUid = null) {
     // Agrupar por tipo (solo los filtrados)
     const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
     filtered.forEach(g => byTipo[g.tipo].push(g));
+
+    // Ordenar dentro de cada columna: primero por categoría (spain→pelis→latino→live→otro),
+    // luego alfabéticamente. Así los grupos españoles y de películas siempre aparecen arriba.
+    const _CAT_ORDER = { spain: 0, pelis: 1, latino: 2, live: 3, otro: 4 };
+    Object.values(byTipo).forEach(gs =>
+        gs.sort((a, b) =>
+            ((_CAT_ORDER[a.categoria] ?? 9) - (_CAT_ORDER[b.categoria] ?? 9))
+            || a.name.localeCompare(b.name, 'es')
+        )
+    );
 
     // Renderizar columnas
     container.innerHTML = TIPOS.map(key => {
@@ -1026,6 +1047,15 @@ function _egRender() {
 
     const byTipo = { pelicula: [], serie: [], live: [], otro: [] };
     filtered.forEach(g => byTipo[g.tipo].push(g));
+
+    // Misma ordenación por categoría que en el panel de importación
+    const _CAT_ORDER_EG = { spain: 0, pelis: 1, latino: 2, live: 3, otro: 4 };
+    Object.values(byTipo).forEach(gs =>
+        gs.sort((a, b) =>
+            ((_CAT_ORDER_EG[a.categoria] ?? 9) - (_CAT_ORDER_EG[b.categoria] ?? 9))
+            || a.name.localeCompare(b.name, 'es')
+        )
+    );
 
     container.innerHTML = TIPOS.map(key => {
         const gs = byTipo[key];

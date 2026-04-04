@@ -612,23 +612,35 @@ const _isWebView = /wv/.test(navigator.userAgent) ||
 function _buildHlsConfig() {
     return {
         enableWorker:                   !_isWebView,
+        // ── Live ──────────────────────────────────────────────────────────────
         liveDurationInfinity:           true,
-        liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
-        liveSyncDuration:               3,              // 3s por detrás del edge (segundos exactos)
-        liveMaxLatencyDuration:         10,             // reconectar si retraso > 10s
-        // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
-        highBufferWatchdogPeriod:       2,              // detectar buffer stall cada 2s (era 5s)
-        nudgeMaxRetry:                  10,             // más nudges antes de fatal
+        // 8s de buffer trasero: absorbe microcortes de 5-7s sin congelar imagen.
+        // El valor anterior (4s) era demasiado pequeño para redes IPTV inestables.
+        liveBackBufferLength:           8,
+        // Sincronizar 5s por detrás del edge: equilibrio entre latencia y estabilidad.
+        // Con 3s se producen resync constantes en servidores con segments de 4-6s.
+        liveSyncDuration:               5,
+        // Reconectar si el player se atrasa más de 15s del edge.
+        liveMaxLatencyDuration:         15,
+        // Arrancar en el nivel de calidad más bajo para el primer chunk live →
+        // evita el buffering inicial mientras se negocia la calidad adecuada.
+        startLevel:                     -1,
+        // ── Watchdog y stalls ─────────────────────────────────────────────────
+        highBufferWatchdogPeriod:       2,
+        nudgeMaxRetry:                  10,
         nudgeOffset:                    0.2,
-        maxBufferLength:                30,             // buffer adelante (era 20s)
+        // ── Buffer general ────────────────────────────────────────────────────
+        maxBufferLength:                30,
         maxMaxBufferLength:             60,
         maxBufferSize:                  40 * 1000 * 1000,
+        // ── Reintentos de carga ───────────────────────────────────────────────
         manifestLoadingMaxRetry:        10,
         manifestLoadingRetryDelay:      500,
         manifestLoadingMaxRetryTimeout: 32000,
-        fragLoadingMaxRetry:            3,              // menos reintentos → falla rápido en live
+        // 3 reintentos de fragmento → falla rápido en live antes de congelar pantalla
+        fragLoadingMaxRetry:            3,
         fragLoadingRetryDelay:          500,
-        fragLoadingMaxRetryTimeout:     6000,           // era 16000 → menos tiempo helado
+        fragLoadingMaxRetryTimeout:     6000,
         levelLoadingMaxRetry:           4,
         levelLoadingRetryDelay:         500,
         levelLoadingMaxRetryTimeout:    8000,
@@ -1015,6 +1027,19 @@ function _tryDirectMpegts(streamUrl) {
 function playStream(streamUrl, title, source, itemId = '', image = '', liveUrls = null, drmKeyId = '', drmKey = '', drmType = '') {
     const url = decodeURIComponent(streamUrl);
     const imgDecoded = image ? decodeURIComponent(image) : '';
+
+    // ── Inicializar failover para este stream ──────────────────────────────────
+    // liveUrls contiene todas las URLs de respaldo del canal; _tryFailover() las
+    // consume en orden cuando el stream principal falla. Sin esta asignación el
+    // failover del reproductor embebido nunca funciona (los _failoverUrls quedan []).
+    _failoverUrls = Array.isArray(liveUrls)
+        ? liveUrls.map(_normalizeStreamUrl).filter(Boolean)
+        : [];
+    const _normalUrl = _normalizeStreamUrl(url);
+    _failoverIdx = _failoverUrls.length
+        ? Math.max(0, _failoverUrls.indexOf(_normalUrl))
+        : 0;
+
     const hasClearKey = drmType === 'clearkey' && drmKeyId && drmKey;
     if (hasClearKey) {
         console.log('[playStream] DRM detected:', { drmType, drmKeyId });

@@ -876,10 +876,8 @@ def hls_proxy():
                     resp2.raise_for_status()
                     _body2 = resp2.text.strip()
                     if _body2.startswith('#EXTM3U') or _body2.startswith('#EXT-X-'):
-                        url   = m3u8_url
                         resp  = resp2
                         _body = _body2
-                        parsed = _urlparse(url)
                 except Exception:
                     pass
 
@@ -889,7 +887,12 @@ def hls_proxy():
         if not (_body.startswith('#EXTM3U') or _body.startswith('#EXT-X-')):
             return '', 403
 
-        base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
+        # Usar resp.url (URL final tras redirect) para resolver URIs relativas correctamente.
+        # requests.get con allow_redirects=True actualiza resp.url a la URL definitiva.
+        # Si el proveedor redirige a un CDN, los segmentos relativos deben resolverse
+        # contra esa URL final, no contra la URL original que pidió el cliente.
+        _final_parsed = _urlparse(resp.url)
+        base_url = f'{_final_parsed.scheme}://{_final_parsed.netloc}{_final_parsed.path.rsplit("/", 1)[0]}/'
         ps = request.host_url.rstrip('/') + '/api/stream-proxy'
         ph = request.host_url.rstrip('/') + '/api/hls-proxy'
 
@@ -900,7 +903,7 @@ def hls_proxy():
                 lines.append('')
                 continue
             if s.startswith('#'):
-                # Reescribir URI="..." en directivas (ej: EXT-X-KEY)
+                # Reescribir URI="..." en directivas (ej: EXT-X-KEY, EXT-X-MAP)
                 if 'URI="' in s:
                     def _make_rep(_ps):
                         def _rep(m):
@@ -915,7 +918,15 @@ def hls_proxy():
                 # Líneas de URI (segmentos .ts, sub-playlists .m3u8, etc.)
                 full = s if s.startswith('http') else _urljoin(base_url, s)
                 enc  = _quote(full, safe='')
-                target = ph if '.m3u8' in s.lower() else ps
+                # Detectar sub-playlist por extensión .m3u8 en la URL, o por el
+                # content-type de la línea (algunos proveedores no usan .m3u8 en las URLs
+                # de variantes). Como heurística adicional comprobamos si la URL contiene
+                # indicadores típicos de playlist (chunklist, index, playlist, stream).
+                _is_sub_playlist = (
+                    '.m3u8' in s.lower()
+                    or _re.search(r'/(chunklist|playlist|index|stream)\b', s, _re.I)
+                )
+                target = ph if _is_sub_playlist else ps
                 lines.append(f'{target}?url={enc}')
 
         return Response(
@@ -976,8 +987,9 @@ def dash_proxy():
             print('[dash-proxy] Invalid MPD response')
             return '', 403
 
-        parsed = _urlparse(url)
-        base_url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rsplit("/", 1)[0]}/'
+        # Usar resp.url (URL final tras redirect) para resolver rutas relativas correctamente.
+        _dash_final = _urlparse(resp.url)
+        base_url = f'{_dash_final.scheme}://{_dash_final.netloc}{_dash_final.path.rsplit("/", 1)[0]}/'
         ps = request.host_url.rstrip('/') + '/api/stream-proxy'
 
         def _rewrite_url(m):

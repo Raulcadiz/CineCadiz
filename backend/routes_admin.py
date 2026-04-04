@@ -255,12 +255,40 @@ def reclassify_content():
 @admin_bp.get('/listas')
 @login_required
 def listas():
+    from sqlalchemy import func as _func
     panel_user = _get_panel_user()
     if panel_user.is_superadmin:
         all_listas = Lista.query.order_by(Lista.fecha_creacion.desc()).all()
     else:
         all_listas = panel_user.listas.order_by(Lista.fecha_creacion.desc()).all()
-    return render_template('admin/lists.html', listas=all_listas, panel_user=panel_user)
+
+    # Desglose de contenidos por tipo para cada lista (una sola query agregada).
+    # Evita N queries individuales en listas grandes.
+    lista_ids = [l.id for l in all_listas]
+    tipo_counts: dict[int, dict] = {lid: {} for lid in lista_ids}
+    if lista_ids:
+        rows = (
+            db.session.query(
+                Contenido.lista_id,
+                Contenido.tipo,
+                _func.count(Contenido.id),
+            )
+            .filter(
+                Contenido.lista_id.in_(lista_ids),
+                Contenido.activo == True,
+            )
+            .group_by(Contenido.lista_id, Contenido.tipo)
+            .all()
+        )
+        for lid, tipo, cnt in rows:
+            tipo_counts[lid][tipo] = cnt
+
+    return render_template(
+        'admin/lists.html',
+        listas=all_listas,
+        panel_user=panel_user,
+        tipo_counts=tipo_counts,
+    )
 
 
 @admin_bp.post('/listas/agregar')

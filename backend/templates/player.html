@@ -215,11 +215,11 @@
         return {
             enableWorker:                   !isWebView,
             liveDurationInfinity:           true,
-            liveBackBufferLength:           4,              // pequeño buffer trasero → más estabilidad
-            liveSyncDuration:               3,              // 3s exactos por detrás del edge
-            liveMaxLatencyDuration:         _lowLatency ? 6 : 10,
-            // NO mezclar con liveSyncDurationCount — HLS.js lanza error si se usan ambos
-            highBufferWatchdogPeriod:       2,              // detectar stalls cada 2s (default: 5s)
+            liveBackBufferLength:           _lowLatency ? 4 : 8,
+            liveSyncDuration:               _lowLatency ? 3 : 5,
+            liveMaxLatencyDuration:         _lowLatency ? 8 : 15,
+            startLevel:                     -1,
+            highBufferWatchdogPeriod:       2,
             nudgeMaxRetry:                  10,
             nudgeOffset:                    0.2,
             maxBufferLength:                _lowLatency ? 8 : 30,
@@ -228,7 +228,7 @@
             manifestLoadingMaxRetry:        10,
             manifestLoadingRetryDelay:      500,
             manifestLoadingMaxRetryTimeout: 32000,
-            fragLoadingMaxRetry:            3,              // falla rápido → reconnect más ágil
+            fragLoadingMaxRetry:            3,
             fragLoadingRetryDelay:          500,
             fragLoadingMaxRetryTimeout:     6000,
             levelLoadingMaxRetry:           4,
