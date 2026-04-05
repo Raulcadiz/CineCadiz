@@ -791,7 +791,9 @@ function _showPlayerError(msg, errCode) {
         <div style="font-size:2.5rem;margin-bottom:.7rem">📺</div>
         <p style="margin:.3rem 0;font-size:1.1rem;font-weight:600">Este canal no va, prueba otro canal</p>
         <p style="color:#999;font-size:.82rem;margin-top:.4rem;margin-bottom:1.4rem">
-          ${code === 4
+          ${msg && msg.length > 10 && code == null
+            ? msg.replace(/\n/g, '<br>')
+            : code === 4
             ? 'El codec del stream (probablemente H.265/HEVC) no está soportado en Chrome.<br>Prueba con <strong>Edge</strong>, <strong>Safari</strong> o abre en la app.'
             : code === 2
             ? 'El servidor IPTV puede estar bloqueando las peticiones desde el proxy.<br>Pulsa <strong>Ver en pestaña</strong> para reproducirlo directamente desde tu navegador.'
@@ -950,13 +952,26 @@ function _loadHls(url, isDirect = false) {
             const origUrl = _getUrlFromProxy(url);
             if (origUrl) {
                 if (_streamMode === 'proxy') {
-                    // Modo proxy: hls-proxy falló → intentar stream raw vía stream-proxy + mpegts
+                    console.warn('[hls] proxy mode — hls-proxy falló (' + httpCode + ')');
+                    // Errores definitivos: no tiene sentido intentar mpegts
+                    if (httpCode === 404) {
+                        _setPlayerLoading(false);
+                        _showPlayerError('Canal no encontrado en el proveedor (ID obsoleto).\nReimporta la lista M3U para actualizar los canales.');
+                        return;
+                    }
+                    if (httpCode === 401) {
+                        _setPlayerLoading(false);
+                        _showPlayerError('Credenciales del proveedor no válidas o suscripción caducada.');
+                        return;
+                    }
+                    // 403: el proveedor bloquea el VPS → intentar stream-proxy (cabeceras distintas)
+                    // 502/504: error de red → intentar stream-proxy como último recurso
                     const errMsg = httpCode === 403
-                        ? 'El proveedor rechazó la conexión desde el servidor proxy.'
+                        ? 'El proveedor bloquea las conexiones desde el servidor proxy.\nEste canal requiere VPN directa o un proveedor diferente.'
                         : httpCode === 504
-                            ? 'El proveedor IPTV tardó demasiado en responder.'
+                            ? 'El proveedor IPTV tardó demasiado en responder. Puede estar caído.'
                             : 'El servidor proxy no puede alcanzar este canal. Puede estar bloqueado o caído.';
-                    console.warn('[hls] proxy mode — hls-proxy falló (' + httpCode + '), intentando mpegts vía stream-proxy');
+                    console.warn('[hls] intentando mpegts vía stream-proxy como fallback');
                     _tryProxiedMpegts(origUrl, errMsg);
                     return;
                 }
