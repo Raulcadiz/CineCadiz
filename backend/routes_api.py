@@ -7,7 +7,7 @@ import socket as _socket
 from urllib.parse import urlparse as _urlparse, urljoin as _urljoin, quote as _quote
 from flask import Blueprint, jsonify, request, current_app, Response
 from flask import session as _session
-from models import db, Contenido, Lista, FuenteRSS, ChannelReport, WatchHistory, LiveScanConfig, LiveScanReport
+from models import db, Contenido, Lista, FuenteRSS, ChannelReport, WatchHistory, LiveScanConfig, LiveScanReport, XtreamConfig
 from sqlalchemy import or_, and_, nulls_last
 import requests
 
@@ -689,6 +689,13 @@ def proxy_image():
         return '', 404
 
 
+@api_bp.get('/stream-config')
+def stream_config():
+    """Configuración de streaming para el player web (modo proxy/directo)."""
+    cfg = XtreamConfig.query.get(1)
+    return jsonify({'stream_mode': cfg.stream_mode if cfg else 'direct'})
+
+
 @api_bp.get('/stream-proxy')
 def stream_proxy():
     """
@@ -849,14 +856,37 @@ def hls_proxy():
         url = _hp._replace(path=_hc).geturl()
 
     try:
-        parsed   = _urlparse(url)
+        import time as _time
+        parsed    = _urlparse(url)
         mfst_hdrs = {
             **_PROXY_UA,
             'Referer': f'{parsed.scheme}://{parsed.netloc}/',
         }
-        resp = requests.get(url, headers=mfst_hdrs, timeout=15,
-                            proxies={}, allow_redirects=True)
-        resp.raise_for_status()
+        resp = None
+        last_exc = None
+        for _att in range(3):
+            try:
+                resp = requests.get(url, headers=mfst_hdrs, timeout=12,
+                                    proxies={}, allow_redirects=True)
+                if resp.status_code < 500:
+                    break
+                resp = None
+                if _att < 2:
+                    _time.sleep(0.3)
+            except requests.exceptions.Timeout as _e:
+                last_exc = _e
+                resp = None
+                if _att < 2:
+                    _time.sleep(0.2)
+            except Exception as _e:
+                last_exc = _e
+                resp = None
+                break
+        if resp is None:
+            return ('', 504) if isinstance(last_exc, requests.exceptions.Timeout) else ('', 502)
+        if resp.status_code >= 400:
+            # Propagar el status code real del proveedor (403, 404, etc.)
+            return '', (resp.status_code if resp.status_code < 500 else 502)
 
         _body = resp.text.strip()
 

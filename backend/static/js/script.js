@@ -17,6 +17,14 @@ function _getSessionKey() {
 }
 const SESSION_KEY = _getSessionKey();
 
+// ── Modo de stream (proxy VPS / directo) ──────────────────
+// Cargado desde /api/stream-config según configuración del admin en /admin/iptv
+let _streamMode = 'direct';
+fetch('/api/stream-config').then(r => r.json()).then(cfg => {
+    _streamMode = cfg.stream_mode || 'direct';
+    console.log('[stream] modo:', _streamMode);
+}).catch(() => {});
+
 // ── Estado global ──────────────────────────────────────────
 const state = {
     currentPage: 1,
@@ -941,6 +949,17 @@ function _loadHls(url, isDirect = false) {
         if (!isDirect) {
             const origUrl = _getUrlFromProxy(url);
             if (origUrl) {
+                if (_streamMode === 'proxy') {
+                    // Modo proxy: hls-proxy falló → intentar stream raw vía stream-proxy + mpegts
+                    const errMsg = httpCode === 403
+                        ? 'El proveedor rechazó la conexión desde el servidor proxy.'
+                        : httpCode === 504
+                            ? 'El proveedor IPTV tardó demasiado en responder.'
+                            : 'El servidor proxy no puede alcanzar este canal. Puede estar bloqueado o caído.';
+                    console.warn('[hls] proxy mode — hls-proxy falló (' + httpCode + '), intentando mpegts vía stream-proxy');
+                    _tryProxiedMpegts(origUrl, errMsg);
+                    return;
+                }
                 // HTTPS page + HTTP stream → el navegador bloquea peticiones directas (mixed content).
                 // No tiene sentido intentar acceso directo ni mpegts: fallarán instantáneamente.
                 // Ir directamente a mostrar el error con el botón "Ver en pestaña nueva".
@@ -983,6 +1002,12 @@ function _loadHls(url, isDirect = false) {
 function _tryDirectMpegts(streamUrl) {
     if (!streamUrl) { _setPlayerLoading(false); _showPlayerError('Stream no disponible'); return; }
 
+    // Modo proxy: nunca acceder directo, usar stream-proxy siempre
+    if (_streamMode === 'proxy') {
+        _tryProxiedMpegts(streamUrl);
+        return;
+    }
+
     // Doble comprobación: HTTPS + HTTP → mixed content garantizado → error inmediato
     if (location.protocol === 'https:' && (streamUrl).startsWith('http://')) {
         _setPlayerLoading(false);
@@ -998,6 +1023,31 @@ function _tryDirectMpegts(streamUrl) {
     // mpegts.js puede reproducir tanto .ts como streams sin extensión (Xtream Codes shorthand).
     console.warn('[player] mpegts.js directo (sin proxy):', streamUrl);
     _playWithMpegts(streamUrl, true);
+}
+
+/**
+ * Fallback para modo proxy: cuando hls-proxy falla, intenta el stream raw
+ * a través de /api/stream-proxy con mpegts.js. Todo el tráfico pasa por el VPS.
+ * @param {string} streamUrl   URL original del canal (sin proxy)
+ * @param {string} [fallbackMsg] Mensaje a mostrar si mpegts también falla
+ */
+function _tryProxiedMpegts(streamUrl, fallbackMsg) {
+    if (!streamUrl) {
+        _setPlayerLoading(false);
+        _showPlayerError(fallbackMsg || 'Canal no disponible a través del servidor proxy.');
+        return;
+    }
+    if (typeof mpegts === 'undefined' || !mpegts.isSupported()) {
+        _setPlayerLoading(false);
+        _showPlayerError(fallbackMsg || 'Canal no disponible. Prueba "Ver en pestaña nueva".');
+        return;
+    }
+    const proxyUrl = `/api/stream-proxy?url=${encodeURIComponent(streamUrl)}`;
+    console.warn('[player] mpegts.js vía stream-proxy (modo proxy):', proxyUrl);
+    // Si mpegts también falla, mostramos el mensaje de fallback
+    const _origOnError = window._mpegtsErrorCb;
+    window._mpegtsProxyFallbackMsg = fallbackMsg || 'El servidor proxy no puede retransmitir este canal. Prueba "Ver en pestaña nueva".';
+    _playWithMpegts(proxyUrl, true);
 }
 
 /**
@@ -1282,7 +1332,11 @@ function _playWithMpegts(url, isLive) {
         try { player.destroy(); } catch (_) {}
         window._mpegtsPlayer = null;
         _setPlayerLoading(false);
-        if (errType === mpegts.ErrorTypes.NETWORK_ERROR || errType === 'NetworkError') {
+        const _proxyMsg = window._mpegtsProxyFallbackMsg;
+        window._mpegtsProxyFallbackMsg = null;
+        if (_proxyMsg) {
+            _showPlayerError(_proxyMsg);
+        } else if (errType === mpegts.ErrorTypes.NETWORK_ERROR || errType === 'NetworkError') {
             _showPlayerError('El servidor IPTV puede estar bloqueando las peticiones desde el proxy.', 2);
         } else {
             _showPlayerError('Stream MPEG-TS no disponible o bloqueado en el servidor');
@@ -1293,6 +1347,18 @@ function _playWithMpegts(url, isLive) {
 function _loadHlsDirect(url) {
     url = _normalizeStreamUrl(url);
     const urlLow = url.toLowerCase().split('?')[0];
+
+    // ── Modo proxy VPS: saltar intentos directos ────────────────────────────
+    // El admin configuró que toda la retransmisión pase por el VPS.
+    // Esto permite reproducir canales bloqueados por ISP (España) sin VPN.
+    if (_streamMode === 'proxy') {
+        // Quitar .ts para obtener la URL base Xtream (el hls-proxy intentará .m3u8)
+        const proxyTarget = urlLow.endsWith('.ts')
+            ? url.replace(/\.ts(\?|$)/i, '$1')
+            : url;
+        _loadHls(`/api/hls-proxy?url=${encodeURIComponent(proxyTarget)}`);
+        return;
+    }
 
     // ── Canales live Xtream Codes (.ts con /live/ en la ruta) ──────────────
     // Estrategia: intentar primero la variante M3U8/HLS (quitando .ts).
