@@ -292,7 +292,7 @@ def listas():
 
 
 @admin_bp.post('/listas/agregar')
-@login_required
+@superadmin_required
 def agregar_lista():
     nombre = request.form.get('nombre', '').strip()
     url = request.form.get('url', '').strip()
@@ -366,41 +366,74 @@ def eliminar_lista(lista_id):
     if not panel_user.is_superadmin and lista.owner_id != panel_user.id:
         flash('No tienes permiso para eliminar esta lista.', 'danger')
         return redirect(url_for('admin.listas'))
-    nombre = lista.nombre
+    nombre     = lista.nombre
     total_items = lista.total_items or 0
-    
-    if total_items > 5000:
-        app = current_app._get_current_object()
-        
-        def eliminar_lista_async(app, lista_id, nombre):
-            with app.app_context():
-                lista = Lista.query.get(lista_id)
-                if not lista:
-                    return
-                contenido_ids = [c.id for c in lista.contenidos]
-                if contenido_ids:
-                    for i in range(0, len(contenido_ids), 900):
-                        chunk = contenido_ids[i:i + 900]
-                        WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
-                        ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
-                        db.session.commit()
-                db.session.expire_all()
-                db.session.delete(lista)
+
+    def _do_delete(app, lista_id):
+        """Borrado completo: dependencias → contenidos → lista."""
+        with app.app_context():
+            try:
+                # 1. Obtener IDs de contenidos sin cargar objetos ORM
+                cids = [r[0] for r in
+                        db.session.query(Contenido.id).filter_by(lista_id=lista_id).all()]
+
+                # 2. Borrar dependencias en trozos y confirmar cada uno
+                for i in range(0, len(cids), 900):
+                    chunk = cids[i:i + 900]
+                    WatchHistory.query.filter(
+                        WatchHistory.contenido_id.in_(chunk)
+                    ).delete(synchronize_session=False)
+                    ChannelReport.query.filter(
+                        ChannelReport.contenido_id.in_(chunk)
+                    ).delete(synchronize_session=False)
+                    db.session.flush()
+
+                # 3. Borrar contenidos explícitamente (no depender del cascade)
+                for i in range(0, len(cids), 900):
+                    chunk = cids[i:i + 900]
+                    Contenido.query.filter(Contenido.id.in_(chunk)).delete(
+                        synchronize_session=False)
+                    db.session.flush()
+
+                # 4. Borrar la lista
+                lista_obj = Lista.query.get(lista_id)
+                if lista_obj:
+                    db.session.delete(lista_obj)
                 db.session.commit()
-        
-        threading.Thread(target=eliminar_lista_async, args=(app, lista_id, nombre), daemon=True).start()
-        flash(f'Eliminando lista "{nombre}" ({total_items} items) en segundo plano...', 'info')
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception(
+                    f'[eliminar_lista] Error borrando lista {lista_id}: {exc}')
+
+    app = current_app._get_current_object()
+    if total_items > 5000:
+        threading.Thread(target=_do_delete, args=(app, lista_id), daemon=True).start()
+        flash(f'Eliminando lista "{nombre}" ({total_items} items) en segundo plano…', 'info')
     else:
-        contenido_ids = [c.id for c in lista.contenidos]
-        if contenido_ids:
-            for i in range(0, len(contenido_ids), 900):
-                chunk = contenido_ids[i:i + 900]
-                WatchHistory.query.filter(WatchHistory.contenido_id.in_(chunk)).delete(synchronize_session=False)
-                ChannelReport.query.filter(ChannelReport.contenido_id.in_(chunk)).delete(synchronize_session=False)
-        db.session.expire_all()
-        db.session.delete(lista)
-        db.session.commit()
-        flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')
+        try:
+            cids = [r[0] for r in
+                    db.session.query(Contenido.id).filter_by(lista_id=lista_id).all()]
+            for i in range(0, len(cids), 900):
+                chunk = cids[i:i + 900]
+                WatchHistory.query.filter(
+                    WatchHistory.contenido_id.in_(chunk)
+                ).delete(synchronize_session=False)
+                ChannelReport.query.filter(
+                    ChannelReport.contenido_id.in_(chunk)
+                ).delete(synchronize_session=False)
+                db.session.flush()
+            for i in range(0, len(cids), 900):
+                chunk = cids[i:i + 900]
+                Contenido.query.filter(Contenido.id.in_(chunk)).delete(
+                    synchronize_session=False)
+                db.session.flush()
+            db.session.delete(lista)
+            db.session.commit()
+            flash(f'Lista "{nombre}" y todo su contenido eliminados.', 'success')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f'Error al eliminar la lista: {exc}', 'danger')
+
     return redirect(url_for('admin.listas'))
 
 
@@ -1004,7 +1037,7 @@ def eliminar_proxy(proxy_id):
 # ── Subida directa de archivo M3U ──────────────────────────────
 
 @admin_bp.post('/listas/subir')
-@login_required
+@superadmin_required
 def subir_lista():
     """Importa un archivo .m3u subido por el admin (bypass de bloqueo IP)."""
     nombre   = request.form.get('nombre', '').strip()
@@ -1128,7 +1161,7 @@ def resubir_lista(lista_id):
 # ── Previsualización de grupos M3U ─────────────────────────────
 
 @admin_bp.post('/listas/preview-url')
-@login_required
+@superadmin_api_required
 def preview_url_grupos():
     """Descarga la M3U y devuelve los grupos únicos para que el admin seleccione."""
     url = request.form.get('url', '').strip()
@@ -1151,7 +1184,7 @@ def preview_url_grupos():
 
 
 @admin_bp.post('/listas/preview-file')
-@login_required
+@superadmin_api_required
 def preview_file_grupos():
     """Lee el archivo M3U subido y devuelve los grupos únicos + un temp_id para el import."""
     archivo = request.files.get('archivo')
@@ -1859,7 +1892,7 @@ def set_user_role(user_id):
         flash('No puedes cambiar el rol del superadmin.', 'danger')
         return redirect(url_for('admin.users'))
     nuevo_rol = request.form.get('role', 'user')
-    if nuevo_rol not in ('user', 'premium'):
+    if nuevo_rol not in ('user', 'premium', 'superadmin'):
         nuevo_rol = 'user'
     u.role = nuevo_rol
     db.session.commit()

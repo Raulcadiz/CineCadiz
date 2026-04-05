@@ -118,22 +118,32 @@
         <td>
             {% if not u.is_superadmin %}
             <div class="d-flex gap-1 flex-wrap">
-                <!-- Cambiar rol -->
+                <!-- Cambiar rol: user ↔ premium ↔ superadmin -->
+                {% if u.role == 'premium' %}
                 <form method="POST" action="{{ url_for('admin.set_user_role', user_id=u.id) }}" class="d-inline">
-                    {% if u.role == 'premium' %}
                     <input type="hidden" name="role" value="user">
                     <button type="submit" class="btn btn-sm py-1"
-                            style="background:#3a2800;color:#f59e0b;font-size:.75rem;" title="Bajar a usuario">
+                            style="background:#3a2800;color:#f59e0b;font-size:.75rem;" title="Bajar a Usuario">
                         <i class="bi bi-arrow-down-circle me-1"></i>User
                     </button>
-                    {% else %}
+                </form>
+                <form method="POST" action="{{ url_for('admin.set_user_role', user_id=u.id) }}" class="d-inline"
+                      onsubmit="return confirm('¿Convertir a {{ u.username }} en Superadmin?\nTendrá acceso total al panel.')">
+                    <input type="hidden" name="role" value="superadmin">
+                    <button type="submit" class="btn btn-sm py-1"
+                            style="background:#1a003a;color:#c084fc;font-size:.75rem;" title="Ascender a Superadmin">
+                        <i class="bi bi-shield-fill-check me-1"></i>Superadmin
+                    </button>
+                </form>
+                {% else %}
+                <form method="POST" action="{{ url_for('admin.set_user_role', user_id=u.id) }}" class="d-inline">
                     <input type="hidden" name="role" value="premium">
                     <button type="submit" class="btn btn-sm py-1"
-                            style="background:#1a2a00;color:#84cc16;font-size:.75rem;" title="Subir a premium">
+                            style="background:#1a2a00;color:#84cc16;font-size:.75rem;" title="Subir a Premium (Admin)">
                         <i class="bi bi-arrow-up-circle me-1"></i>Premium
                     </button>
-                    {% endif %}
                 </form>
+                {% endif %}
                 <!-- Activar/desactivar -->
                 <form method="POST" action="{{ url_for('admin.toggle_user', user_id=u.id) }}" class="d-inline">
                     <button type="submit" class="btn btn-sm py-1"

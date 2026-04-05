@@ -21,6 +21,7 @@
 </style>
 
 <!-- ═══════════════ FORMULARIOS ═══════════════════════════════ -->
+{% if panel_user.is_superadmin %}
 <div class="row g-4 mb-4">
 
     <!-- ── POR URL ────────────────────────────────────────────── -->
@@ -201,6 +202,11 @@
     </div>
 
 </div>
+{% else %}
+<div class="alert alert-warning py-2 mb-4 small">
+    <i class="bi bi-lock me-1"></i>Solo el <strong>superadmin</strong> puede importar listas M3U.
+</div>
+{% endif %}
 
 <!-- ═══════════════ STATS ═══════════════════════════════════ -->
 {% if listas %}
@@ -636,14 +642,16 @@ function updateSelCount(mode) {
 // ════════════════════════════════════════════════════════════════
 function renderGrupos(mode, groups, ctx) {
     window['_ctx_' + mode] = ctx;
-    _gdata[mode] = groups.map((g, i) => ({
-        uid:       mode + '_' + i,
-        name:      g.name,
-        tipo:      TIPOS.includes(g.tipo) ? g.tipo : 'otro',
-        categoria: g.categoria || 'otro',
-        count:     g.count,
-        checked:   true          // todos los grupos marcados por defecto (incluido live)
-    }));
+    _gdata[mode] = groups.map((g, i) => {
+        const tipo      = TIPOS.includes(g.tipo) ? g.tipo : 'otro';
+        const categoria = g.categoria || 'otro';
+        // Marcar automáticamente: películas, series y live en español (spain).
+        // El resto (live no español, sin clasificar) queda desmarcado.
+        const autoCheck = tipo === 'pelicula'
+                       || tipo === 'serie'
+                       || (tipo === 'live' && categoria === 'spain');
+        return { uid: mode + '_' + i, name: g.name, tipo, categoria, count: g.count, checked: autoCheck };
+    });
     _renderDisplay(mode);
     document.getElementById('panel-' + mode).classList.remove('d-none');
 }
