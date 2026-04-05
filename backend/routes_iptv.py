@@ -201,7 +201,8 @@ def stream(username: str, password: str, cid_str: str):
             iptv_user_id=u.id, contenido_id=contenido_id, ip_address=ip,
         ))
         db.session.commit()
-    return redirect(c.url_stream, code=302)
+    cfg = _xtream_cfg()
+    return _do_stream(c, cfg)
 
 
 @iptv_bp.post('/<username>/<password>/heartbeat/<token>')
