@@ -238,7 +238,10 @@ def crear_invitacion():
         return redirect(url_for('auth.mi_cuenta'))
 
     role_para = request.form.get('role', 'user')
-    if role_para not in ('user', 'premium'):
+    if role_para not in ('user', 'premium', 'superadmin'):
+        role_para = 'user'
+    # Solo superadmin puede crear invitaciones de superadmin.
+    if role_para == 'superadmin' and not user.is_superadmin:
         role_para = 'user'
     # Superadmin puede crear tokens para cualquier rol.
     # Premium puede invitar a 1 premium (solo si no tiene ya uno creado o usado).
