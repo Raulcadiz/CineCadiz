@@ -28,7 +28,7 @@ from urllib.parse import quote as _quote
 import requests as _requests
 from flask import Blueprint, Response, abort, jsonify, redirect, request, stream_with_context
 
-from models import db, Contenido, IptvUser, IptvSession, XtreamConfig
+from models import db, Contenido, IptvUser, IptvSession, Lista, XtreamConfig
 
 iptv_bp = Blueprint('iptv', __name__, url_prefix='/iptv')
 xtream_bp = Blueprint('xtream', __name__)
@@ -137,10 +137,17 @@ def playlist(username: str, password: str):
     tipo_orden = _case({'live': 0, 'pelicula': 1, 'serie': 2},
                        value=Contenido.tipo, else_=3)
     _tipo_grp = {'live': 'Directo', 'pelicula': 'Peliculas', 'serie': 'Series'}
+    lista_def = Lista.query.filter_by(es_defecto=True).first()
     q = db.session.query(
         Contenido.id, Contenido.titulo, Contenido.tipo,
         Contenido.imagen, Contenido.group_title,
     ).filter(Contenido.activo == True)
+    if lista_def:
+        from sqlalchemy import or_ as _or
+        q = q.filter(_or(
+            Contenido.tipo != 'live',
+            Contenido.lista_id == lista_def.id,
+        ))
     if u.grupos_permitidos:
         try:
             gs = set(_json.loads(u.grupos_permitidos))
@@ -275,6 +282,10 @@ def _user_q(u: IptvUser, tipo: str):
     q = db.session.query(Contenido).filter(
         Contenido.activo == True, Contenido.tipo == tipo,
     )
+    if tipo == 'live':
+        lista_def = Lista.query.filter_by(es_defecto=True).first()
+        if lista_def:
+            q = q.filter(Contenido.lista_id == lista_def.id)
     if u.grupos_permitidos:
         try:
             gs = set(_json.loads(u.grupos_permitidos))
@@ -363,10 +374,17 @@ def get_php():
     tipo_orden = _case({'live': 0, 'pelicula': 1, 'serie': 2},
                        value=Contenido.tipo, else_=3)
     _tipo_grp = {'live': 'Directo', 'pelicula': 'Peliculas', 'serie': 'Series'}
+    lista_def = Lista.query.filter_by(es_defecto=True).first()
     q = db.session.query(
         Contenido.id, Contenido.titulo, Contenido.tipo,
         Contenido.imagen, Contenido.group_title,
     ).filter(Contenido.activo == True)
+    if lista_def:
+        from sqlalchemy import or_ as _or
+        q = q.filter(_or(
+            Contenido.tipo != 'live',
+            Contenido.lista_id == lista_def.id,
+        ))
     if u.grupos_permitidos:
         try:
             gs = set(_json.loads(u.grupos_permitidos))
