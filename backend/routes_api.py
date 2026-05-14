@@ -980,73 +980,98 @@ def dash_proxy():
     y URLs de inicialización para que pasen por /api/stream-proxy.
     Permite que dash.js / Shaka Player cargue streams DASH sin restricciones de CORS.
     """
+    from urllib.parse import unquote, quote
     url = request.args.get('url', '').strip()
     if not url or not url.lower().startswith('http'):
         return '', 400
     if _is_private(url):
         return '', 403
 
-    def _fetch_mpd(url_to_fetch, attempt=0):
+    # Decode once to handle frontend encoding
+    url = unquote(url)
+    
+    # Use browser-like User-Agent for DASH (many CDNs block Python requests)
+    _BROWSER_UA = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9,es;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+    }
+    
+    def _fetch_mpd(url_to_fetch):
         parsed = _urlparse(url_to_fetch)
         mpd_hdrs = {
-            **_PROXY_UA,
+            **_BROWSER_UA,
             'Referer': f'{parsed.scheme}://{parsed.netloc}/',
+            'Origin': f'{parsed.scheme}://{parsed.netloc}',
         }
+        resp = requests.get(url_to_fetch, headers=mpd_hdrs, timeout=15,
+                            proxies={}, allow_redirects=True)
+        resp.raise_for_status()
+        return resp
+
+    # Build list of URLs to try: original, then encoded version
+    urls_to_try = [url]
+    parsed = _urlparse(url)
+    path_lower = parsed.path.lower()
+    
+    # Only add encoded version if URL doesn't already have encoded .mpd
+    if '.mpd' in path_lower and '%2e' not in path_lower:
+        encoded_path = parsed.path.replace('.mpd', '%2E%6D%70%64', 1).replace('.MPD', '%2E%4D%50%44', 1)
+        urls_to_try.append(parsed._replace(path=encoded_path).geturl())
+    
+    resp = None
+    mpd_body = None
+    for try_url in urls_to_try:
         try:
-            resp = requests.get(url_to_fetch, headers=mpd_hdrs, timeout=15,
-                                proxies={}, allow_redirects=True)
-            # Si 403 y es la primera intento, reintentar con URL codificada
-            if resp.status_code == 403 and attempt == 0:
-                # Convertir .mpd a %2e%6d%70%64
-                if '.mpd' in parsed.path.lower():
-                    encoded_path = parsed.path.replace('.mpd', '.%2e%6d%70%64', 1)
-                    encoded_path = encoded_path.replace('.MPD', '.%2e%6d%70%64', 1)
-                    new_url = parsed._replace(path=encoded_path).geturl()
-                    print(f'[dash-proxy] 403 received, retrying with encoded URL: {new_url}')
-                    return _fetch_mpd(new_url, attempt=1)
-            resp.raise_for_status()
-            return resp
-        except requests.exceptions.HTTPError as e:
-            print(f'[dash-proxy] HTTP error: {e.response.status_code}')
-            raise
+            resp = _fetch_mpd(try_url)
+            mpd_body = resp.text
+            if mpd_body.strip().startswith('<?xml') or '<MPD' in mpd_body:
+                break
+            resp.close()
+            resp = None
+        except Exception as e:
+            current_app.logger.debug(f'[dash-proxy] Failed {try_url}: {e}')
+            if resp:
+                resp.close()
+                resp = None
+            continue
 
-    try:
-        resp = _fetch_mpd(url)
-        mpd_body = resp.text
-        if not mpd_body.strip().startswith('<?xml') and '<MPD' not in mpd_body:
-            print('[dash-proxy] Invalid MPD response')
-            return '', 403
-
-        # Usar resp.url (URL final tras redirect) para resolver rutas relativas correctamente.
-        _dash_final = _urlparse(resp.url)
-        base_url = f'{_dash_final.scheme}://{_dash_final.netloc}{_dash_final.path.rsplit("/", 1)[0]}/'
-        ps = request.host_url.rstrip('/') + '/api/stream-proxy'
-
-        def _rewrite_url(m):
-            raw = m.group(1)
-            full = raw if raw.startswith('http') else _urljoin(base_url, raw)
-            return f'URL="{ps}?url={_quote(full, safe="")}"'
-
-        def _rewrite_baseurl(m):
-            raw = m.group(1).strip()
-            full = raw if raw.startswith('http') else _urljoin(base_url, raw)
-            return f'BaseURL>{ps}?url={_quote(full, safe="")}&rewrite='
-
-        mpd_body = _re.sub(r'URL="([^"]+)"', _rewrite_url, mpd_body)
-        mpd_body = _re.sub(r'>\s*BaseURL\s*>\s*([^<]+)\s*<', _rewrite_baseurl, mpd_body)
-
-        return Response(
-            mpd_body,
-            content_type='application/dash+xml; charset=utf-8',
-            headers={
-                'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-            },
-        )
-    except Exception as e:
-        print(f'[dash-proxy] Error: {e}')
+    if resp is None or mpd_body is None:
+        current_app.logger.warning('[dash-proxy] All URL variants failed')
         return '', 502
+
+    # Validar contenido MPD
+    if not mpd_body.strip().startswith('<?xml') and '<MPD' not in mpd_body:
+        return '', 403
+
+    # Usar resp.url (URL final tras redirect) para resolver rutas relativas correctamente.
+    _dash_final = _urlparse(resp.url)
+    base_url = f'{_dash_final.scheme}://{_dash_final.netloc}{_dash_final.path.rsplit("/", 1)[0]}/'
+    ps = request.host_url.rstrip('/') + '/api/stream-proxy'
+
+    def _rewrite_url(m):
+        raw = m.group(1)
+        full = raw if raw.startswith('http') else _urljoin(base_url, raw)
+        return f'URL="{ps}?url={quote(full, safe="")}"'
+
+    def _rewrite_baseurl(m):
+        raw = m.group(1).strip()
+        full = raw if raw.startswith('http') else _urljoin(base_url, raw)
+        return f'BaseURL>{ps}?url={quote(full, safe="")}&rewrite='
+
+    mpd_body = _re.sub(r'URL="([^"]+)"', _rewrite_url, mpd_body)
+    mpd_body = _re.sub(r'>\s*BaseURL\s*>\s*([^<]+)\s*<', _rewrite_baseurl, mpd_body)
+
+    return Response(
+        mpd_body,
+        content_type='application/dash+xml; charset=utf-8',
+        headers={
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 
 @api_bp.get('/playlist/<int:item_id>.m3u')

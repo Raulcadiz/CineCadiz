@@ -1464,6 +1464,22 @@ def _import_lista_async(app, lista_id: int):
     t.start()
 
 
+def _insert_batch(batch: list, lista_id: int) -> tuple[int, int]:
+    """Comprueba hashes existentes e inserta un lote de items en bulk."""
+    batch_hashes = [it['url_hash'] for it in batch]
+    existing: set[str] = set()
+    for i in range(0, len(batch_hashes), 900):
+        chunk = batch_hashes[i:i + 900]
+        rows = db.session.query(Contenido.url_hash).filter(
+            Contenido.url_hash.in_(chunk)
+        ).all()
+        existing.update(r[0] for r in rows)
+    return _do_bulk_insert(batch, existing, lista_id)
+
+
+_IMPORT_BATCH_SIZE = 1000   # items por lote de inserción en BD
+
+
 def _import_lista(app, lista_id: int):
     with app.app_context():
         try:
@@ -1479,9 +1495,6 @@ def _import_lista(app, lista_id: int):
                     proxy_url = random.choice(active_proxies).url
 
             # Parsear grupos_seleccionados si existe.
-            # Se normalizan los nombres (strip) para que coincidan exactamente con
-            # los que produce parse_and_filter(), evitando que diferencias de
-            # espacios entre la previsualización y el import descarten contenido.
             grupos_set = None
             if lista.grupos_seleccionados:
                 try:
@@ -1505,16 +1518,10 @@ def _import_lista(app, lista_id: int):
                 + (f' ({len(grupos_set)} grupos seleccionados)' if grupos_set else '')
                 + (f' ({len(tipos_override)} tipos override)' if tipos_override else '')
             )
-            items, error = fetch_and_parse(
-                lista.url,
-                app.config,
-                filter_spanish=lista.filtrar_español,
-                include_live=lista.incluir_live,
-                proxy=proxy_url,
-                grupos=grupos_set,
-                tipos_override=tipos_override,
-            )
 
+            # ── Descarga ──────────────────────────────────────────
+            from m3u_parser import _download_m3u, decode_m3u_bytes, parse_and_filter_gen
+            raw_bytes, error = _download_m3u(lista.url, app.config, proxy=proxy_url)
             if error:
                 lista.error = error
                 lista.ultima_actualizacion = datetime.utcnow()
@@ -1522,70 +1529,93 @@ def _import_lista(app, lista_id: int):
                 app.logger.error(f'[Import M3U] Error descargando {lista.nombre}: {error}')
                 return
 
+            content = decode_m3u_bytes(raw_bytes)
+            # Liberar raw_bytes lo antes posible (después de guardar si aplica)
+
+            # ── Proceso por lotes con generador (bajo uso de RAM) ─
+            total_nuevos = total_dupl = total_seen = 0
+            live_items_for_curado: list = []
+            batch: list = []
+
+            for item in parse_and_filter_gen(
+                content, app.config,
+                filter_spanish=lista.filtrar_español,
+                include_live=lista.incluir_live,
+                grupos=grupos_set,
+                tipos_override=tipos_override,
+            ):
+                total_seen += 1
+                batch.append(item)
+                if lista.live_a_curado and item.get('tipo') == 'live':
+                    live_items_for_curado.append(item)
+
+                if len(batch) >= _IMPORT_BATCH_SIZE:
+                    n, d = _insert_batch(batch, lista_id)
+                    total_nuevos += n
+                    total_dupl   += d
+                    batch = []
+
+            if batch:
+                n, d = _insert_batch(batch, lista_id)
+                total_nuevos += n
+                total_dupl   += d
+                batch = []
+
             app.logger.info(
-                f'[Import M3U] {lista.nombre}: {len(items)} items tras filtros '
-                f'(filtrar_español={lista.filtrar_español})'
+                f'[Import M3U] {lista.nombre}: {total_seen} items procesados, '
+                f'{total_nuevos} nuevos ({total_dupl} dupl. en M3U) | '
+                f'filtrar_español={lista.filtrar_español}'
             )
 
-            # ── Deduplicación en 1 sola query (no N queries) ───────
-            # Para listas de 3000-7000 items, esto es crítico para el rendimiento.
-            candidate_hashes = {it['url_hash'] for it in items}
-            # SQLite tiene límite de ~999 variables en IN; procesamos en chunks
-            existing_hashes: set[str] = set()
-            chunk_list = list(candidate_hashes)
-            for i in range(0, len(chunk_list), 900):
-                chunk = chunk_list[i:i + 900]
-                rows = db.session.query(Contenido.url_hash)\
-                    .filter(Contenido.url_hash.in_(chunk)).all()
-                existing_hashes.update(r[0] for r in rows)
-
-            nuevos, dupl_m3u = _do_bulk_insert(items, existing_hashes, lista_id)
-
             lista.error = None
-            lista.total_items = Contenido.query.filter_by(lista_id=lista_id).count()
+            lista.total_items   = Contenido.query.filter_by(lista_id=lista_id).count()
             lista.items_activos = Contenido.query.filter_by(lista_id=lista_id, activo=True).count()
             lista.ultima_actualizacion = datetime.utcnow()
             db.session.commit()
 
-            app.logger.info(
-                f'[Import M3U] {lista.nombre}: {nuevos} nuevos '
-                f'({dupl_m3u} dupl. en M3U) / {lista.total_items} total'
-            )
-
             # Notificar a Telegram si se importó contenido nuevo
-            if nuevos > 0:
+            if total_nuevos > 0:
                 try:
                     from telegram_bot import notify_new_content
-                    movies_new = sum(1 for it in items[:nuevos] if it.get('tipo') == 'pelicula')
-                    series_new = sum(1 for it in items[:nuevos] if it.get('tipo') == 'serie')
-                    live_new   = sum(1 for it in items[:nuevos] if it.get('tipo') == 'live')
-                    notify_new_content(app, movies_new, series_new, live_new, lista.nombre)
+                    # Contar por tipo desde la BD (más exacto que items en memoria)
+                    from sqlalchemy import func as _func
+                    tipo_counts = dict(
+                        db.session.query(Contenido.tipo, _func.count(Contenido.id))
+                        .filter(Contenido.lista_id == lista_id, Contenido.activo == True)
+                        .group_by(Contenido.tipo).all()
+                    )
+                    notify_new_content(
+                        app,
+                        tipo_counts.get('pelicula', 0),
+                        tipo_counts.get('serie', 0),
+                        tipo_counts.get('live', 0),
+                        lista.nombre,
+                    )
                 except Exception:
                     pass
 
             # ── Guardar M3U localmente y enviar por Telegram ───────
             if lista.guardar_local or lista.enviar_telegram:
                 try:
-                    from m3u_parser import _download_m3u
-                    raw_bytes, dl_err = _download_m3u(lista.url, app.config, proxy=proxy_url)
-                    if raw_bytes and not dl_err:
-                        from pathlib import Path
-                        lists_dir = Path(app.root_path).parent / 'lists'
-                        lists_dir.mkdir(exist_ok=True)
-                        safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', lista.nombre)
-                        m3u_path = lists_dir / f'{safe_name}.m3u'
-                        m3u_path.write_bytes(raw_bytes)
-                        app.logger.info(f'[Import] M3U guardado: {m3u_path}')
-
-                        if lista.enviar_telegram:
-                            _send_m3u_telegram(app, str(m3u_path), lista.nombre, lista.url)
+                    from pathlib import Path
+                    lists_dir = Path(app.root_path).parent / 'lists'
+                    lists_dir.mkdir(exist_ok=True)
+                    safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', lista.nombre)
+                    m3u_path = lists_dir / f'{safe_name}.m3u'
+                    m3u_path.write_bytes(raw_bytes)
+                    app.logger.info(f'[Import] M3U guardado: {m3u_path}')
+                    if lista.enviar_telegram:
+                        _send_m3u_telegram(app, str(m3u_path), lista.nombre, lista.url)
                 except Exception as e:
                     app.logger.warning(f'[Import] Error guardando/enviando M3U: {e}')
 
+            # raw_bytes ya no se necesita
+            del raw_bytes, content
+
             # ── Canales live → CanalCurado ─────────────────────────
-            if lista.live_a_curado:
+            if lista.live_a_curado and live_items_for_curado:
                 try:
-                    _sync_live_to_curado(app, lista.id, items)
+                    _sync_live_to_curado(app, lista.id, live_items_for_curado)
                 except Exception as e:
                     app.logger.warning(f'[Import] Error sync live→curado: {e}')
 

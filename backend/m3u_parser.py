@@ -222,9 +222,9 @@ def parse_extinf(line: str) -> dict:
     return info
 
 
-def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]:
+def parse_m3u_content(content: str, grupos_set: set | None = None):
     """
-    Parsea el texto de una lista M3U y devuelve una lista de items.
+    Parsea el texto de una lista M3U y genera items uno a uno (generador).
 
     grupos_set: si se indica, se aplica un pre-filtro rápido por group-title
     ANTES de ejecutar parse_extinf (que es costoso). Esto evita parsear entradas
@@ -232,7 +232,6 @@ def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]
 
     Soporta propiedades DRM: #KODIPROP, #EXTVLCOPT, catchup-source, etc.
     """
-    items   = []
     lines   = content.splitlines()
     current = None
 
@@ -293,10 +292,8 @@ def parse_m3u_content(content: str, grupos_set: set | None = None) -> list[dict]
                 current['servidor'] = urlparse(line).netloc
             except Exception:
                 current['servidor'] = ''
-            items.append(current)
+            yield current
             current = None
-
-    return items
 
 
 # ──────────────────────────────────────────────────────────────
@@ -683,6 +680,41 @@ def parse_and_filter(
     if filter_spanish:
         items = [it for it in items if is_spanish(it, config)]
     return items
+
+
+def parse_and_filter_gen(
+    content: str,
+    config,
+    filter_spanish: bool = False,
+    include_live: bool = False,
+    grupos: set | None = None,
+    tipos_override: dict | None = None,
+):
+    """
+    Versión generador de parse_and_filter: procesa y filtra items uno a uno
+    sin acumularlos todos en memoria. Ideal para imports de listas grandes.
+    """
+    for it in parse_m3u_content(content, grupos_set=grupos):
+        g = (it.get('group_title') or '').strip() or '(sin grupo)'
+
+        if grupos is not None and g not in grupos:
+            continue
+
+        override = tipos_override.get(g) if tipos_override else None
+        if override and override != 'otro':
+            it['tipo'] = override
+        else:
+            if not is_vod_content(it, config):
+                it['tipo'] = 'live'
+                if grupos is None and not include_live:
+                    continue
+
+        if is_explicitly_non_spanish(it, config):
+            continue
+        if filter_spanish and not is_spanish(it, config):
+            continue
+
+        yield it
 
 
 # ──────────────────────────────────────────────────────────────

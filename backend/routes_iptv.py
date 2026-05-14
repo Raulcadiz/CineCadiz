@@ -134,8 +134,12 @@ def playlist(username: str, password: str):
         abort(401)
     base = request.host_url.rstrip('/')
     from sqlalchemy import case as _case
-    tipo_orden = _case({'live': 0, 'pelicula': 1, 'serie': 2},
-                       value=Contenido.tipo, else_=3)
+    tipo_orden = _case(
+        (Contenido.tipo == 'live', 0),
+        (Contenido.tipo == 'pelicula', 1),
+        (Contenido.tipo == 'serie', 2),
+        else_=3,
+    )
     _tipo_grp = {'live': 'Directo', 'pelicula': 'Peliculas', 'serie': 'Series'}
     lista_def = Lista.query.filter_by(es_defecto=True).first()
     q = db.session.query(
@@ -371,8 +375,12 @@ def get_php():
         abort(400)
     base = request.host_url.rstrip('/')
     from sqlalchemy import case as _case
-    tipo_orden = _case({'live': 0, 'pelicula': 1, 'serie': 2},
-                       value=Contenido.tipo, else_=3)
+    tipo_orden = _case(
+        (Contenido.tipo == 'live', 0),
+        (Contenido.tipo == 'pelicula', 1),
+        (Contenido.tipo == 'serie', 2),
+        else_=3,
+    )
     _tipo_grp = {'live': 'Directo', 'pelicula': 'Peliculas', 'serie': 'Series'}
     lista_def = Lista.query.filter_by(es_defecto=True).first()
     q = db.session.query(
